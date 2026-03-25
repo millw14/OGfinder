@@ -38,4 +38,11 @@
   .og-glow {
     box-shadow: 0 0 20px rgba(234, 179, 8, 0.08), 0 0 60px rgba(234, 179, 8, 0.04);
   }
+
+  /* Hero OG Lottie: force amber stroke (JSON defaults to dark blue) */
+  .og-logo-lottie svg path,
+  .og-logo-lottie svg polyline,
+  .og-logo-lottie svg line {
+    stroke: rgb(251 191 36) !important;
+  }
 }

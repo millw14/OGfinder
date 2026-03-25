@@ -30,6 +30,8 @@ export interface TokenResult {
   rank: number;
   rankLabel: string;
   timeSource: string; // where we got creation time from
+  /** True when this mint was pasted for a CA scan */
+  isScanned?: boolean;
 }
 
 export interface SearchResponse {
@@ -37,6 +39,15 @@ export interface SearchResponse {
   query: string;
   totalFound: number;
   timing?: number;
+  mode?: "search" | "scan";
+  scannedMint?: string;
+  scanName?: string | null;
+  scanSymbol?: string | null;
+  isScannedOG?: boolean;
+  scannedRank?: number | null;
+  /** Raw user input (e.g. mint when scanning) */
+  originalInput?: string;
+  error?: string;
 }
 
 export const MAX_HELIUS = 150;
@@ -45,6 +56,8 @@ export const DEX_LIMIT = 100;
 export const JUP_LIMIT = 200;
 export const MIN_QUERY = 2;
 export const MAX_QUERY = 30;
+/** Max length for pasted Solana mint (base58) */
+export const MAX_MINT_LEN = 44;
 export const CACHE_SEARCH = 600;
 export const CACHE_DEX = 300;
 export const CACHE_JUP = 3600;

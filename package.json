@@ -3,16 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --turbo",
+    "dev:webpack": "next dev",
+    "dev:fresh": "npm run clean && npm run dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "clean": "node -e \"const fs=require('fs'); try{fs.rmSync('.next',{recursive:true,force:true});}catch(e){} try{fs.rmSync('node_modules/.cache',{recursive:true,force:true});}catch(e){} console.log('Cleaned .next and node_modules/.cache')\""
   },
   "dependencies": {
+    "lottie-react": "^2.4.1",
     "next": "^14.2.0",
+    "node-cache": "^5.1.2",
     "react": "^18.3.0",
-    "react-dom": "^18.3.0",
-    "node-cache": "^5.1.2"
+    "react-dom": "^18.3.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

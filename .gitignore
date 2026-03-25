@@ -6,3 +6,7 @@ out/
 npm-debug.log*
 .DS_Store
 *.tsbuildinfo
+
+# Duplicate sources (bundled under src/assets/lottie/ and public/)
+/wired-*.json
+/image.png

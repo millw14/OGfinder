@@ -1,8 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
+import Image from "next/image";
+import Lottie, { LottieRefCurrentProps } from "lottie-react";
 import { TokenResult } from "@/lib/types";
-import { OGBadge, ConfidenceStars, PlatformBadge, RankBadge } from "./Badge";
+import copyHover from "@/assets/lottie/copy-hover.json";
+import {
+  OGBadge,
+  ConfidenceStars,
+  PlatformBadge,
+  RankBadge,
+  ScannedMintBadge,
+} from "./Badge";
 
 function truncateMint(mint: string): string {
   if (mint.length <= 16) return mint;
@@ -43,11 +52,14 @@ function timeAgo(isoStr: string | null): string {
 
 export function TokenCard({ token }: { token: TokenResult }) {
   const [copied, setCopied] = useState(false);
+  const copyLottieRef = useRef<LottieRefCurrentProps>(null);
 
   const copyMint = async () => {
     try {
       await navigator.clipboard.writeText(token.mint);
       setCopied(true);
+      copyLottieRef.current?.stop();
+      copyLottieRef.current?.play();
       setTimeout(() => setCopied(false), 1500);
     } catch {
       /* */
@@ -55,6 +67,7 @@ export function TokenCard({ token }: { token: TokenResult }) {
   };
 
   const isOG = token.rank === 1;
+  const isScanned = token.isScanned === true;
   const ago = timeAgo(token.createdAt);
 
   return (
@@ -62,7 +75,9 @@ export function TokenCard({ token }: { token: TokenResult }) {
       className={`rounded-2xl border p-4 sm:p-5 transition-all ${
         isOG
           ? "border-yellow-600/40 bg-yellow-950/20 og-glow"
-          : "border-gray-800/80 bg-gray-900/40 hover:border-gray-700/80"
+          : isScanned
+            ? "border-cyan-600/35 bg-cyan-950/15 ring-1 ring-cyan-500/20"
+            : "border-gray-800/80 bg-gray-900/40 hover:border-gray-700/80"
       }`}
     >
       <div className="flex gap-3 sm:gap-4">
@@ -77,6 +92,7 @@ export function TokenCard({ token }: { token: TokenResult }) {
             <span className="text-xs font-semibold text-gray-500 sm:text-sm">
               ${token.displaySymbol}
             </span>
+            {isScanned && <ScannedMintBadge />}
             <OGBadge rank={token.rank} />
             <PlatformBadge dexId={token.dexId} />
           </div>
@@ -91,12 +107,39 @@ export function TokenCard({ token }: { token: TokenResult }) {
             )}
             <span className="text-gray-700">·</span>
             <button
+              type="button"
               onClick={copyMint}
-              className="inline-flex items-center gap-1.5 rounded-md bg-gray-800/60 px-2 py-0.5 font-mono text-[11px] text-gray-500 transition-colors hover:bg-gray-800 hover:text-gray-300"
-              title={token.mint}
+              onMouseEnter={() => {
+                if (!copied) {
+                  copyLottieRef.current?.stop();
+                  copyLottieRef.current?.play();
+                }
+              }}
+              onMouseLeave={() => {
+                if (!copied) {
+                  copyLottieRef.current?.stop();
+                  copyLottieRef.current?.goToAndStop(0, true);
+                }
+              }}
+              className="inline-flex items-center gap-1.5 rounded-md border border-gray-700/50 bg-gray-800/50 px-2 py-0.5 font-mono text-[11px] text-gray-400 transition-colors hover:border-gray-600 hover:bg-gray-800/80 hover:text-gray-200"
+              title={copied ? "Copied" : `Copy ${token.mint}`}
             >
-              {truncateMint(token.mint)}
-              <span className="text-[10px]">{copied ? "✅" : "📋"}</span>
+              <span>{truncateMint(token.mint)}</span>
+              {copied ? (
+                <span className="text-[10px] font-medium text-emerald-400">
+                  Copied
+                </span>
+              ) : (
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center">
+                  <Lottie
+                    lottieRef={copyLottieRef}
+                    animationData={copyHover}
+                    loop={false}
+                    autoplay={false}
+                    style={{ width: 28, height: 28 }}
+                  />
+                </span>
+              )}
             </button>
           </div>
 
@@ -109,7 +152,26 @@ export function TokenCard({ token }: { token: TokenResult }) {
               </span>
             </div>
 
-            <div className="flex gap-1.5 sm:ml-auto">
+            <div className="flex flex-wrap items-center gap-1.5 sm:ml-auto">
+              <a
+                href={`https://trade.padre.gg/trade/solana/${token.mint}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Trade on Padre Terminal"
+                className="group inline-flex items-center gap-2 rounded-lg border border-emerald-400/25 bg-emerald-950/35 px-2 py-1.5 shadow-sm shadow-emerald-950/20 transition-all hover:border-emerald-400/45 hover:bg-emerald-950/55 hover:shadow-emerald-900/30"
+              >
+                <Image
+                  src="/padre.png"
+                  alt=""
+                  width={88}
+                  height={18}
+                  className="h-[18px] w-auto max-w-[5.75rem] object-contain object-left opacity-[0.92] transition-opacity group-hover:opacity-100"
+                />
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-400/90">
+                  Trade
+                </span>
+                <span className="sr-only">Open Padre Terminal for this token</span>
+              </a>
               <a
                 href={`https://solscan.io/token/${token.mint}`}
                 target="_blank"

@@ -1,27 +1,173 @@
 import { NextRequest, NextResponse } from "next/server";
-import { MIN_QUERY, MAX_QUERY, MAX_RESULTS, TokenResult } from "@/lib/types";
+import {
+  MIN_QUERY,
+  MAX_QUERY,
+  MAX_MINT_LEN,
+  TokenResult,
+} from "@/lib/types";
 import { normalize } from "@/lib/normalize";
 import { getSearchCache, setSearchCache } from "@/lib/cache";
 import { searchTokens } from "@/lib/search";
-import { getAssetBatch, getCreationSlot } from "@/lib/helius";
-import {
-  sortByCreationTime,
-  scoreConfidence,
-  resolveDisplayName,
-  resolveDisplaySymbol,
-} from "@/lib/sort";
+import { buildTokenResults } from "@/lib/enrich-results";
+import { isLikelyMintAddress } from "@/lib/solana";
+import { deriveSearchTermFromMintMetadata } from "@/lib/mint-search";
+import { getAssetBatch } from "@/lib/helius";
+
+interface MintScanPayload {
+  results: TokenResult[];
+  query: string;
+  scanName: string | null;
+  scanSymbol: string | null;
+}
+
+function logSearch(
+  normalizedQuery: string,
+  final: TokenResult[],
+  timing: number,
+  rawCount: number,
+  enrichedCount: number
+) {
+  if (process.env.NODE_ENV !== "development") return;
+  console.log(
+    `[OGfinder] q="${normalizedQuery}" raw=${rawCount} enriched=${enrichedCount} time=${timing}ms`
+  );
+  if (final.length > 0) {
+    console.log(
+      `[OGfinder] #1: "${final[0].displayName}" created=${final[0].createdAt} via=${final[0].timeSource} mint=${final[0].mint}`
+    );
+  }
+}
 
 export async function GET(request: NextRequest) {
   const start = Date.now();
 
   const q = request.nextUrl.searchParams.get("q")?.trim() ?? "";
-  if (q.length < MIN_QUERY || q.length > MAX_QUERY) {
-    return NextResponse.json(
-      { error: `Query must be ${MIN_QUERY}-${MAX_QUERY} characters` },
-      { status: 400 }
-    );
+  const isMint = isLikelyMintAddress(q);
+
+  if (!isMint) {
+    if (q.length < MIN_QUERY || q.length > MAX_QUERY) {
+      return NextResponse.json(
+        { error: `Text search must be ${MIN_QUERY}-${MAX_QUERY} characters` },
+        { status: 400 }
+      );
+    }
+  } else {
+    if (q.length < 32 || q.length > MAX_MINT_LEN) {
+      return NextResponse.json(
+        { error: `Mint must be 32–${MAX_MINT_LEN} base58 characters` },
+        { status: 400 }
+      );
+    }
   }
 
+  // ——— Mint scan: resolve metadata, search by name/symbol, rank vs OG ———
+  if (isMint) {
+    const cacheKey = `mint:${q}`;
+    const cached = getSearchCache<MintScanPayload>(cacheKey);
+    if (cached) {
+      const scanned = cached.results.find((t) => t.mint === q);
+      return NextResponse.json({
+        results: cached.results,
+        query: cached.query,
+        totalFound: cached.results.length,
+        timing: Date.now() - start,
+        mode: "scan" as const,
+        scannedMint: q,
+        scanName: cached.scanName ?? scanned?.displayName ?? null,
+        scanSymbol: cached.scanSymbol ?? scanned?.displaySymbol ?? null,
+        isScannedOG: scanned?.rank === 1,
+        scannedRank: scanned?.rank ?? null,
+        originalInput: q,
+      });
+    }
+
+    const pre = await getAssetBatch([q]);
+    const h = pre.get(q);
+
+    if (!h) {
+      return NextResponse.json(
+        { error: "Token not found on-chain", results: [], totalFound: 0 },
+        { status: 404 }
+      );
+    }
+
+    if (
+      h.tokenInterface &&
+      h.tokenInterface !== "FungibleToken" &&
+      h.tokenInterface !== "FungibleAsset"
+    ) {
+      return NextResponse.json(
+        {
+          error: "Not a fungible token (NFT or unsupported type)",
+          results: [],
+          totalFound: 0,
+        },
+        { status: 400 }
+      );
+    }
+
+    const searchTerm = deriveSearchTermFromMintMetadata(
+      h.heliusName,
+      h.heliusSymbol
+    );
+
+    if (searchTerm.length < MIN_QUERY) {
+      return NextResponse.json(
+        {
+          error: "This mint has no name/symbol long enough to search for duplicates",
+          results: [],
+          totalFound: 0,
+        },
+        { status: 400 }
+      );
+    }
+
+    let rawTokens = await searchTokens(searchTerm);
+    const hasScanned = rawTokens.some((t) => t.mint === q);
+    if (!hasScanned) {
+      rawTokens = [
+        ...rawTokens,
+        {
+          mint: q,
+          jupName: h.heliusName ?? undefined,
+          jupSymbol: h.heliusSymbol ?? undefined,
+        },
+      ];
+    }
+
+    const normalizedQuery = normalize(searchTerm);
+    const final = await buildTokenResults(rawTokens, searchTerm, {
+      scannedMint: q,
+    });
+
+    setSearchCache(cacheKey, {
+      results: final,
+      query: normalizedQuery,
+      scanName: h.heliusName,
+      scanSymbol: h.heliusSymbol,
+    } satisfies MintScanPayload);
+
+    const scanned = final.find((t) => t.mint === q);
+    const timing = Date.now() - start;
+
+    logSearch(normalizedQuery, final, timing, rawTokens.length, final.length);
+
+    return NextResponse.json({
+      results: final,
+      query: normalizedQuery,
+      totalFound: final.length,
+      timing,
+      mode: "scan" as const,
+      scannedMint: q,
+      scanName: h.heliusName,
+      scanSymbol: h.heliusSymbol,
+      isScannedOG: scanned?.rank === 1,
+      scannedRank: scanned?.rank ?? null,
+      originalInput: q,
+    });
+  }
+
+  // ——— Text search ———
   const normalizedQuery = normalize(q);
 
   const cached = getSearchCache<TokenResult[]>(normalizedQuery);
@@ -31,6 +177,7 @@ export async function GET(request: NextRequest) {
       query: normalizedQuery,
       totalFound: cached.length,
       timing: Date.now() - start,
+      mode: "search" as const,
     });
   }
 
@@ -42,127 +189,21 @@ export async function GET(request: NextRequest) {
       query: normalizedQuery,
       totalFound: 0,
       timing: Date.now() - start,
+      mode: "search" as const,
     });
   }
 
-  const mints = rawTokens.map((t) => t.mint);
-  const heliusData = await getAssetBatch(mints);
-
-  const enriched: TokenResult[] = [];
-
-  for (const raw of rawTokens) {
-    const h = heliusData.get(raw.mint);
-
-    if (h) {
-      if (
-        h.tokenInterface &&
-        h.tokenInterface !== "FungibleToken" &&
-        h.tokenInterface !== "FungibleAsset"
-      ) {
-        continue;
-      }
-      if (h.supply != null && h.supply <= 0) {
-        continue;
-      }
-    }
-
-    // Creation time: use the EARLIEST available timestamp.
-    // - Helius created_at (usually null for fungible tokens)
-    // - DexScreener pairCreatedAt (pair listing time, good proxy)
-    // - getSignaturesForAddress blockTime (actual first tx, expensive)
-    // We take the minimum of all available sources.
-    let createdAtMs: number | null = null;
-    let slot: number | null = h?.slot ?? null;
-    let timeSource = "unknown";
-
-    // Source 1: Helius created_at
-    if (h?.createdAt) {
-      const parsed = new Date(h.createdAt).getTime();
-      if (!isNaN(parsed)) {
-        createdAtMs = parsed;
-        timeSource = "helius";
-      }
-    }
-
-    // Source 2: DexScreener pairCreatedAt
-    if (raw.pairCreatedAt) {
-      if (createdAtMs == null || raw.pairCreatedAt < createdAtMs) {
-        createdAtMs = raw.pairCreatedAt;
-        timeSource = "dexscreener";
-      }
-    }
-
-    // Source 3: getSignaturesForAddress (only if no time yet — expensive)
-    if (createdAtMs == null) {
-      const fallback = await getCreationSlot(raw.mint);
-      if (fallback) {
-        const sigTime = fallback.blockTime * 1000;
-        if (createdAtMs == null || sigTime < createdAtMs) {
-          createdAtMs = sigTime;
-          slot = fallback.slot;
-          timeSource = "signatures";
-        }
-      }
-    }
-
-    enriched.push({
-      mint: raw.mint,
-      displayName: resolveDisplayName(
-        raw.dexName,
-        raw.jupName,
-        h?.heliusName
-      ),
-      displaySymbol: resolveDisplaySymbol(
-        raw.dexSymbol,
-        raw.jupSymbol,
-        h?.heliusSymbol
-      ),
-      slot,
-      createdAtMs,
-      createdAt: createdAtMs
-        ? new Date(createdAtMs).toISOString()
-        : null,
-      dexId: raw.dexId ?? null,
-      confidence: 0,
-      confidenceLabel: "",
-      rank: 0,
-      rankLabel: "",
-      timeSource,
-    });
-  }
-
-  const sorted = sortByCreationTime(enriched);
-  const scored = scoreConfidence(sorted, q);
-  const final = scored.slice(0, MAX_RESULTS);
-
+  const final = await buildTokenResults(rawTokens, q);
   setSearchCache(normalizedQuery, final);
 
   const timing = Date.now() - start;
-
-  if (process.env.NODE_ENV === "development") {
-    const dexCount = rawTokens.filter((t) => t.dexName).length;
-    const jupCount = rawTokens.filter((t) => t.jupName).length;
-    const sources = enriched.reduce(
-      (acc, t) => {
-        acc[t.timeSource] = (acc[t.timeSource] || 0) + 1;
-        return acc;
-      },
-      {} as Record<string, number>
-    );
-    console.log(
-      `[OGfinder] q="${normalizedQuery}" dex=${dexCount} jup=${jupCount} enriched=${enriched.length} sources=${JSON.stringify(sources)} time=${timing}ms`
-    );
-    if (final.length > 0) {
-      console.log(
-        `[OGfinder] #1: "${final[0].displayName}" created=${final[0].createdAt} via=${final[0].timeSource} mint=${final[0].mint}`
-      );
-    }
-  }
+  logSearch(normalizedQuery, final, timing, rawTokens.length, final.length);
 
   return NextResponse.json({
     results: final,
     query: normalizedQuery,
     totalFound: final.length,
     timing,
+    mode: "search" as const,
   });
 }

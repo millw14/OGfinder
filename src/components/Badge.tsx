@@ -1,10 +1,13 @@
 "use client";
 
+import { LottieHover } from "./LottieHover";
+import crownOg from "@/assets/lottie/crown-og.json";
+
 export function OGBadge({ rank }: { rank: number }) {
   if (rank !== 1) return null;
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-yellow-900/40 px-3 py-1 text-xs font-bold uppercase tracking-wide text-yellow-400 ring-1 ring-yellow-600/50">
-      <span>👑</span>
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-yellow-900/40 px-2.5 py-1 text-xs font-bold uppercase tracking-wide text-yellow-400 ring-1 ring-yellow-600/50">
+      <LottieHover animationData={crownOg} size={20} className="shrink-0" />
       <span>OG</span>
     </span>
   );
@@ -54,6 +57,14 @@ export function PlatformBadge({ dexId }: { dexId: string | null }) {
       className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ${colors}`}
     >
       {label}
+    </span>
+  );
+}
+
+export function ScannedMintBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-cyan-950/50 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-300 ring-1 ring-cyan-600/40">
+      Your CA
     </span>
   );
 }
