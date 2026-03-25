@@ -106,6 +106,62 @@ export async function getAssetBatch(
   return result;
 }
 
+const SPL_TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const SPL_TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+
+/**
+ * When DAS getAssetBatch has no record (unindexed mint), fall back to standard
+ * RPC getAccountInfo(jsonParsed) to detect an SPL mint account.
+ */
+export async function getMintHeliusDataRpcFallback(
+  mint: string
+): Promise<HeliusSlotData | null> {
+  try {
+    const response = (await heliusRpc("getAccountInfo", [
+      mint,
+      { encoding: "jsonParsed" },
+    ])) as {
+      result?: {
+        value: null | {
+          owner?: string;
+          data?: {
+            program?: string;
+            parsed?: { type?: string; info?: { supply?: string } };
+          };
+        };
+      };
+    };
+
+    const value = response?.result?.value;
+    if (!value || typeof value !== "object") return null;
+
+    const owner = value.owner;
+    if (owner !== SPL_TOKEN_PROGRAM && owner !== SPL_TOKEN_2022_PROGRAM) {
+      return null;
+    }
+
+    const parsed = value.data?.parsed;
+    if (parsed?.type !== "mint") return null;
+
+    const supplyStr = parsed.info?.supply;
+    const supply =
+      supplyStr != null && supplyStr !== ""
+        ? Number(supplyStr)
+        : null;
+
+    return {
+      slot: null,
+      createdAt: null,
+      heliusName: null,
+      heliusSymbol: null,
+      tokenInterface: "FungibleToken",
+      supply: Number.isFinite(supply) ? supply : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Get the actual creation slot/blockTime for a mint by paginating backward
  * through getSignaturesForAddress until we find the very first transaction.

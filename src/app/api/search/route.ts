@@ -11,7 +11,8 @@ import { searchTokens } from "@/lib/search";
 import { buildTokenResults } from "@/lib/enrich-results";
 import { isLikelyMintAddress } from "@/lib/solana";
 import { deriveSearchTermFromMintMetadata } from "@/lib/mint-search";
-import { getAssetBatch } from "@/lib/helius";
+import { getAssetBatch, getMintHeliusDataRpcFallback } from "@/lib/helius";
+import { getJupiterTokenByMint } from "@/lib/jupiter";
 
 interface MintScanPayload {
   results: TokenResult[];
@@ -82,7 +83,22 @@ export async function GET(request: NextRequest) {
     }
 
     const pre = await getAssetBatch([q]);
-    const h = pre.get(q);
+    let h = pre.get(q);
+
+    // DAS often omits unindexed mints; verify via RPC + Jupiter metadata.
+    if (!h) {
+      const fb = await getMintHeliusDataRpcFallback(q);
+      if (fb) {
+        const jup = await getJupiterTokenByMint(q);
+        h = jup
+          ? {
+              ...fb,
+              heliusName: jup.name,
+              heliusSymbol: jup.symbol,
+            }
+          : fb;
+      }
+    }
 
     if (!h) {
       return NextResponse.json(
@@ -106,10 +122,25 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const searchTerm = deriveSearchTermFromMintMetadata(
+    let searchTerm = deriveSearchTermFromMintMetadata(
       h.heliusName,
       h.heliusSymbol
     );
+
+    if (searchTerm.length < MIN_QUERY) {
+      const jup = await getJupiterTokenByMint(q);
+      if (jup) {
+        h = {
+          ...h,
+          heliusName: jup.name,
+          heliusSymbol: jup.symbol,
+        };
+        searchTerm = deriveSearchTermFromMintMetadata(
+          h.heliusName,
+          h.heliusSymbol
+        );
+      }
+    }
 
     if (searchTerm.length < MIN_QUERY) {
       return NextResponse.json(
