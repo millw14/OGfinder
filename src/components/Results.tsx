@@ -1,7 +1,10 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useEffect, useMemo, useState } from "react";
 import { TokenResult } from "@/lib/types";
+import { bucketForDexId, LAUNCHPAD_BUCKETS } from "@/lib/launchpads";
+import { sortByCreationTime, scoreConfidence } from "@/lib/sort";
 
 const TokenCard = dynamic(
   () =>
@@ -43,16 +46,23 @@ function SkeletonCard() {
   );
 }
 
-function ScanBanner({ scan }: { scan: ScanSummary }) {
+function ScanBanner({
+  scan,
+  hiddenByFilter,
+  effectiveRank,
+  effectiveIsOG,
+}: {
+  scan: ScanSummary;
+  hiddenByFilter: boolean;
+  effectiveRank: number | null;
+  effectiveIsOG: boolean;
+}) {
   if (scan.mode !== "scan" || !scan.scannedMint) return null;
 
   const name =
     scan.scanName && scan.scanSymbol
       ? `${scan.scanName} ($${scan.scanSymbol})`
       : scan.scanName ?? scan.scanSymbol ?? "Token";
-
-  const rank = scan.scannedRank;
-  const isOG = scan.isScannedOG === true;
 
   return (
     <div className="mb-4 rounded-2xl border border-cyan-900/40 bg-gradient-to-br from-cyan-950/30 to-gray-900/50 p-4 sm:p-5">
@@ -61,14 +71,20 @@ function ScanBanner({ scan }: { scan: ScanSummary }) {
       </p>
       <p className="mt-1.5 text-sm leading-relaxed text-gray-300 sm:text-base">
         Resolved <span className="font-medium text-gray-100">{name}</span>
-        {rank != null ? (
+        {hiddenByFilter ? (
+          <span className="text-gray-500">
+            {" "}
+            — your mint doesn’t match the selected launchpad filters. Clear
+            filters to see it in the full list.
+          </span>
+        ) : effectiveRank != null ? (
           <>
             {" "}
             — your mint is{" "}
             <span className="font-semibold text-cyan-200">
-              #{rank} oldest
+              #{effectiveRank} oldest
             </span>
-            {isOG ? (
+            {effectiveIsOG ? (
               <span className="text-yellow-400"> — this is the OG.</span>
             ) : (
               <span className="text-gray-500">
@@ -91,6 +107,7 @@ function ScanBanner({ scan }: { scan: ScanSummary }) {
 
 interface ResultsProps {
   results: TokenResult[];
+  lastQuery: string;
   isLoading: boolean;
   hasSearched: boolean;
   timing?: number;
@@ -100,12 +117,58 @@ interface ResultsProps {
 
 export function Results({
   results,
+  lastQuery,
   isLoading,
   hasSearched,
   timing,
   error,
   scan,
 }: ResultsProps) {
+  const [selectedBucketIds, setSelectedBucketIds] = useState<Set<string>>(
+    () => new Set()
+  );
+
+  useEffect(() => {
+    setSelectedBucketIds(new Set());
+  }, [lastQuery]);
+
+  const filtersActive = selectedBucketIds.size > 0;
+
+  const displayed = useMemo(() => {
+    let subset = results;
+    if (filtersActive) {
+      subset = results.filter((t) =>
+        selectedBucketIds.has(bucketForDexId(t.dexId))
+      );
+    }
+    const sorted = sortByCreationTime([...subset]);
+    return scoreConfidence(sorted, lastQuery);
+  }, [results, lastQuery, filtersActive, selectedBucketIds]);
+
+  const scannedRow = useMemo(() => {
+    if (scan?.mode !== "scan" || !scan.scannedMint) return null;
+    return displayed.find((t) => t.mint === scan.scannedMint) ?? null;
+  }, [displayed, scan]);
+
+  const hiddenByFilter = Boolean(
+    scan?.mode === "scan" &&
+      scan.scannedMint &&
+      filtersActive &&
+      !scannedRow
+  );
+
+  const effectiveRank = scannedRow?.rank ?? null;
+  const effectiveIsOG = scannedRow?.rank === 1;
+
+  function toggleBucket(id: string) {
+    setSelectedBucketIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   if (isLoading) {
     return (
       <div className="space-y-3">
@@ -141,24 +204,90 @@ export function Results({
 
   if (results.length === 0) return null;
 
+  const totalCount = results.length;
+  const shownCount = displayed.length;
+
   return (
     <div>
-      {scan && <ScanBanner scan={scan} />}
+      {scan && (
+        <ScanBanner
+          scan={scan}
+          hiddenByFilter={hiddenByFilter}
+          effectiveRank={hiddenByFilter ? null : effectiveRank}
+          effectiveIsOG={hiddenByFilter ? false : effectiveIsOG}
+        />
+      )}
+
+      <div className="mb-3">
+        <p className="mb-2 px-1 text-[11px] font-medium uppercase tracking-wider text-gray-600">
+          Launchpad
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {LAUNCHPAD_BUCKETS.map(({ id, label }) => {
+            const on = selectedBucketIds.has(id);
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => toggleBucket(id)}
+                className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                  on
+                    ? "border-amber-500/60 bg-amber-950/40 text-amber-200"
+                    : "border-gray-700/80 bg-gray-900/50 text-gray-500 hover:border-gray-600 hover:text-gray-300"
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
+          {filtersActive && (
+            <button
+              type="button"
+              onClick={() => setSelectedBucketIds(new Set())}
+              className="rounded-full border border-transparent px-2 py-1 text-[11px] text-gray-500 underline-offset-2 hover:text-gray-300 hover:underline"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
 
       <div className="mb-3 flex items-center justify-between px-1 text-xs text-gray-500">
         <span>
-          {results.length} token{results.length !== 1 ? "s" : ""} found
-          <span className="text-gray-700"> — oldest first</span>
+          {filtersActive ? (
+            <>
+              <span className="tabular-nums text-gray-300">{shownCount}</span>
+              {shownCount !== 1 ? " tokens" : " token"} shown
+              <span className="text-gray-700"> · </span>
+              <span className="text-gray-600">{totalCount} total</span>
+              <span className="text-gray-700"> — oldest first</span>
+            </>
+          ) : (
+            <>
+              {totalCount} token{totalCount !== 1 ? "s" : ""} found
+              <span className="text-gray-700"> — oldest first</span>
+            </>
+          )}
         </span>
         {timing != null && (
           <span className="tabular-nums text-gray-600">{timing}ms</span>
         )}
       </div>
-      <div className="space-y-2.5">
-        {results.map((token) => (
-          <TokenCard key={token.mint} token={token} />
-        ))}
-      </div>
+
+      {filtersActive && shownCount === 0 ? (
+        <div className="rounded-2xl border border-gray-800/60 bg-gray-900/30 px-5 py-10 text-center">
+          <p className="text-sm text-gray-400">No tokens match these filters</p>
+          <p className="mt-1 text-xs text-gray-600">
+            Clear launchpad filters or pick fewer options
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2.5">
+          {displayed.map((token) => (
+            <TokenCard key={token.mint} token={token} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

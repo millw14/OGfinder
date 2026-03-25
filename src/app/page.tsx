@@ -57,6 +57,7 @@ export default function Home() {
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [scan, setScan] = useState<ScanSummary | null>(null);
+  const [lastQuery, setLastQuery] = useState("");
 
   useEffect(() => {
     setRecentSearches(getRecent());
@@ -75,12 +76,14 @@ export default function Home() {
       if (!res.ok) {
         setResults([]);
         setTiming(undefined);
+        setLastQuery("");
         setSearchError(
           typeof data.error === "string" ? data.error : "Request failed"
         );
         return;
       }
 
+      setLastQuery(data.query ?? "");
       setResults(data.results ?? []);
       setTiming(data.timing);
       if (data.mode === "scan" && data.scannedMint) {
@@ -100,6 +103,7 @@ export default function Home() {
     } catch {
       setResults([]);
       setTiming(undefined);
+      setLastQuery("");
       setSearchError("Network error — try again");
     } finally {
       setIsLoading(false);
@@ -160,6 +164,7 @@ export default function Home() {
         <div className="mt-8">
           <Results
             results={results}
+            lastQuery={lastQuery}
             isLoading={isLoading}
             hasSearched={hasSearched}
             timing={timing}
