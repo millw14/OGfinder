@@ -1,11 +1,19 @@
-import { RawToken, TokenResult, MAX_RESULTS } from "./types";
+import {
+  RawToken,
+  TokenResult,
+  MAX_RESULTS,
+  HeliusSlotData,
+} from "./types";
 import { getAssetBatch, getCreationSlot } from "./helius";
+import { dexPairCreatedMs } from "./normalize";
 import {
   sortByCreationTime,
   scoreConfidence,
   resolveDisplayName,
   resolveDisplaySymbol,
 } from "./sort";
+
+const CREATION_SLOT_CONCURRENCY = 8;
 
 export async function buildTokenResults(
   rawTokens: RawToken[],
@@ -15,7 +23,16 @@ export async function buildTokenResults(
   const mints = rawTokens.map((t) => t.mint);
   const heliusData = await getAssetBatch(mints);
 
-  const enriched: TokenResult[] = [];
+  type Candidate = {
+    raw: RawToken;
+    h: HeliusSlotData | undefined;
+    isScannedMint: boolean;
+    createdAtMs: number | null;
+    slot: number | null;
+    timeSource: string;
+  };
+
+  const candidates: Candidate[] = [];
 
   for (const raw of rawTokens) {
     const h = heliusData.get(raw.mint);
@@ -48,47 +65,64 @@ export async function buildTokenResults(
       }
     }
 
-    if (raw.pairCreatedAt) {
-      if (createdAtMs == null || raw.pairCreatedAt < createdAtMs) {
-        createdAtMs = raw.pairCreatedAt;
+    const pairMs = dexPairCreatedMs(raw.pairCreatedAt);
+    if (pairMs != null) {
+      if (createdAtMs == null || pairMs < createdAtMs) {
+        createdAtMs = pairMs;
         timeSource = "dexscreener";
       }
     }
 
-    if (createdAtMs == null) {
-      const fallback = await getCreationSlot(raw.mint);
-      if (fallback) {
-        const sigTime = fallback.blockTime * 1000;
-        if (createdAtMs == null || sigTime < createdAtMs) {
-          createdAtMs = sigTime;
-          slot = fallback.slot;
-          timeSource = "signatures";
-        }
+    candidates.push({ raw, h, isScannedMint, createdAtMs, slot, timeSource });
+  }
+
+  const sigResults: Awaited<ReturnType<typeof getCreationSlot>>[] = [];
+  for (let i = 0; i < candidates.length; i += CREATION_SLOT_CONCURRENCY) {
+    const chunk = candidates.slice(i, i + CREATION_SLOT_CONCURRENCY);
+    const part = await Promise.all(
+      chunk.map((c) => getCreationSlot(c.raw.mint))
+    );
+    sigResults.push(...part);
+  }
+
+  const enriched: TokenResult[] = [];
+
+  for (let i = 0; i < candidates.length; i++) {
+    const c = candidates[i];
+    const sig = sigResults[i];
+    let { createdAtMs, slot, timeSource } = c;
+
+    if (sig) {
+      const sigMs = sig.blockTime * 1000;
+      if (createdAtMs == null || sigMs < createdAtMs) {
+        createdAtMs = sigMs;
+        slot = sig.slot;
+        timeSource = "signatures";
       }
     }
 
     enriched.push({
-      mint: raw.mint,
+      mint: c.raw.mint,
       displayName: resolveDisplayName(
-        raw.dexName,
-        raw.jupName,
-        h?.heliusName
+        c.raw.dexName,
+        c.raw.jupName,
+        c.h?.heliusName
       ),
       displaySymbol: resolveDisplaySymbol(
-        raw.dexSymbol,
-        raw.jupSymbol,
-        h?.heliusSymbol
+        c.raw.dexSymbol,
+        c.raw.jupSymbol,
+        c.h?.heliusSymbol
       ),
       slot,
       createdAtMs,
       createdAt: createdAtMs ? new Date(createdAtMs).toISOString() : null,
-      dexId: raw.dexId ?? null,
+      dexId: c.raw.dexId ?? null,
       confidence: 0,
       confidenceLabel: "",
       rank: 0,
       rankLabel: "",
       timeSource,
-      ...(isScannedMint ? { isScanned: true } : {}),
+      ...(c.isScannedMint ? { isScanned: true } : {}),
     });
   }
 

@@ -1,6 +1,6 @@
 import { RawToken, DEX_LIMIT, DEX_TIMEOUT } from "./types";
 import { fetchWithTimeout } from "./fetch";
-import { normalize } from "./normalize";
+import { normalize, dexPairCreatedMs } from "./normalize";
 import { getDexCache, setDexCache } from "./cache";
 
 const DEX_URL = "https://api.dexscreener.com/latest/dex/search";
@@ -51,17 +51,16 @@ export async function searchDex(query: string): Promise<RawToken[]> {
 
     for (const pair of solanaPairs) {
       const mint = pair.baseToken.address;
+      const pairMs = dexPairCreatedMs(pair.pairCreatedAt);
       const existing = tokenMap.get(mint);
 
       if (!existing) {
-        tokenMap.set(mint, { pair, oldestPairTime: pair.pairCreatedAt });
+        tokenMap.set(mint, { pair, oldestPairTime: pairMs });
       } else if (
-        pair.pairCreatedAt &&
-        (!existing.oldestPairTime ||
-          pair.pairCreatedAt < existing.oldestPairTime)
+        pairMs != null &&
+        (!existing.oldestPairTime || pairMs < existing.oldestPairTime)
       ) {
-        existing.oldestPairTime = pair.pairCreatedAt;
-        // Keep original pair for name/dexId but update timestamp
+        existing.oldestPairTime = pairMs;
       }
     }
 

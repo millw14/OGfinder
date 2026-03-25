@@ -7,7 +7,9 @@ export function OGBadge({ rank }: { rank: number }) {
   if (rank !== 1) return null;
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full bg-yellow-900/40 px-2.5 py-1 text-xs font-bold uppercase tracking-wide text-yellow-400 ring-1 ring-yellow-600/50">
-      <LottieHover animationData={crownOg} size={20} className="shrink-0" />
+      <span className="og-badge-crown inline-flex shrink-0">
+        <LottieHover animationData={crownOg} size={20} className="shrink-0" />
+      </span>
       <span>OG</span>
     </span>
   );
