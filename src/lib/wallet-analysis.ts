@@ -181,6 +181,7 @@ interface MintAccum {
 
 function parseSwaps(
   txs: EnhancedTx[],
+  walletAddress: string,
   holdings: WalletHolding[]
 ): Map<string, MintAccum> {
   const map = new Map<string, MintAccum>();
@@ -207,39 +208,100 @@ function parseSwaps(
     return acc;
   }
 
+  function recordBuy(mint: string, solAmount: number, tsMs: number) {
+    if (mint === SOL_MINT || solAmount <= 0) return;
+    const acc = getOrCreate(mint);
+    acc.totalBoughtSol += solAmount;
+    if (acc.firstBuyMs === 0 || tsMs < acc.firstBuyMs) acc.firstBuyMs = tsMs;
+    if (tsMs > acc.lastActivityMs) acc.lastActivityMs = tsMs;
+  }
+
+  function recordSell(mint: string, solAmount: number, tsMs: number) {
+    if (mint === SOL_MINT || solAmount <= 0) return;
+    const acc = getOrCreate(mint);
+    acc.totalSoldSol += solAmount;
+    if (tsMs > acc.lastActivityMs) acc.lastActivityMs = tsMs;
+    if (acc.firstBuyMs === 0) acc.firstBuyMs = tsMs;
+  }
+
   for (const tx of txs) {
-    if (tx.type !== "SWAP" || !tx.events?.swap) continue;
-
-    const swap = tx.events.swap;
     const tsMs = tx.timestamp * 1000;
+    let parsed = false;
 
-    const nativeInLam = swap.nativeInput
-      ? Number(swap.nativeInput.amount)
-      : 0;
-    const nativeOutLam = swap.nativeOutput
-      ? Number(swap.nativeOutput.amount)
-      : 0;
+    // Strategy 1: Use events.swap if available (most accurate)
+    if (tx.events?.swap) {
+      const swap = tx.events.swap;
+      const nativeInLam = swap.nativeInput
+        ? Number(swap.nativeInput.amount)
+        : 0;
+      const nativeOutLam = swap.nativeOutput
+        ? Number(swap.nativeOutput.amount)
+        : 0;
 
-    if (nativeInLam > 0 && swap.tokenOutputs && swap.tokenOutputs.length > 0) {
-      const solSpent = nativeInLam / LAMPORTS;
-      for (const tok of swap.tokenOutputs) {
-        if (tok.mint === SOL_MINT) continue;
-        const acc = getOrCreate(tok.mint);
-        acc.totalBoughtSol += solSpent / swap.tokenOutputs.length;
-        if (acc.firstBuyMs === 0 || tsMs < acc.firstBuyMs)
-          acc.firstBuyMs = tsMs;
-        if (tsMs > acc.lastActivityMs) acc.lastActivityMs = tsMs;
+      if (
+        nativeInLam > 0 &&
+        swap.tokenOutputs &&
+        swap.tokenOutputs.length > 0
+      ) {
+        const solSpent = nativeInLam / LAMPORTS;
+        for (const tok of swap.tokenOutputs) {
+          recordBuy(tok.mint, solSpent / swap.tokenOutputs.length, tsMs);
+        }
+        parsed = true;
+      }
+
+      if (
+        nativeOutLam > 0 &&
+        swap.tokenInputs &&
+        swap.tokenInputs.length > 0
+      ) {
+        const solReceived = nativeOutLam / LAMPORTS;
+        for (const tok of swap.tokenInputs) {
+          recordSell(tok.mint, solReceived / swap.tokenInputs.length, tsMs);
+        }
+        parsed = true;
       }
     }
 
-    if (nativeOutLam > 0 && swap.tokenInputs && swap.tokenInputs.length > 0) {
-      const solReceived = nativeOutLam / LAMPORTS;
-      for (const tok of swap.tokenInputs) {
-        if (tok.mint === SOL_MINT) continue;
-        const acc = getOrCreate(tok.mint);
-        acc.totalSoldSol += solReceived / swap.tokenInputs.length;
-        if (tsMs > acc.lastActivityMs) acc.lastActivityMs = tsMs;
-        if (acc.firstBuyMs === 0) acc.firstBuyMs = tsMs;
+    // Strategy 2: Fallback — infer swaps from tokenTransfers + nativeTransfers
+    if (!parsed && tx.tokenTransfers && tx.tokenTransfers.length > 0) {
+      let solOut = 0;
+      let solIn = 0;
+      for (const nt of tx.nativeTransfers ?? []) {
+        if (nt.fromUserAccount === walletAddress && nt.amount > 0)
+          solOut += nt.amount;
+        if (nt.toUserAccount === walletAddress && nt.amount > 0)
+          solIn += nt.amount;
+      }
+
+      const tokensIn: { mint: string; amount: number }[] = [];
+      const tokensOut: { mint: string; amount: number }[] = [];
+      for (const tt of tx.tokenTransfers) {
+        if (tt.mint === SOL_MINT) continue;
+        if (tt.tokenAmount <= 0) continue;
+        if (tt.toUserAccount === walletAddress) {
+          tokensIn.push({ mint: tt.mint, amount: tt.tokenAmount });
+        }
+        if (tt.fromUserAccount === walletAddress) {
+          tokensOut.push({ mint: tt.mint, amount: tt.tokenAmount });
+        }
+      }
+
+      const netSolOut = solOut > solIn ? (solOut - solIn) / LAMPORTS : 0;
+      const netSolIn = solIn > solOut ? (solIn - solOut) / LAMPORTS : 0;
+
+      // BUY: wallet spent SOL, received tokens
+      if (netSolOut > 0.0001 && tokensIn.length > 0) {
+        for (const t of tokensIn) {
+          recordBuy(t.mint, netSolOut / tokensIn.length, tsMs);
+        }
+      }
+
+      // SELL: wallet sent tokens, received SOL
+      if (netSolIn > 0.0001 && tokensOut.length > 0) {
+        for (const t of tokensOut) {
+          recordSell(t.mint, netSolIn / tokensOut.length, tsMs);
+        }
       }
     }
   }
@@ -250,29 +312,83 @@ function parseSwaps(
 // ── Side wallets ───────────────────────────────────────────────────
 
 const KNOWN_PROGRAMS = new Set([
+  // System & token programs
   "11111111111111111111111111111111",
   "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
   "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
   "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
   "ComputeBudget111111111111111111111111111111",
+  "SysvarRent111111111111111111111111111111111",
+  "SysvarC1ock11111111111111111111111111111111",
+  "Sysvar1nstructions1111111111111111111111111",
+  "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+  "Memo1UhkJBfCvE5urgxVxdGHQgpRZSRFeyWX4RdYjMM",
+  // DEX & AMM programs
   "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+  "JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcPX73",
+  "JUP3jqoiSqKFsR5EVfH1J4wM2fYhpDbNzLuiQgR3Akn",
+  "JUP2jxvXaqu7NQY1GmNF4m1vodw12LVXYxbFL2uN9CFi",
   "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
   "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
   "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
   "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+  "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin", // Serum DEX
+  "srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX",  // Serum v3
+  "DjVE6JNiYqPL2QXyCUUh8rNjHrbz9hXHNYt99MQ59qw1", // Orca v1
+  "9W959DqEETiGZocYWCQPaJ6sBmUzgfxXfqGeTEdp3aQP", // Orca v2
+  "routeUGWgWzqBWFcrCfv8tritsqukccJPu3q5GPP3xS",  // Raydium route
+  "27haf8L6oxUeXrHrgEgsexjSY5hbVUWEmvv9Nyxg8vQv", // Raydium v4
+  "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",  // Pump.fun
+  "TSWAPaqyCSx2KABk68Shruf4rp7CxcNi8hAsbdwmHbN",  // Tensor swap
+  "PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY",  // Phoenix
+  "2wT8Yq49kHgDzXuPxZSaeLaH1qbmGXtEyPy64bL7aD3c", // Lifinity v2
+  "SSwpkEEcbUqx4vtoEByFjSkhKdCT862DNVb52nZg1UZ",  // Saber
+  "MERLuDFBMmsHnsBPZw2sDQZHvXFMwp8EdjudcU2HKky",  // Mercurial
+  "FLUXubRmkEi2q6K3Y9kBPg9248ggaZVsoSFhtJHSrm1X", // FluxBeam
+  // Pump.fun related
+  "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+  "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp18C",
+  // Staking & governance
+  "Stake11111111111111111111111111111111111111",
+  "Vote111111111111111111111111111111111111111",
+  // Metaplex
+  "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+  "auth9SigNpDKz4sJJ1DfCTuZrZNSAgh9sFD3rboVmgg",
   SOL_MINT,
 ]);
+
+function collectProgramIds(txs: EnhancedTx[]): Set<string> {
+  const programs = new Set<string>();
+  for (const tx of txs) {
+    if (tx.accountData) {
+      for (const ad of tx.accountData) {
+        if (ad.nativeBalanceChange === 0 && ad.account) {
+          programs.add(ad.account);
+        }
+      }
+    }
+  }
+  return programs;
+}
 
 function detectSideWallets(
   txs: EnhancedTx[],
   walletAddress: string
 ): SideWallet[] {
+  const txPrograms = collectProgramIds(txs);
+
   const counterparties = new Map<
     string,
     { sent: number; received: number; count: number }
   >();
 
+  const seenPerTx = new Map<string, Set<string>>();
+
   for (const tx of txs) {
+    const sig = tx.signature;
+    if (!seenPerTx.has(sig)) seenPerTx.set(sig, new Set());
+    const seen = seenPerTx.get(sig)!;
+
     for (const nt of tx.nativeTransfers ?? []) {
       if (nt.amount <= 0) continue;
 
@@ -281,14 +397,17 @@ function detectSideWallets(
         nt.toUserAccount !== walletAddress
       ) {
         const addr = nt.toUserAccount;
-        if (KNOWN_PROGRAMS.has(addr)) continue;
+        if (KNOWN_PROGRAMS.has(addr) || txPrograms.has(addr)) continue;
         const e = counterparties.get(addr) ?? {
           sent: 0,
           received: 0,
           count: 0,
         };
         e.sent += nt.amount / LAMPORTS;
-        e.count++;
+        if (!seen.has(addr)) {
+          e.count++;
+          seen.add(addr);
+        }
         counterparties.set(addr, e);
       }
       if (
@@ -296,14 +415,17 @@ function detectSideWallets(
         nt.fromUserAccount !== walletAddress
       ) {
         const addr = nt.fromUserAccount;
-        if (KNOWN_PROGRAMS.has(addr)) continue;
+        if (KNOWN_PROGRAMS.has(addr) || txPrograms.has(addr)) continue;
         const e = counterparties.get(addr) ?? {
           sent: 0,
           received: 0,
           count: 0,
         };
         e.received += nt.amount / LAMPORTS;
-        e.count++;
+        if (!seen.has(addr)) {
+          e.count++;
+          seen.add(addr);
+        }
         counterparties.set(addr, e);
       }
     }
@@ -311,7 +433,9 @@ function detectSideWallets(
 
   const results: SideWallet[] = [];
   counterparties.forEach((val, addr) => {
-    if (val.count < 2) return;
+    const totalSol =
+      Math.round((val.sent + val.received) * 1000) / 1000;
+    if (val.count < 2 || totalSol < 0.01) return;
     const dir: SideWallet["direction"] =
       val.sent > 0 && val.received > 0
         ? "both"
@@ -321,13 +445,13 @@ function detectSideWallets(
     results.push({
       address: addr,
       interactionCount: val.count,
-      totalSolTransferred: Math.round((val.sent + val.received) * 1000) / 1000,
+      totalSolTransferred: totalSol,
       direction: dir,
     });
   });
 
-  results.sort((a, b) => b.interactionCount - a.interactionCount);
-  return results.slice(0, 20);
+  results.sort((a, b) => b.totalSolTransferred - a.totalSolTransferred);
+  return results.slice(0, 3);
 }
 
 // ── Current prices via DexScreener ─────────────────────────────────
@@ -384,7 +508,22 @@ export async function analyzeWallet(
     fetchEnhancedTransactions(address),
   ]);
 
-  const swapMap = parseSwaps(txs, holdings);
+  const typeCounts = new Map<string, number>();
+  let withSwapEvent = 0;
+  let withTokenTransfers = 0;
+  for (const tx of txs) {
+    typeCounts.set(tx.type, (typeCounts.get(tx.type) ?? 0) + 1);
+    if (tx.events?.swap) withSwapEvent++;
+    if (tx.tokenTransfers && tx.tokenTransfers.length > 0) withTokenTransfers++;
+  }
+  const typeStr: string[] = [];
+  typeCounts.forEach((cnt, type) => typeStr.push(`${type}=${cnt}`));
+  console.log(
+    `[wallet] ${address.slice(0, 8)}... ${txs.length} txs, types: ${typeStr.join(", ")}, withSwapEvent=${withSwapEvent}, withTokenTransfers=${withTokenTransfers}, holdings=${holdings.length}`
+  );
+
+  const swapMap = parseSwaps(txs, address, holdings);
+  console.log(`[wallet] parsed ${swapMap.size} token swaps`);
 
   const heldMints = holdings.map((h) => h.mint);
   const swapMints = Array.from(swapMap.keys());
