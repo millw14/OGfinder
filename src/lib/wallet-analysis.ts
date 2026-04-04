@@ -208,12 +208,16 @@ function parseSwaps(
     return acc;
   }
 
+  let buyCount = 0;
+  let sellCount = 0;
+
   function recordBuy(mint: string, solAmount: number, tsMs: number) {
     if (mint === SOL_MINT || solAmount <= 0) return;
     const acc = getOrCreate(mint);
     acc.totalBoughtSol += solAmount;
     if (acc.firstBuyMs === 0 || tsMs < acc.firstBuyMs) acc.firstBuyMs = tsMs;
     if (tsMs > acc.lastActivityMs) acc.lastActivityMs = tsMs;
+    buyCount++;
   }
 
   function recordSell(mint: string, solAmount: number, tsMs: number) {
@@ -222,6 +226,7 @@ function parseSwaps(
     acc.totalSoldSol += solAmount;
     if (tsMs > acc.lastActivityMs) acc.lastActivityMs = tsMs;
     if (acc.firstBuyMs === 0) acc.firstBuyMs = tsMs;
+    sellCount++;
   }
 
   for (const tx of txs) {
@@ -284,8 +289,8 @@ function parseSwaps(
       }
     }
 
-    // Strategy 2: Fallback — only for SWAP-typed txs missing events.swap
-    if (!parsed && tx.type === "SWAP" && tx.tokenTransfers && tx.tokenTransfers.length > 0) {
+    // Strategy 2: Infer from tokenTransfers + nativeTransfers
+    if (!parsed && tx.tokenTransfers && tx.tokenTransfers.length > 0) {
       let solOut = 0;
       let solIn = 0;
       for (const nt of tx.nativeTransfers ?? []) {
@@ -310,16 +315,19 @@ function parseSwaps(
 
       const netSolOut = solOut > solIn ? (solOut - solIn) / LAMPORTS : 0;
       const netSolIn = solIn > solOut ? (solIn - solOut) / LAMPORTS : 0;
+      const isSwapType = tx.type === "SWAP";
 
-      // BUY: wallet spent SOL, received tokens
-      if (netSolOut > 0.0001 && tokensIn.length > 0) {
+      // BUY: wallet spent SOL, received tokens (only for SWAP-type to avoid
+      // miscounting regular SOL transfers as buys)
+      if (isSwapType && netSolOut > 0.005 && tokensIn.length > 0) {
         for (const t of tokensIn) {
           recordBuy(t.mint, netSolOut / tokensIn.length, tsMs);
         }
       }
 
-      // SELL: wallet sent tokens, received SOL
-      if (netSolIn > 0.0001 && tokensOut.length > 0) {
+      // SELL: wallet sent tokens, received SOL (any tx type — sells are
+      // unambiguous: tokens leave the wallet AND SOL arrives)
+      if (netSolIn > 0.005 && tokensOut.length > 0) {
         for (const t of tokensOut) {
           recordSell(t.mint, netSolIn / tokensOut.length, tsMs);
         }
@@ -327,6 +335,7 @@ function parseSwaps(
     }
   }
 
+  console.log(`[wallet] swap parsing: ${buyCount} buys, ${sellCount} sells, ${map.size} unique tokens`);
   return map;
 }
 
