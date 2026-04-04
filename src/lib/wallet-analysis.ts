@@ -243,61 +243,115 @@ function parseSwaps(
         ? Number(swap.nativeOutput.amount)
         : 0;
 
-      // Pump.fun and some DEXes don't populate nativeInput/nativeOutput
-      // in events.swap — compute from nativeTransfers as fallback
-      if (
-        (nativeInLam === 0 || nativeOutLam === 0) &&
-        tx.nativeTransfers &&
-        tx.nativeTransfers.length > 0
-      ) {
+      // Pump.fun and some DEXes don't populate nativeInput/nativeOutput —
+      // compute from accountData (most reliable) or nativeTransfers
+      if (nativeInLam === 0 || nativeOutLam === 0) {
+        let walletChangeLam = 0;
+        if (tx.accountData) {
+          const wd = tx.accountData.find(
+            (a) => a.account === walletAddress
+          );
+          if (wd) walletChangeLam = wd.nativeBalanceChange;
+        }
+        if (walletChangeLam === 0 && tx.nativeTransfers) {
+          let solOut = 0;
+          let solIn = 0;
+          for (const nt of tx.nativeTransfers) {
+            if (nt.fromUserAccount === walletAddress && nt.amount > 0)
+              solOut += nt.amount;
+            if (nt.toUserAccount === walletAddress && nt.amount > 0)
+              solIn += nt.amount;
+          }
+          walletChangeLam = solIn - solOut;
+        }
+        if (nativeInLam === 0 && walletChangeLam < 0)
+          nativeInLam = Math.abs(walletChangeLam);
+        if (nativeOutLam === 0 && walletChangeLam > 0)
+          nativeOutLam = walletChangeLam;
+      }
+
+      if (nativeInLam > 0) {
+        const solSpent = nativeInLam / LAMPORTS;
+        if (swap.tokenOutputs && swap.tokenOutputs.length > 0) {
+          for (const tok of swap.tokenOutputs) {
+            recordBuy(tok.mint, solSpent / swap.tokenOutputs.length, tsMs);
+          }
+          parsed = true;
+        } else if (tx.tokenTransfers && tx.tokenTransfers.length > 0) {
+          const tIn: string[] = [];
+          for (const tt of tx.tokenTransfers) {
+            if (
+              tt.toUserAccount === walletAddress &&
+              tt.mint !== SOL_MINT &&
+              tt.tokenAmount > 0
+            ) {
+              tIn.push(tt.mint);
+            }
+          }
+          if (tIn.length > 0) {
+            for (const mint of tIn) {
+              recordBuy(mint, solSpent / tIn.length, tsMs);
+            }
+            parsed = true;
+          }
+        }
+      }
+
+      if (nativeOutLam > 0) {
+        const solReceived = nativeOutLam / LAMPORTS;
+        if (swap.tokenInputs && swap.tokenInputs.length > 0) {
+          for (const tok of swap.tokenInputs) {
+            recordSell(
+              tok.mint,
+              solReceived / swap.tokenInputs.length,
+              tsMs
+            );
+          }
+          parsed = true;
+        } else if (tx.tokenTransfers && tx.tokenTransfers.length > 0) {
+          // events.swap missing tokenInputs — get tokens from tokenTransfers
+          const tOut: string[] = [];
+          for (const tt of tx.tokenTransfers) {
+            if (
+              tt.fromUserAccount === walletAddress &&
+              tt.mint !== SOL_MINT &&
+              tt.tokenAmount > 0
+            ) {
+              tOut.push(tt.mint);
+            }
+          }
+          if (tOut.length > 0) {
+            for (const mint of tOut) {
+              recordSell(mint, solReceived / tOut.length, tsMs);
+            }
+            parsed = true;
+          }
+        }
+      }
+    }
+
+    // Strategy 2: Infer from tokenTransfers + wallet SOL balance change
+    if (!parsed && tx.tokenTransfers && tx.tokenTransfers.length > 0) {
+      // Use accountData.nativeBalanceChange — most reliable SOL signal
+      let walletSolChangeLam = 0;
+      if (tx.accountData) {
+        const wd = tx.accountData.find(
+          (a) => a.account === walletAddress
+        );
+        if (wd) walletSolChangeLam = wd.nativeBalanceChange;
+      }
+
+      // Fallback to nativeTransfers if accountData unavailable
+      if (walletSolChangeLam === 0) {
         let solOut = 0;
         let solIn = 0;
-        for (const nt of tx.nativeTransfers) {
+        for (const nt of tx.nativeTransfers ?? []) {
           if (nt.fromUserAccount === walletAddress && nt.amount > 0)
             solOut += nt.amount;
           if (nt.toUserAccount === walletAddress && nt.amount > 0)
             solIn += nt.amount;
         }
-        if (nativeInLam === 0 && solOut > solIn)
-          nativeInLam = solOut - solIn;
-        if (nativeOutLam === 0 && solIn > solOut)
-          nativeOutLam = solIn - solOut;
-      }
-
-      if (
-        nativeInLam > 0 &&
-        swap.tokenOutputs &&
-        swap.tokenOutputs.length > 0
-      ) {
-        const solSpent = nativeInLam / LAMPORTS;
-        for (const tok of swap.tokenOutputs) {
-          recordBuy(tok.mint, solSpent / swap.tokenOutputs.length, tsMs);
-        }
-        parsed = true;
-      }
-
-      if (
-        nativeOutLam > 0 &&
-        swap.tokenInputs &&
-        swap.tokenInputs.length > 0
-      ) {
-        const solReceived = nativeOutLam / LAMPORTS;
-        for (const tok of swap.tokenInputs) {
-          recordSell(tok.mint, solReceived / swap.tokenInputs.length, tsMs);
-        }
-        parsed = true;
-      }
-    }
-
-    // Strategy 2: Infer from tokenTransfers + nativeTransfers
-    if (!parsed && tx.tokenTransfers && tx.tokenTransfers.length > 0) {
-      let solOut = 0;
-      let solIn = 0;
-      for (const nt of tx.nativeTransfers ?? []) {
-        if (nt.fromUserAccount === walletAddress && nt.amount > 0)
-          solOut += nt.amount;
-        if (nt.toUserAccount === walletAddress && nt.amount > 0)
-          solIn += nt.amount;
+        walletSolChangeLam = solIn - solOut;
       }
 
       const tokensIn: { mint: string; amount: number }[] = [];
@@ -313,23 +367,20 @@ function parseSwaps(
         }
       }
 
-      const netSolOut = solOut > solIn ? (solOut - solIn) / LAMPORTS : 0;
-      const netSolIn = solIn > solOut ? (solIn - solOut) / LAMPORTS : 0;
-      const isSwapType = tx.type === "SWAP";
+      const solChangeSol = walletSolChangeLam / LAMPORTS;
 
-      // BUY: wallet spent SOL, received tokens (only for SWAP-type to avoid
-      // miscounting regular SOL transfers as buys)
-      if (isSwapType && netSolOut > 0.005 && tokensIn.length > 0) {
+      // BUY: wallet lost SOL, received tokens (SWAP-type only)
+      if (tx.type === "SWAP" && solChangeSol < -0.005 && tokensIn.length > 0) {
+        const spent = Math.abs(solChangeSol);
         for (const t of tokensIn) {
-          recordBuy(t.mint, netSolOut / tokensIn.length, tsMs);
+          recordBuy(t.mint, spent / tokensIn.length, tsMs);
         }
       }
 
-      // SELL: wallet sent tokens, received SOL (any tx type — sells are
-      // unambiguous: tokens leave the wallet AND SOL arrives)
-      if (netSolIn > 0.005 && tokensOut.length > 0) {
+      // SELL: wallet gained SOL, sent tokens (any tx type)
+      if (solChangeSol > 0.005 && tokensOut.length > 0) {
         for (const t of tokensOut) {
-          recordSell(t.mint, netSolIn / tokensOut.length, tsMs);
+          recordSell(t.mint, solChangeSol / tokensOut.length, tsMs);
         }
       }
     }
