@@ -6,7 +6,6 @@ import { TokenResult, SearchResponse } from "@/lib/types";
 import { SearchBar } from "@/components/SearchBar";
 import { Results, ScanSummary } from "@/components/Results";
 import { NavTabs } from "@/components/NavTabs";
-import { DonationAddress } from "@/components/DonationAddress";
 
 /** Client-only: Lottie + canvas; avoids flaky dev SSR chunk splits (missing ./276.js). */
 const OGLogo = dynamic(
@@ -188,7 +187,6 @@ export default function Home() {
       <footer className="relative border-t border-gray-800/40 py-6">
         <div className="mx-auto flex max-w-2xl flex-col items-center gap-4 px-4">
           <SocialXLink />
-          <DonationAddress />
           <p className="text-center text-[11px] leading-relaxed text-gray-600">
             OGfinder — powered by{" "}
             <a
