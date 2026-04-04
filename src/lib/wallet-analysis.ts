@@ -645,8 +645,10 @@ export async function analyzeWallet(
     const holdingAmount = holding?.amount ?? 0;
     const currentValueSol =
       holdingAmount > 0 && price ? holdingAmount * price.priceNative : 0;
-    const unrealizedPnlSol = currentValueSol - (acc.totalBoughtSol - acc.totalSoldSol > 0 ? acc.totalBoughtSol - acc.totalSoldSol : 0);
+    // Net P&L = totalSoldSol + currentValueSol - totalBoughtSol
+    // realized already includes the full cost basis, so unrealized is just current value
     const realizedPnl = acc.totalSoldSol - acc.totalBoughtSol;
+    const unrealizedPnlSol = currentValueSol;
     const holdTimeMs =
       acc.lastActivityMs > 0 && acc.firstBuyMs > 0
         ? (holdingAmount > 0 ? now : acc.lastActivityMs) - acc.firstBuyMs
