@@ -4,6 +4,7 @@ import { Suspense, useState, useCallback, useEffect, FormEvent } from "react";
 import { WalletAnalysis, WalletResponse } from "@/lib/types";
 import { NavTabs } from "@/components/NavTabs";
 import { WalletView } from "@/components/WalletView";
+import { DonationAddress } from "@/components/DonationAddress";
 import { useSearchParams } from "next/navigation";
 
 const RECENT_KEY = "ogfinder_wallets";
@@ -175,6 +176,12 @@ function WalletPageInner() {
           </div>
         )}
       </main>
+
+      <footer className="relative border-t border-gray-800/40 py-6">
+        <div className="mx-auto flex max-w-2xl flex-col items-center gap-3 px-4">
+          <DonationAddress />
+        </div>
+      </footer>
     </div>
   );
 }
