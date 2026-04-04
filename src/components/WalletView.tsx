@@ -202,7 +202,9 @@ export function WalletView({ data }: { data: WalletAnalysis }) {
               >
                 <div className="min-w-0 flex-1">
                   <a
-                    href={`/wallet?address=${sw.address}`}
+                    href={`https://solscan.io/account/${sw.address}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="font-mono text-sm text-cyan-400 hover:text-cyan-300"
                   >
                     {truncAddr(sw.address)}

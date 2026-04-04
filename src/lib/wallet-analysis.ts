@@ -231,12 +231,33 @@ function parseSwaps(
     // Strategy 1: Use events.swap if available (most accurate)
     if (tx.events?.swap) {
       const swap = tx.events.swap;
-      const nativeInLam = swap.nativeInput
+      let nativeInLam = swap.nativeInput
         ? Number(swap.nativeInput.amount)
         : 0;
-      const nativeOutLam = swap.nativeOutput
+      let nativeOutLam = swap.nativeOutput
         ? Number(swap.nativeOutput.amount)
         : 0;
+
+      // Pump.fun and some DEXes don't populate nativeInput/nativeOutput
+      // in events.swap — compute from nativeTransfers as fallback
+      if (
+        (nativeInLam === 0 || nativeOutLam === 0) &&
+        tx.nativeTransfers &&
+        tx.nativeTransfers.length > 0
+      ) {
+        let solOut = 0;
+        let solIn = 0;
+        for (const nt of tx.nativeTransfers) {
+          if (nt.fromUserAccount === walletAddress && nt.amount > 0)
+            solOut += nt.amount;
+          if (nt.toUserAccount === walletAddress && nt.amount > 0)
+            solIn += nt.amount;
+        }
+        if (nativeInLam === 0 && solOut > solIn)
+          nativeInLam = solOut - solIn;
+        if (nativeOutLam === 0 && solIn > solOut)
+          nativeOutLam = solIn - solOut;
+      }
 
       if (
         nativeInLam > 0 &&
