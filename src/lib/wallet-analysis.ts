@@ -263,8 +263,8 @@ function parseSwaps(
       }
     }
 
-    // Strategy 2: Fallback — infer swaps from tokenTransfers + nativeTransfers
-    if (!parsed && tx.tokenTransfers && tx.tokenTransfers.length > 0) {
+    // Strategy 2: Fallback — only for SWAP-typed txs missing events.swap
+    if (!parsed && tx.type === "SWAP" && tx.tokenTransfers && tx.tokenTransfers.length > 0) {
       let solOut = 0;
       let solIn = 0;
       for (const nt of tx.nativeTransfers ?? []) {
@@ -458,16 +458,25 @@ function detectSideWallets(
 
 interface DexPairPrice {
   chainId: string;
-  baseToken: { address: string };
+  baseToken: { address: string; name?: string; symbol?: string };
   priceNative?: string;
   priceUsd?: string;
 }
 
-async function fetchCurrentPrices(
-  mints: string[]
-): Promise<Map<string, { priceNative: number; priceUsd: number }>> {
-  const result = new Map<string, { priceNative: number; priceUsd: number }>();
-  if (mints.length === 0) return result;
+interface TokenMeta {
+  name: string;
+  symbol: string;
+}
+
+interface PriceResult {
+  prices: Map<string, { priceNative: number; priceUsd: number }>;
+  names: Map<string, TokenMeta>;
+}
+
+async function fetchCurrentPrices(mints: string[]): Promise<PriceResult> {
+  const prices = new Map<string, { priceNative: number; priceUsd: number }>();
+  const names = new Map<string, TokenMeta>();
+  if (mints.length === 0) return { prices, names };
 
   const BATCH = 25;
   for (let i = 0; i < mints.length; i += BATCH) {
@@ -482,11 +491,62 @@ async function fetchCurrentPrices(
       for (const p of data) {
         if (p.chainId !== "solana") continue;
         const mint = p.baseToken.address;
-        if (result.has(mint)) continue;
-        const priceNative = p.priceNative ? Number(p.priceNative) : 0;
-        const priceUsd = p.priceUsd ? Number(p.priceUsd) : 0;
-        if (priceNative > 0 || priceUsd > 0) {
-          result.set(mint, { priceNative, priceUsd });
+        if (!prices.has(mint)) {
+          const priceNative = p.priceNative ? Number(p.priceNative) : 0;
+          const priceUsd = p.priceUsd ? Number(p.priceUsd) : 0;
+          if (priceNative > 0 || priceUsd > 0) {
+            prices.set(mint, { priceNative, priceUsd });
+          }
+        }
+        if (!names.has(mint) && p.baseToken.name) {
+          names.set(mint, {
+            name: p.baseToken.name,
+            symbol: p.baseToken.symbol ?? "???",
+          });
+        }
+      }
+    } catch {
+      /* skip batch */
+    }
+  }
+  return { prices, names };
+}
+
+// ── Helius DAS: getAssetBatch for token metadata ───────────────────
+
+async function fetchTokenMetadata(
+  mints: string[]
+): Promise<Map<string, TokenMeta>> {
+  const result = new Map<string, TokenMeta>();
+  const url = heliusRpcUrl();
+  if (!url || mints.length === 0) return result;
+
+  const BATCH = 50;
+  for (let i = 0; i < mints.length; i += BATCH) {
+    const chunk = mints.slice(i, i + BATCH);
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: "token-meta",
+      method: "getAssetBatch",
+      params: { ids: chunk },
+    });
+
+    try {
+      const data = (await fetchWithTimeout(url, HELIUS_TIMEOUT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      })) as { result?: DasAsset[] };
+
+      if (!data?.result || !Array.isArray(data.result)) continue;
+      for (const asset of data.result) {
+        if (!asset.id || result.has(asset.id)) continue;
+        const meta = asset.content?.metadata;
+        if (meta?.name || meta?.symbol) {
+          result.set(asset.id, {
+            name: meta.name ?? "Unknown",
+            symbol: meta.symbol ?? "???",
+          });
         }
       }
     } catch {
@@ -531,7 +591,50 @@ export async function analyzeWallet(
     new Set([...heldMints, ...swapMints].filter((m) => m !== SOL_MINT))
   );
 
-  const prices = await fetchCurrentPrices(allMints.slice(0, 75));
+  const { prices, names: dexNames } = await fetchCurrentPrices(
+    allMints.slice(0, 75)
+  );
+
+  // Collect mints still missing names after DexScreener
+  const holdingNames = new Map<string, TokenMeta>();
+  for (const h of holdings) {
+    holdingNames.set(h.mint, { name: h.name, symbol: h.symbol });
+  }
+
+  const missingNameMints: string[] = [];
+  swapMap.forEach((acc, mint) => {
+    if (acc.name !== "Unknown" && acc.symbol !== "???") return;
+    const dex = dexNames.get(mint);
+    if (dex) {
+      acc.name = dex.name;
+      acc.symbol = dex.symbol;
+      return;
+    }
+    const held = holdingNames.get(mint);
+    if (held && held.name !== "Unknown") {
+      acc.name = held.name;
+      acc.symbol = held.symbol;
+      return;
+    }
+    missingNameMints.push(mint);
+  });
+
+  // Fetch remaining names from Helius DAS (capped at 50 mints, ~1 credit each)
+  if (missingNameMints.length > 0) {
+    const heliusNames = await fetchTokenMetadata(
+      missingNameMints.slice(0, 50)
+    );
+    heliusNames.forEach((meta, mint) => {
+      const acc = swapMap.get(mint);
+      if (acc && acc.name === "Unknown") {
+        acc.name = meta.name;
+        acc.symbol = meta.symbol;
+      }
+    });
+    console.log(
+      `[wallet] resolved ${heliusNames.size}/${missingNameMints.length} token names via Helius DAS`
+    );
+  }
 
   const now = Date.now();
   const tokenPnl: TokenPnlEntry[] = [];
