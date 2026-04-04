@@ -6,6 +6,12 @@ export interface RawToken {
   jupSymbol?: string;
   dexId?: string;
   pairCreatedAt?: number; // ms timestamp from DexScreener
+  /** DexScreener 24h volume (USD) when from social / pair search */
+  volumeUsd24h?: number;
+  /** DexScreener pair market cap (USD), when present */
+  dexMarketCapUsd?: number;
+  /** DexScreener FDV (USD), when market cap is missing */
+  dexFdvUsd?: number;
 }
 
 export interface HeliusSlotData {
@@ -32,6 +38,14 @@ export interface TokenResult {
   timeSource: string; // where we got creation time from
   /** True when this mint was pasted for a CA scan */
   isScanned?: boolean;
+  /** Present for social-link search: 24h volume from DexScreener */
+  volumeUsd24h?: number | null;
+  /** Social-link search: DexScreener market cap (USD) */
+  marketCapUsd?: number | null;
+  /** Social-link search: DexScreener FDV when MC missing */
+  fdvUsd?: number | null;
+  /** How list order was determined (OG vs volume leaderboard) */
+  rankingMode?: "creation" | "volume" | "marketcap";
 }
 
 export interface SearchResponse {
@@ -39,7 +53,7 @@ export interface SearchResponse {
   query: string;
   totalFound: number;
   timing?: number;
-  mode?: "search" | "scan";
+  mode?: "search" | "scan" | "social";
   scannedMint?: string;
   scanName?: string | null;
   scanSymbol?: string | null;
@@ -58,6 +72,8 @@ export const MIN_QUERY = 2;
 export const MAX_QUERY = 30;
 /** Max length for pasted Solana mint (base58) */
 export const MAX_MINT_LEN = 44;
+/** Pasted social / website URLs for DexScreener link search */
+export const MAX_SOCIAL_URL = 512;
 export const CACHE_SEARCH = 600;
 export const CACHE_DEX = 300;
 export const CACHE_JUP = 3600;
@@ -65,3 +81,60 @@ export const CACHE_HELIUS = 3600;
 export const DEX_TIMEOUT = 5000;
 export const HELIUS_TIMEOUT = 10000;
 export const MAX_SIG_PAGES = 5;
+
+export const CACHE_WALLET = 300;
+export const WALLET_TX_PAGES = 5;
+export const WALLET_TX_PER_PAGE = 100;
+
+export interface WalletAnalysis {
+  address: string;
+  totalPnlSol: number;
+  totalPnlUsd: number | null;
+  topCoin: {
+    mint: string;
+    name: string;
+    symbol: string;
+    pnlSol: number;
+  } | null;
+  avgHoldTimeMs: number;
+  holdings: WalletHolding[];
+  tokenPnl: TokenPnlEntry[];
+  sideWallets: SideWallet[];
+  txCount: number;
+  timing: number;
+}
+
+export interface WalletHolding {
+  mint: string;
+  name: string;
+  symbol: string;
+  amount: number;
+  decimals: number;
+  valueUsd: number | null;
+}
+
+export interface TokenPnlEntry {
+  mint: string;
+  name: string;
+  symbol: string;
+  totalBoughtSol: number;
+  totalSoldSol: number;
+  realizedPnlSol: number;
+  currentValueSol: number;
+  unrealizedPnlSol: number;
+  firstBuyMs: number;
+  lastActivityMs: number;
+  holdTimeMs: number;
+}
+
+export interface SideWallet {
+  address: string;
+  interactionCount: number;
+  totalSolTransferred: number;
+  direction: "sent" | "received" | "both";
+}
+
+export interface WalletResponse {
+  data?: WalletAnalysis;
+  error?: string;
+}

@@ -8,7 +8,11 @@ import { getAssetBatch, getCreationSlot } from "./helius";
 import { dexPairCreatedMs } from "./normalize";
 import {
   sortByCreationTime,
+  sortByVolumeUsd,
+  sortByMarketCapLeaderboard,
   scoreConfidence,
+  scoreVolumeRank,
+  scoreMarketCapRank,
   resolveDisplayName,
   resolveDisplaySymbol,
 } from "./sort";
@@ -18,8 +22,13 @@ const CREATION_SLOT_CONCURRENCY = 8;
 export async function buildTokenResults(
   rawTokens: RawToken[],
   queryForScore: string,
-  options?: { scannedMint?: string }
+  options?: {
+    scannedMint?: string;
+    /** Default: oldest-first (OG). Social: use marketcap (MC → vol → age). */
+    rankBy?: "creation" | "volume" | "marketcap";
+  }
 ): Promise<TokenResult[]> {
+  const rankBy = options?.rankBy ?? "creation";
   const mints = rawTokens.map((t) => t.mint);
   const heliusData = await getAssetBatch(mints);
 
@@ -122,8 +131,34 @@ export async function buildTokenResults(
       rank: 0,
       rankLabel: "",
       timeSource,
+      volumeUsd24h:
+        typeof c.raw.volumeUsd24h === "number" ? c.raw.volumeUsd24h : null,
+      marketCapUsd:
+        typeof c.raw.dexMarketCapUsd === "number"
+          ? c.raw.dexMarketCapUsd
+          : null,
+      fdvUsd:
+        typeof c.raw.dexFdvUsd === "number" ? c.raw.dexFdvUsd : null,
+      rankingMode:
+        rankBy === "marketcap"
+          ? "marketcap"
+          : rankBy === "volume"
+            ? "volume"
+            : "creation",
       ...(c.isScannedMint ? { isScanned: true } : {}),
     });
+  }
+
+  if (rankBy === "volume") {
+    const sorted = sortByVolumeUsd(enriched);
+    const scored = scoreVolumeRank(sorted);
+    return scored.slice(0, MAX_RESULTS);
+  }
+
+  if (rankBy === "marketcap") {
+    const sorted = sortByMarketCapLeaderboard(enriched);
+    const scored = scoreMarketCapRank(sorted);
+    return scored.slice(0, MAX_RESULTS);
   }
 
   const sorted = sortByCreationTime(enriched);

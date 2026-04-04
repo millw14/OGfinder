@@ -3,6 +3,7 @@ import {
   MIN_QUERY,
   MAX_QUERY,
   MAX_MINT_LEN,
+  MAX_SOCIAL_URL,
   TokenResult,
 } from "@/lib/types";
 import { normalize } from "@/lib/normalize";
@@ -13,6 +14,9 @@ import { isLikelyMintAddress } from "@/lib/solana";
 import { deriveSearchTermFromMintMetadata } from "@/lib/mint-search";
 import { getAssetBatch, getMintHeliusDataRpcFallback } from "@/lib/helius";
 import { getJupiterTokenByMint } from "@/lib/jupiter";
+import { isLikelySocialUrl } from "@/lib/social-url";
+import { searchDexBySocialUrl } from "@/lib/dex-social";
+import { ensurePollerStarted } from "@/lib/poller";
 
 interface MintScanPayload {
   results: TokenResult[];
@@ -40,10 +44,63 @@ function logSearch(
 }
 
 export async function GET(request: NextRequest) {
+  ensurePollerStarted();
   const start = Date.now();
 
   const q = request.nextUrl.searchParams.get("q")?.trim() ?? "";
   const isMint = isLikelyMintAddress(q);
+
+  // ——— Social / website URL: tokens whose DexScreener profile includes this link ———
+  if (isLikelySocialUrl(q)) {
+    if (q.length < 8 || q.length > MAX_SOCIAL_URL) {
+      return NextResponse.json(
+        {
+          error: `Social link must be ${8}–${MAX_SOCIAL_URL} characters`,
+        },
+        { status: 400 }
+      );
+    }
+
+    const normalizedQuery = normalize(q);
+    const cacheKey = `social:${normalizedQuery}`;
+    const cached = getSearchCache<TokenResult[]>(cacheKey);
+    if (cached) {
+      return NextResponse.json({
+        results: cached,
+        query: normalizedQuery,
+        totalFound: cached.length,
+        timing: Date.now() - start,
+        mode: "social" as const,
+      });
+    }
+
+    const rawTokens = await searchDexBySocialUrl(q);
+    if (rawTokens.length === 0) {
+      return NextResponse.json({
+        results: [],
+        query: normalizedQuery,
+        totalFound: 0,
+        timing: Date.now() - start,
+        mode: "social" as const,
+      });
+    }
+
+    const final = await buildTokenResults(rawTokens, q, {
+      rankBy: "marketcap",
+    });
+    setSearchCache(cacheKey, final);
+
+    const timing = Date.now() - start;
+    logSearch(normalizedQuery, final, timing, rawTokens.length, final.length);
+
+    return NextResponse.json({
+      results: final,
+      query: normalizedQuery,
+      totalFound: final.length,
+      timing,
+      mode: "social" as const,
+    });
+  }
 
   if (!isMint) {
     if (q.length < MIN_QUERY || q.length > MAX_QUERY) {

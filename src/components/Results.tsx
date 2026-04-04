@@ -4,7 +4,12 @@ import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import { TokenResult } from "@/lib/types";
 import { bucketForDexId, LAUNCHPAD_BUCKETS } from "@/lib/launchpads";
-import { sortByCreationTime, scoreConfidence } from "@/lib/sort";
+import {
+  sortByCreationTime,
+  sortByMarketCapLeaderboard,
+  scoreConfidence,
+  scoreMarketCapRank,
+} from "@/lib/sort";
 
 const TokenCard = dynamic(
   () =>
@@ -108,6 +113,7 @@ function ScanBanner({
 interface ResultsProps {
   results: TokenResult[];
   lastQuery: string;
+  searchMode?: "search" | "scan" | "social" | null;
   isLoading: boolean;
   hasSearched: boolean;
   timing?: number;
@@ -118,6 +124,7 @@ interface ResultsProps {
 export function Results({
   results,
   lastQuery,
+  searchMode = null,
   isLoading,
   hasSearched,
   timing,
@@ -141,9 +148,13 @@ export function Results({
         selectedBucketIds.has(bucketForDexId(t.dexId))
       );
     }
+    if (searchMode === "social") {
+      const sorted = sortByMarketCapLeaderboard([...subset]);
+      return scoreMarketCapRank(sorted);
+    }
     const sorted = sortByCreationTime([...subset]);
     return scoreConfidence(sorted, lastQuery);
-  }, [results, lastQuery, filtersActive, selectedBucketIds]);
+  }, [results, lastQuery, filtersActive, selectedBucketIds, searchMode]);
 
   const scannedRow = useMemo(() => {
     if (scan?.mode !== "scan" || !scan.scannedMint) return null;
@@ -184,7 +195,7 @@ export function Results({
       <div className="rounded-2xl border border-red-900/40 bg-red-950/20 px-5 py-8 text-center">
         <p className="text-sm font-medium text-red-300">{error}</p>
         <p className="mt-2 text-xs text-red-400/80">
-          Try a name (2–30 chars) or a full Solana mint (32–44 characters).
+          Try a name, mint, or a social / website URL (8–512 characters).
         </p>
       </div>
     );
@@ -196,7 +207,9 @@ export function Results({
         <div className="text-4xl opacity-90">🔍</div>
         <p className="mt-4 text-base text-gray-400">No tokens found</p>
         <p className="mt-1 text-sm text-gray-600">
-          Try another name or paste a different mint
+          {searchMode === "social"
+            ? "No pairs on DexScreener list this URL in websites or socials yet"
+            : "Try another name, mint, or social link"}
         </p>
       </div>
     );
@@ -216,6 +229,18 @@ export function Results({
           effectiveRank={hiddenByFilter ? null : effectiveRank}
           effectiveIsOG={hiddenByFilter ? false : effectiveIsOG}
         />
+      )}
+
+      {searchMode === "social" && (
+        <div className="mb-4 rounded-2xl border border-amber-900/35 bg-amber-950/15 px-4 py-3 sm:px-5">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-500/90">
+            Social link
+          </p>
+          <p className="mt-1 text-sm text-gray-400">
+            Tokens whose DexScreener profile includes this URL, ranked by market
+            cap, then 24h volume, then newer pairs.
+          </p>
+        </div>
       )}
 
       <div className="mb-3">
@@ -260,12 +285,22 @@ export function Results({
               {shownCount !== 1 ? " tokens" : " token"} shown
               <span className="text-gray-700"> · </span>
               <span className="text-gray-600">{totalCount} total</span>
-              <span className="text-gray-700"> — oldest first</span>
+              <span className="text-gray-700">
+                {" "}
+                —{" "}
+                {searchMode === "social"
+                  ? "MC → vol → age"
+                  : "oldest first"}
+              </span>
             </>
           ) : (
             <>
               {totalCount} token{totalCount !== 1 ? "s" : ""} found
-              <span className="text-gray-700"> — oldest first</span>
+              <span className="text-gray-700">
+                {" "}
+                —{" "}
+                {searchMode === "social" ? "MC → vol → age" : "oldest first"}
+              </span>
             </>
           )}
         </span>

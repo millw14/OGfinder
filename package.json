@@ -12,6 +12,7 @@
     "clean": "node -e \"const fs=require('fs'); try{fs.rmSync('.next',{recursive:true,force:true});}catch(e){} try{fs.rmSync('node_modules/.cache',{recursive:true,force:true});}catch(e){} console.log('Cleaned .next and node_modules/.cache')\""
   },
   "dependencies": {
+    "better-sqlite3": "^12.8.0",
     "lottie-react": "^2.4.1",
     "next": "^14.2.0",
     "node-cache": "^5.1.2",
@@ -19,6 +20,7 @@
     "react-dom": "^18.3.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.0.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",

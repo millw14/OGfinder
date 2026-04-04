@@ -7,6 +7,79 @@ export function sortByCreationTime(results: TokenResult[]): TokenResult[] {
   );
 }
 
+export function sortByVolumeUsd(results: TokenResult[]): TokenResult[] {
+  return results.sort(
+    (a, b) => (b.volumeUsd24h ?? 0) - (a.volumeUsd24h ?? 0)
+  );
+}
+
+/** Social link search: market cap (or FDV), then 24h volume, then newer creation time. */
+export function sortByMarketCapLeaderboard(
+  results: TokenResult[]
+): TokenResult[] {
+  return results.sort((a, b) => {
+    const mcA = a.marketCapUsd ?? a.fdvUsd ?? 0;
+    const mcB = b.marketCapUsd ?? b.fdvUsd ?? 0;
+    if (mcB !== mcA) return mcB - mcA;
+    const vA = a.volumeUsd24h ?? 0;
+    const vB = b.volumeUsd24h ?? 0;
+    if (vB !== vA) return vB - vA;
+    const tA = a.createdAtMs ?? 0;
+    const tB = b.createdAtMs ?? 0;
+    return tB - tA;
+  });
+}
+
+/** Rank labels for social-link search (sorted by 24h volume). */
+export function scoreVolumeRank(results: TokenResult[]): TokenResult[] {
+  return results.map((token, index) => {
+    const rank = index + 1;
+    let confidenceLabel: string;
+    if (index === 0) confidenceLabel = "Top 24h volume";
+    else if (index < 3) confidenceLabel = "High volume";
+    else confidenceLabel = "Lower volume";
+
+    let rankLabel: string;
+    if (index === 0) rankLabel = "Top";
+    else if (index < 3) rankLabel = "High";
+    else rankLabel = "—";
+
+    return {
+      ...token,
+      rankingMode: "volume" as const,
+      confidence: Math.max(1, 5 - Math.min(index, 4)),
+      confidenceLabel,
+      rank,
+      rankLabel,
+    };
+  });
+}
+
+/** Rank labels for social-link search (MC → vol → age). */
+export function scoreMarketCapRank(results: TokenResult[]): TokenResult[] {
+  return results.map((token, index) => {
+    const rank = index + 1;
+    let confidenceLabel: string;
+    if (index === 0) confidenceLabel = "Top market cap";
+    else if (index < 3) confidenceLabel = "High market cap";
+    else confidenceLabel = "Lower market cap";
+
+    let rankLabel: string;
+    if (index === 0) rankLabel = "Top";
+    else if (index < 3) rankLabel = "High";
+    else rankLabel = "—";
+
+    return {
+      ...token,
+      rankingMode: "marketcap" as const,
+      confidence: Math.max(1, 5 - Math.min(index, 4)),
+      confidenceLabel,
+      rank,
+      rankLabel,
+    };
+  });
+}
+
 export function scoreConfidence(
   results: TokenResult[],
   query: string

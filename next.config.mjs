@@ -1,12 +1,16 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  webpack: (config, { dev }) => {
-    // Windows dev: persistent pack cache under .next/cache/webpack often corrupts
-    // (ENOENT rename / missing ./NNN.js chunks). Memory cache avoids PackFileCacheStrategy.
+  webpack: (config, { dev, isServer }) => {
     if (dev) {
       config.cache = { type: "memory" };
     }
+    if (isServer) {
+      config.externals = [...(config.externals || []), "better-sqlite3"];
+    }
     return config;
+  },
+  experimental: {
+    serverComponentsExternalPackages: ["better-sqlite3"],
   },
 };
 

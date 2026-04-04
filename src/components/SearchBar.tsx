@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { isLikelyMintAddress } from "@/lib/solana";
-import { MAX_QUERY, MAX_MINT_LEN } from "@/lib/types";
+import { MAX_QUERY, MAX_MINT_LEN, MAX_SOCIAL_URL } from "@/lib/types";
+import { isLikelySocialUrl } from "@/lib/social-url";
 
 interface SearchBarProps {
   onSearch: (query: string) => void;
@@ -11,6 +12,9 @@ interface SearchBarProps {
 
 function shouldTriggerSearch(trimmed: string): boolean {
   if (trimmed.length === 0) return false;
+  if (isLikelySocialUrl(trimmed)) {
+    return trimmed.length >= 8 && trimmed.length <= MAX_SOCIAL_URL;
+  }
   const mint = isLikelyMintAddress(trimmed);
   if (mint && trimmed.length >= 32 && trimmed.length <= MAX_MINT_LEN) {
     return true;
@@ -57,6 +61,10 @@ export function SearchBar({ onSearch, isLoading }: SearchBarProps) {
     trimmed.length >= 32 &&
     trimmed.length <= MAX_MINT_LEN &&
     isLikelyMintAddress(trimmed);
+  const hintSocial =
+    isLikelySocialUrl(trimmed) &&
+    trimmed.length >= 8 &&
+    trimmed.length <= MAX_SOCIAL_URL;
 
   return (
     <form onSubmit={handleSubmit} className="mx-auto w-full max-w-xl">
@@ -84,8 +92,8 @@ export function SearchBar({ onSearch, isLoading }: SearchBarProps) {
           type="text"
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          placeholder="Token name or paste mint (CA)…"
-          maxLength={MAX_MINT_LEN}
+          placeholder="Token name, mint (CA), or social / website URL…"
+          maxLength={MAX_SOCIAL_URL}
           autoFocus
           spellCheck={false}
           autoCapitalize="off"
@@ -98,6 +106,10 @@ export function SearchBar({ onSearch, isLoading }: SearchBarProps) {
           <span className="text-cyan-500/90">
             Mint detected — resolving name and comparing against older mints
           </span>
+        ) : hintSocial ? (
+          <span className="text-amber-500/85">
+            Link detected — finding tokens with this URL in DexScreener socials
+          </span>
         ) : (
           <>
             <span className="text-gray-500">
@@ -105,7 +117,7 @@ export function SearchBar({ onSearch, isLoading }: SearchBarProps) {
             </span>
             <span className="text-gray-700"> · </span>
             <span className="text-gray-500">
-              Or paste a Solana mint ({32}–{MAX_MINT_LEN} chars)
+              Mint {32}–{MAX_MINT_LEN} · URL up to {MAX_SOCIAL_URL}
             </span>
           </>
         )}

@@ -1,5 +1,5 @@
 import NodeCache from "node-cache";
-import { CACHE_SEARCH, CACHE_DEX, CACHE_HELIUS } from "./types";
+import { CACHE_SEARCH, CACHE_DEX, CACHE_HELIUS, CACHE_WALLET } from "./types";
 
 const searchCache = new NodeCache({ stdTTL: CACHE_SEARCH, checkperiod: 120 });
 const dexCache = new NodeCache({ stdTTL: CACHE_DEX, checkperiod: 60 });
@@ -27,4 +27,14 @@ export function getHeliusSlot(mint: string): { slot: number; blockTime: number }
 
 export function setHeliusSlot(mint: string, data: { slot: number; blockTime: number }): void {
   heliusCache.set(mint, data);
+}
+
+const walletCache = new NodeCache({ stdTTL: CACHE_WALLET, checkperiod: 60 });
+
+export function getWalletCache<T>(key: string): T | undefined {
+  return walletCache.get<T>(key);
+}
+
+export function setWalletCache<T>(key: string, value: T): void {
+  walletCache.set(key, value);
 }

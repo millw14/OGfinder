@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import { TokenResult, SearchResponse } from "@/lib/types";
 import { SearchBar } from "@/components/SearchBar";
 import { Results, ScanSummary } from "@/components/Results";
+import { NavTabs } from "@/components/NavTabs";
 
 /** Client-only: Lottie + canvas; avoids flaky dev SSR chunk splits (missing ./276.js). */
 const OGLogo = dynamic(
@@ -58,6 +59,9 @@ export default function Home() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [scan, setScan] = useState<ScanSummary | null>(null);
   const [lastQuery, setLastQuery] = useState("");
+  const [searchMode, setSearchMode] = useState<
+    "search" | "scan" | "social" | null
+  >(null);
 
   useEffect(() => {
     setRecentSearches(getRecent());
@@ -68,6 +72,7 @@ export default function Home() {
     setHasSearched(true);
     setSearchError(null);
     setScan(null);
+    setSearchMode(null);
 
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
@@ -77,6 +82,7 @@ export default function Home() {
         setResults([]);
         setTiming(undefined);
         setLastQuery("");
+        setSearchMode(null);
         setSearchError(
           typeof data.error === "string" ? data.error : "Request failed"
         );
@@ -86,6 +92,7 @@ export default function Home() {
       setLastQuery(data.query ?? "");
       setResults(data.results ?? []);
       setTiming(data.timing);
+      setSearchMode(data.mode ?? "search");
       if (data.mode === "scan" && data.scannedMint) {
         setScan({
           mode: "scan",
@@ -104,6 +111,7 @@ export default function Home() {
       setResults([]);
       setTiming(undefined);
       setLastQuery("");
+      setSearchMode(null);
       setSearchError("Network error — try again");
     } finally {
       setIsLoading(false);
@@ -121,7 +129,8 @@ export default function Home() {
         aria-hidden
       />
 
-      <main className="relative mx-auto w-full max-w-2xl flex-1 px-4 pb-12 pt-14 sm:pt-20">
+      <NavTabs />
+      <main className="relative mx-auto w-full max-w-2xl flex-1 px-4 pb-12 pt-4 sm:pt-8">
         <div className="mb-10 text-center sm:mb-12">
           <h1 className="flex flex-wrap items-center justify-center gap-0 text-5xl font-black tracking-tight sm:text-6xl">
             <span className="sr-only">OGfinder</span>
@@ -165,6 +174,7 @@ export default function Home() {
           <Results
             results={results}
             lastQuery={lastQuery}
+            searchMode={searchMode}
             isLoading={isLoading}
             hasSearched={hasSearched}
             timing={timing}

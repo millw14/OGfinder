@@ -31,6 +31,13 @@ function formatDate(isoStr: string | null): string {
   }
 }
 
+function formatUsdVol(n: number): string {
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `$${(n / 1e3).toFixed(1)}K`;
+  return `$${n.toFixed(0)}`;
+}
+
 function timeAgo(isoStr: string | null): string {
   if (!isoStr) return "";
   try {
@@ -66,7 +73,7 @@ export function TokenCard({ token }: { token: TokenResult }) {
     }
   };
 
-  const isOG = token.rank === 1;
+  const isOG = token.rank === 1 && token.rankingMode === "creation";
   const isScanned = token.isScanned === true;
   const ago = timeAgo(token.createdAt);
 
@@ -93,7 +100,9 @@ export function TokenCard({ token }: { token: TokenResult }) {
               ${token.displaySymbol}
             </span>
             {isScanned && <ScannedMintBadge />}
-            <OGBadge rank={token.rank} />
+            {token.rankingMode === "creation" && (
+              <OGBadge rank={token.rank} />
+            )}
             <PlatformBadge dexId={token.dexId} />
           </div>
 
@@ -105,6 +114,39 @@ export function TokenCard({ token }: { token: TokenResult }) {
             {ago && (
               <span className="text-gray-600">({ago})</span>
             )}
+            {token.rankingMode === "marketcap" &&
+              (token.marketCapUsd ?? token.fdvUsd) != null &&
+              (token.marketCapUsd ?? token.fdvUsd)! > 0 && (
+                <>
+                  <span className="text-gray-700">·</span>
+                  <span
+                    className="text-emerald-500/90"
+                    title="DexScreener market cap or FDV"
+                  >
+                    MC {formatUsdVol((token.marketCapUsd ?? token.fdvUsd)!)}
+                  </span>
+                </>
+              )}
+            {token.rankingMode === "marketcap" &&
+              token.volumeUsd24h != null &&
+              token.volumeUsd24h > 0 && (
+                <>
+                  <span className="text-gray-700">·</span>
+                  <span className="text-amber-500/90" title="DexScreener 24h volume">
+                    Vol {formatUsdVol(token.volumeUsd24h)}
+                  </span>
+                </>
+              )}
+            {token.rankingMode === "volume" &&
+              token.volumeUsd24h != null &&
+              token.volumeUsd24h > 0 && (
+                <>
+                  <span className="text-gray-700">·</span>
+                  <span className="text-amber-500/90" title="DexScreener 24h volume">
+                    Vol {formatUsdVol(token.volumeUsd24h)}
+                  </span>
+                </>
+              )}
             <span className="text-gray-700">·</span>
             <button
               type="button"
