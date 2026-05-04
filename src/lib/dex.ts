@@ -64,8 +64,15 @@ export async function searchDex(query: string): Promise<RawToken[]> {
       }
     }
 
-    const tokens: RawToken[] = [];
     const entries = Array.from(tokenMap.entries());
+    entries.sort((a, b) => {
+      const ta = a[1].oldestPairTime ?? Number.POSITIVE_INFINITY;
+      const tb = b[1].oldestPairTime ?? Number.POSITIVE_INFINITY;
+      if (ta !== tb) return ta - tb;
+      return a[0].localeCompare(b[0]);
+    });
+
+    const tokens: RawToken[] = [];
     for (const [mint, { pair, oldestPairTime }] of entries) {
       tokens.push({
         mint,

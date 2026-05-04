@@ -33,27 +33,48 @@ async function getJupiterList(): Promise<JupiterToken[]> {
   }
 }
 
+/** Lower rank = better. Exact name > exact symbol > prefix > substring; shorter label wins ties. */
+function jupiterRelevanceKey(
+  token: JupiterToken,
+  q: string
+): [number, number, string] {
+  const name = normalize(token.name);
+  const symbol = normalize(token.symbol);
+  let tier = 3;
+  if (name === q) tier = 0;
+  else if (symbol === q) tier = 1;
+  else if (name.startsWith(q) || symbol.startsWith(q)) tier = 2;
+
+  const displayLen = token.name.length + token.symbol.length;
+  return [tier, displayLen, token.address];
+}
+
 export async function searchJupiter(query: string): Promise<RawToken[]> {
   const normalizedQuery = normalize(query);
   const list = await getJupiterList();
 
-  const results: RawToken[] = [];
-
+  const matches: JupiterToken[] = [];
   for (const token of list) {
     const name = normalize(token.name);
     const symbol = normalize(token.symbol);
-
     if (name.includes(normalizedQuery) || symbol.includes(normalizedQuery)) {
-      results.push({
-        mint: token.address,
-        jupName: token.name,
-        jupSymbol: token.symbol,
-      });
-      if (results.length >= JUP_LIMIT) break;
+      matches.push(token);
     }
   }
 
-  return results;
+  matches.sort((a, b) => {
+    const ka = jupiterRelevanceKey(a, normalizedQuery);
+    const kb = jupiterRelevanceKey(b, normalizedQuery);
+    if (ka[0] !== kb[0]) return ka[0] - kb[0];
+    if (ka[1] !== kb[1]) return ka[1] - kb[1];
+    return ka[2].localeCompare(kb[2]);
+  });
+
+  return matches.slice(0, JUP_LIMIT).map((token) => ({
+    mint: token.address,
+    jupName: token.name,
+    jupSymbol: token.symbol,
+  }));
 }
 
 /** O(1) lookup after list load — used when DAS has no metadata for a mint. */

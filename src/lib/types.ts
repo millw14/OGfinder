@@ -64,10 +64,13 @@ export interface SearchResponse {
   error?: string;
 }
 
-export const MAX_HELIUS = 150;
+/** Merged name-search cap: each mint runs Helius getAssetBatch + getCreationSlot (linear cost). */
+export const MAX_HELIUS = 240;
 export const MAX_RESULTS = 100;
-export const DEX_LIMIT = 100;
-export const JUP_LIMIT = 200;
+/** DexScreener search: max unique base mints after oldest-pool sort. */
+export const DEX_LIMIT = 120;
+/** Jupiter list matches after relevance sort; full list scanned per query. */
+export const JUP_LIMIT = 280;
 export const MIN_QUERY = 2;
 export const MAX_QUERY = 30;
 /** Max length for pasted Solana mint (base58) */

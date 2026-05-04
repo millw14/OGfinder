@@ -2,9 +2,12 @@ import { TokenResult } from "./types";
 import { normalize } from "./normalize";
 
 export function sortByCreationTime(results: TokenResult[]): TokenResult[] {
-  return results.sort(
-    (a, b) => (a.createdAtMs ?? Infinity) - (b.createdAtMs ?? Infinity)
-  );
+  return results.sort((a, b) => {
+    const ta = a.createdAtMs ?? Infinity;
+    const tb = b.createdAtMs ?? Infinity;
+    if (ta !== tb) return ta - tb;
+    return a.mint.localeCompare(b.mint);
+  });
 }
 
 export function sortByVolumeUsd(results: TokenResult[]): TokenResult[] {

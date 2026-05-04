@@ -40,7 +40,7 @@ export function SearchBar({ onSearch, isLoading }: SearchBarProps) {
 
     debounceRef.current = setTimeout(() => {
       onSearch(trimmed);
-    }, 320);
+    }, 500);
 
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);

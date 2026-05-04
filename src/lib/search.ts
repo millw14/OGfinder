@@ -25,5 +25,6 @@ export async function searchTokens(query: string): Promise<RawToken[]> {
   }
 
   const deduped = Array.from(merged.values());
+  // Caps Helius enrich work (getAssetBatch + getCreationSlot per mint); see MAX_HELIUS.
   return deduped.slice(0, MAX_HELIUS);
 }
