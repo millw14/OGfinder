@@ -36,6 +36,10 @@ export interface TokenResult {
   rank: number;
   rankLabel: string;
   timeSource: string; // where we got creation time from
+  /** True when the signature scan was truncated — real creation may be older */
+  createdAtIsLowerBound?: boolean;
+  /** True when on-chain supply is zero (fully burned) */
+  supplyZero?: boolean;
   /** True when this mint was pasted for a CA scan */
   isScanned?: boolean;
   /** Present for social-link search: 24h volume from DexScreener */

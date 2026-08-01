@@ -36,6 +36,7 @@ export async function buildTokenResults(
     raw: RawToken;
     h: HeliusSlotData | undefined;
     isScannedMint: boolean;
+    supplyZero: boolean;
     createdAtMs: number | null;
     slot: number | null;
     timeSource: string;
@@ -57,10 +58,10 @@ export async function buildTokenResults(
       ) {
         continue;
       }
-      if (h.supply != null && h.supply <= 0 && !isScannedMint) {
-        continue;
-      }
     }
+
+    // Zero-supply (fully burned) fungible tokens stay in — a burned token can be the OG
+    const supplyZero = h?.supply != null && h.supply <= 0;
 
     let createdAtMs: number | null = null;
     let slot: number | null = h?.slot ?? null;
@@ -82,7 +83,15 @@ export async function buildTokenResults(
       }
     }
 
-    candidates.push({ raw, h, isScannedMint, createdAtMs, slot, timeSource });
+    candidates.push({
+      raw,
+      h,
+      isScannedMint,
+      supplyZero,
+      createdAtMs,
+      slot,
+      timeSource,
+    });
   }
 
   const sigResults: Awaited<ReturnType<typeof getCreationSlot>>[] = [];
@@ -100,6 +109,7 @@ export async function buildTokenResults(
     const c = candidates[i];
     const sig = sigResults[i];
     let { createdAtMs, slot, timeSource } = c;
+    let createdAtIsLowerBound = false;
 
     if (sig) {
       const sigMs = sig.blockTime * 1000;
@@ -107,6 +117,7 @@ export async function buildTokenResults(
         createdAtMs = sigMs;
         slot = sig.slot;
         timeSource = "signatures";
+        createdAtIsLowerBound = sig.truncated;
       }
     }
 
@@ -146,22 +157,41 @@ export async function buildTokenResults(
             ? "volume"
             : "creation",
       ...(c.isScannedMint ? { isScanned: true } : {}),
+      ...(c.supplyZero ? { supplyZero: true } : {}),
+      ...(createdAtIsLowerBound ? { createdAtIsLowerBound: true } : {}),
     });
   }
 
   if (rankBy === "volume") {
     const sorted = sortByVolumeUsd(enriched);
     const scored = scoreVolumeRank(sorted);
-    return scored.slice(0, MAX_RESULTS);
+    return sliceWithPinnedScan(scored, options?.scannedMint);
   }
 
   if (rankBy === "marketcap") {
     const sorted = sortByMarketCapLeaderboard(enriched);
     const scored = scoreMarketCapRank(sorted);
-    return scored.slice(0, MAX_RESULTS);
+    return sliceWithPinnedScan(scored, options?.scannedMint);
   }
 
   const sorted = sortByCreationTime(enriched);
   const scored = scoreConfidence(sorted, queryForScore);
-  return scored.slice(0, MAX_RESULTS);
+  return sliceWithPinnedScan(scored, options?.scannedMint);
+}
+
+/**
+ * Slice to MAX_RESULTS, but never drop the scanned mint: if it ranked outside
+ * the window, append it with its true pre-slice rank (e.g. "#187 of 240").
+ */
+function sliceWithPinnedScan(
+  scored: TokenResult[],
+  scannedMint: string | undefined
+): TokenResult[] {
+  const window = scored.slice(0, MAX_RESULTS);
+  if (!scannedMint || window.some((t) => t.mint === scannedMint)) {
+    return window;
+  }
+  const scanned = scored.find((t) => t.mint === scannedMint);
+  if (scanned) window.push(scanned);
+  return window;
 }

@@ -116,13 +116,20 @@ export function scoreConfidence(
 
     score = Math.min(score, 5);
 
+    // Rank-1 whose creation time is only a lower bound (truncated signature
+    // scan): its true age is unknown-older, so the ordering itself is uncertain
+    // — cap stars and withhold the OG labels.
+    const uncertainOG = index === 0 && token.createdAtIsLowerBound === true;
+    if (uncertainOG) score = Math.min(score, 3);
+
     let confidenceLabel: string;
-    if (score >= 5) confidenceLabel = "OG";
+    if (uncertainOG) confidenceLabel = "Low confidence";
+    else if (score >= 5) confidenceLabel = "OG";
     else if (score >= 3) confidenceLabel = "Likely OG";
     else confidenceLabel = "Low confidence";
 
     let rankLabel: string;
-    if (index === 0) rankLabel = "OG";
+    if (index === 0) rankLabel = uncertainOG ? "Oldest found" : "OG";
     else if (index <= 2) rankLabel = "Older";
     else rankLabel = "Newer";
 

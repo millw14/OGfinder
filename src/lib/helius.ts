@@ -1,6 +1,11 @@
 import { HeliusSlotData, HELIUS_TIMEOUT, MAX_SIG_PAGES } from "./types";
 import { fetchWithTimeout } from "./fetch";
-import { getHeliusSlot, setHeliusSlot } from "./cache";
+import {
+  getHeliusMeta,
+  setHeliusMeta,
+  getCreationSlotCache,
+  setCreationSlotCache,
+} from "./cache";
 
 /** Public read-only fallback when HELIUS_API_KEY is missing on the server (e.g. Vercel env not set). */
 const PUBLIC_MAINNET_RPC = "https://api.mainnet-beta.solana.com";
@@ -73,16 +78,9 @@ export async function getAssetBatch(
 
   const uncached: string[] = [];
   for (const mint of mints) {
-    const cached = getHeliusSlot(mint);
+    const cached = getHeliusMeta(mint);
     if (cached) {
-      result.set(mint, {
-        slot: cached.slot,
-        createdAt: null,
-        heliusName: null,
-        heliusSymbol: null,
-        tokenInterface: null,
-        supply: null,
-      });
+      result.set(mint, cached);
     } else {
       uncached.push(mint);
     }
@@ -121,10 +119,7 @@ export async function getAssetBatch(
       };
 
       result.set(asset.id, data);
-
-      if (data.slot != null) {
-        setHeliusSlot(asset.id, { slot: data.slot, blockTime: 0 });
-      }
+      setHeliusMeta(asset.id, data);
     }
   } catch {
     // Graceful fallback — tokens without data sort by other signals
@@ -211,13 +206,14 @@ export async function getMintHeliusDataRpcFallback(
  */
 export async function getCreationSlot(
   mint: string
-): Promise<{ slot: number; blockTime: number } | null> {
-  const cached = getHeliusSlot(mint);
-  if (cached && cached.blockTime > 0) return cached;
+): Promise<{ slot: number; blockTime: number; truncated: boolean } | null> {
+  const cached = getCreationSlotCache(mint);
+  if (cached) return { ...cached, truncated: false };
 
   try {
     let before: string | undefined = undefined;
     let oldestSig: SignatureResult | null = null;
+    let truncated = false;
 
     for (let page = 0; page < MAX_SIG_PAGES; page++) {
       const params: [string, { limit: number; before?: string }] = [
@@ -232,20 +228,33 @@ export async function getCreationSlot(
       )) as { result?: SignatureResult[] };
 
       const sigs = response?.result;
-      if (!Array.isArray(sigs) || sigs.length === 0) break;
+      if (!Array.isArray(sigs) || sigs.length === 0) {
+        truncated = false;
+        break;
+      }
 
       oldestSig = sigs[sigs.length - 1];
       before = oldestSig.signature;
 
       // If fewer than 1000 results, we've reached the beginning
-      if (sigs.length < 1000) break;
+      if (sigs.length < 1000) {
+        truncated = false;
+        break;
+      }
+
+      // Full page: if we run out of pages here, oldest time is only a lower bound
+      truncated = true;
     }
 
     if (!oldestSig) return null;
 
     const data = { slot: oldestSig.slot, blockTime: oldestSig.blockTime };
-    setHeliusSlot(mint, data);
-    return data;
+    // Only cache complete scans with real blockTimes — truncated results are a
+    // lower bound, so leave them uncached for a later deeper look to retry.
+    if (!truncated && data.blockTime > 0) {
+      setCreationSlotCache(mint, data);
+    }
+    return { ...data, truncated };
   } catch {
     return null;
   }
