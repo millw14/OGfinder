@@ -73,7 +73,7 @@ export const MAX_HELIUS = 240;
 export const MAX_RESULTS = 100;
 /** DexScreener search: max unique base mints after oldest-pool sort. */
 export const DEX_LIMIT = 120;
-/** Jupiter list matches after relevance sort; full list scanned per query. */
+/** Jupiter search matches after relevance sort (Token API v2 returns ≤100/query). */
 export const JUP_LIMIT = 280;
 export const MIN_QUERY = 2;
 export const MAX_QUERY = 30;

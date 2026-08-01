@@ -2,34 +2,66 @@ import { RawToken, JUP_LIMIT, CACHE_JUP } from "./types";
 import { fetchWithTimeout } from "./fetch";
 import { normalize } from "./normalize";
 
-// Use the full token list (no tag filter) for broader coverage of old/dead tokens
-const JUP_URL = "https://tokens.jup.ag/tokens";
+// Jupiter Token API v2 (free "lite" tier). The old full-list host
+// (tokens.jup.ag) is dead; this endpoint does relevance-ordered search by
+// name/symbol/mint. lite-api is rate-limited, so results are cached per
+// query and no full-list downloads happen.
+const JUP_SEARCH_URL = "https://lite-api.jup.ag/tokens/v2/search";
+/** The API caps search responses at 100 tokens per request. */
+const JUP_API_LIMIT = 100;
+const JUP_TIMEOUT = 8000;
 
 interface JupiterToken {
-  address: string;
+  id: string; // mint address
   name: string;
   symbol: string;
 }
 
-let jupiterTokens: JupiterToken[] | null = null;
-let jupiterLoadedAt = 0;
-let jupiterByMint: Map<string, JupiterToken> | null = null;
+/** Per-query response cache — lite-api is rate-limited, avoid repeat hits. */
+const jupQueryCache = new Map<string, { at: number; tokens: JupiterToken[] }>();
+const JUP_CACHE_MAX_KEYS = 500;
 
-async function getJupiterList(): Promise<JupiterToken[]> {
-  if (jupiterTokens && Date.now() - jupiterLoadedAt < CACHE_JUP * 1000) {
-    return jupiterTokens;
+function pruneQueryCache(): void {
+  const now = Date.now();
+  jupQueryCache.forEach((entry, key) => {
+    if (now - entry.at >= CACHE_JUP * 1000) jupQueryCache.delete(key);
+  });
+  // Still over the cap: drop oldest-inserted entries.
+  while (jupQueryCache.size >= JUP_CACHE_MAX_KEYS) {
+    const oldest = jupQueryCache.keys().next().value;
+    if (oldest === undefined) break;
+    jupQueryCache.delete(oldest);
+  }
+}
+
+/** One search call (term can be a name, symbol, or mint address). */
+async function jupSearch(term: string): Promise<JupiterToken[]> {
+  const cached = jupQueryCache.get(term);
+  if (cached && Date.now() - cached.at < CACHE_JUP * 1000) {
+    return cached.tokens;
   }
   try {
-    const data = (await fetchWithTimeout(JUP_URL, 15000)) as JupiterToken[];
-    if (Array.isArray(data)) {
-      jupiterTokens = data;
-      jupiterByMint = null;
-      jupiterLoadedAt = Date.now();
-      return jupiterTokens;
+    const data = await fetchWithTimeout(
+      `${JUP_SEARCH_URL}?query=${encodeURIComponent(term)}&limit=${JUP_API_LIMIT}`,
+      JUP_TIMEOUT
+    );
+    if (!Array.isArray(data)) return cached?.tokens ?? [];
+    const tokens: JupiterToken[] = [];
+    for (const t of data as Partial<JupiterToken>[]) {
+      if (
+        typeof t?.id === "string" &&
+        typeof t.name === "string" &&
+        typeof t.symbol === "string"
+      ) {
+        tokens.push({ id: t.id, name: t.name, symbol: t.symbol });
+      }
     }
-    return jupiterTokens ?? [];
+    if (jupQueryCache.size >= JUP_CACHE_MAX_KEYS) pruneQueryCache();
+    jupQueryCache.set(term, { at: Date.now(), tokens });
+    return tokens;
   } catch {
-    return jupiterTokens ?? [];
+    // Timeout / rate limit / non-2xx: serve stale if we have it.
+    return cached?.tokens ?? [];
   }
 }
 
@@ -46,21 +78,20 @@ function jupiterRelevanceKey(
   else if (name.startsWith(q) || symbol.startsWith(q)) tier = 2;
 
   const displayLen = token.name.length + token.symbol.length;
-  return [tier, displayLen, token.address];
+  return [tier, displayLen, token.id];
 }
 
 export async function searchJupiter(query: string): Promise<RawToken[]> {
   const normalizedQuery = normalize(query);
-  const list = await getJupiterList();
+  const tokens = await jupSearch(query);
 
-  const matches: JupiterToken[] = [];
-  for (const token of list) {
+  // The API fuzzy-matches; keep the old contract of the normalized name or
+  // symbol containing the full query (mirrors the DexScreener re-filter).
+  const matches = tokens.filter((token) => {
     const name = normalize(token.name);
     const symbol = normalize(token.symbol);
-    if (name.includes(normalizedQuery) || symbol.includes(normalizedQuery)) {
-      matches.push(token);
-    }
-  }
+    return name.includes(normalizedQuery) || symbol.includes(normalizedQuery);
+  });
 
   matches.sort((a, b) => {
     const ka = jupiterRelevanceKey(a, normalizedQuery);
@@ -71,22 +102,18 @@ export async function searchJupiter(query: string): Promise<RawToken[]> {
   });
 
   return matches.slice(0, JUP_LIMIT).map((token) => ({
-    mint: token.address,
+    mint: token.id,
     jupName: token.name,
     jupSymbol: token.symbol,
   }));
 }
 
-/** O(1) lookup after list load — used when DAS has no metadata for a mint. */
+/** Search by mint address — used when DAS has no metadata for a mint. */
 export async function getJupiterTokenByMint(
   mint: string
 ): Promise<{ name: string; symbol: string } | null> {
-  const list = await getJupiterList();
-  if (list.length === 0) return null;
-  if (!jupiterByMint) {
-    jupiterByMint = new Map(list.map((t) => [t.address, t]));
-  }
-  const t = jupiterByMint.get(mint);
+  const tokens = await jupSearch(mint);
+  const t = tokens.find((token) => token.id === mint);
   if (!t) return null;
   return { name: t.name, symbol: t.symbol };
 }
