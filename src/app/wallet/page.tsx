@@ -1,9 +1,17 @@
 "use client";
 
-import { Suspense, useState, useCallback, useEffect, FormEvent } from "react";
+import {
+  Suspense,
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  FormEvent,
+} from "react";
 import { WalletAnalysis, WalletResponse } from "@/lib/types";
 import { NavTabs } from "@/components/NavTabs";
 import { WalletView } from "@/components/WalletView";
+import { isLikelyMintAddress } from "@/lib/solana";
 import { useSearchParams } from "next/navigation";
 
 const RECENT_KEY = "ogfinder_wallets";
@@ -13,7 +21,9 @@ function getRecentWallets(): string[] {
   if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(RECENT_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((a): a is string => typeof a === "string");
   } catch {
     return [];
   }
@@ -23,7 +33,11 @@ function addRecentWallet(addr: string) {
   const list = getRecentWallets().filter((a) => a !== addr);
   list.unshift(addr);
   if (list.length > MAX_RECENT) list.pop();
-  localStorage.setItem(RECENT_KEY, JSON.stringify(list));
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(list));
+  } catch {
+    /* storage full or blocked — recents just don't persist */
+  }
 }
 
 function truncAddr(addr: string): string {
@@ -52,20 +66,38 @@ function WalletPageInner() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recentWallets, setRecentWallets] = useState<string[]>([]);
+  const requestIdRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
 
   const scanWallet = useCallback(async (addr: string) => {
     const trimmed = addr.trim();
     if (!trimmed) return;
     setAddress(trimmed);
+
+    if (!isLikelyMintAddress(trimmed)) {
+      setError("Invalid Solana wallet address");
+      setData(null);
+      return;
+    }
+
+    // Monotonic id + abort so a slow earlier scan can't clobber a newer one
+    const reqId = ++requestIdRef.current;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setIsLoading(true);
     setError(null);
     setData(null);
 
     try {
       const res = await fetch(
-        `/api/wallet?address=${encodeURIComponent(trimmed)}`
+        `/api/wallet?address=${encodeURIComponent(trimmed)}`,
+        { signal: controller.signal }
       );
       const json: WalletResponse = await res.json();
+
+      if (reqId !== requestIdRef.current) return; // stale response
 
       if (!res.ok || json.error) {
         setError(json.error ?? "Request failed");
@@ -78,9 +110,10 @@ function WalletPageInner() {
         setRecentWallets(getRecentWallets());
       }
     } catch {
+      if (reqId !== requestIdRef.current) return; // aborted by a newer scan
       setError("Network error — try again");
     } finally {
-      setIsLoading(false);
+      if (reqId === requestIdRef.current) setIsLoading(false);
     }
   }, []);
 

@@ -108,6 +108,14 @@ export interface WalletAnalysis {
   tokenPnl: TokenPnlEntry[];
   sideWallets: SideWallet[];
   txCount: number;
+  /** Wallet's native SOL balance in lamports, when available */
+  solBalanceLamports?: number;
+  /** True when an upstream holdings/tx fetch failed — data may be incomplete */
+  partial?: boolean;
+  /** True when the tx window hit WALLET_TX_PAGES with more history remaining */
+  truncated?: boolean;
+  /** Timestamp (ms) of the oldest analyzed transaction */
+  oldestTxMs?: number | null;
   timing: number;
 }
 

@@ -12,11 +12,18 @@ import {
 
 const LAMPORTS = 1e9;
 const SOL_MINT = "So11111111111111111111111111111111111111112";
+/** Below this, a native balance change is fee dust, not a SOL swap leg. */
+const MIN_NATIVE_CHANGE_SOL = 0.005;
+const MIN_NATIVE_CHANGE_LAM = MIN_NATIVE_CHANGE_SOL * LAMPORTS;
 
 function heliusApiKey(): string | null {
   return process.env.HELIUS_API_KEY?.trim() || null;
 }
 
+// NOTE: Helius accepts the API key ONLY as the api-key query param — both the
+// RPC endpoint and the v0 REST API return 401 for Authorization: Bearer and
+// api-key headers (verified empirically). fetchWithTimeout deliberately omits
+// URLs from error messages so the key never leaks into logs.
 function heliusRpcUrl(): string | null {
   const key = heliusApiKey();
   if (!key) return null;
@@ -43,12 +50,23 @@ interface DasAsset {
 }
 
 interface DasResponse {
-  result?: { items?: DasAsset[]; total?: number };
+  result?: {
+    items?: DasAsset[];
+    total?: number;
+    nativeBalance?: { lamports?: number };
+  };
 }
 
-async function fetchHoldings(address: string): Promise<WalletHolding[]> {
+interface HoldingsResult {
+  holdings: WalletHolding[];
+  nativeBalanceLamports: number | null;
+  failed: boolean;
+}
+
+async function fetchHoldings(address: string): Promise<HoldingsResult> {
   const url = heliusRpcUrl();
-  if (!url) return [];
+  if (!url)
+    return { holdings: [], nativeBalanceLamports: null, failed: true };
 
   const body = JSON.stringify({
     jsonrpc: "2.0",
@@ -59,6 +77,9 @@ async function fetchHoldings(address: string): Promise<WalletHolding[]> {
       displayOptions: { showFungible: true, showNativeBalance: true },
       sortBy: { sortBy: "recent_action", sortDirection: "desc" },
       limit: 100,
+      // Required with non-id sortBy — without it Helius rejects the call
+      // ("Pagination Sorting Error") and holdings silently come back empty.
+      page: 1,
     },
   });
 
@@ -69,7 +90,16 @@ async function fetchHoldings(address: string): Promise<WalletHolding[]> {
       body,
     })) as DasResponse;
 
-    const items = data?.result?.items ?? [];
+    // JSON-RPC errors arrive as HTTP 200 with no result — that's a failure,
+    // not an empty wallet
+    if (!data?.result)
+      return { holdings: [], nativeBalanceLamports: null, failed: true };
+
+    const items = data.result.items ?? [];
+    const nativeBalanceLamports =
+      typeof data?.result?.nativeBalance?.lamports === "number"
+        ? data.result.nativeBalance.lamports
+        : null;
     const holdings: WalletHolding[] = [];
 
     for (const a of items) {
@@ -92,9 +122,9 @@ async function fetchHoldings(address: string): Promise<WalletHolding[]> {
       });
     }
 
-    return holdings;
+    return { holdings, nativeBalanceLamports, failed: false };
   } catch {
-    return [];
+    return { holdings: [], nativeBalanceLamports: null, failed: true };
   }
 }
 
@@ -136,17 +166,26 @@ interface EnhancedTx {
   accountData?: { account: string; nativeBalanceChange: number }[];
 }
 
+interface TxFetchResult {
+  txs: EnhancedTx[];
+  failed: boolean;
+  truncated: boolean;
+}
+
 async function fetchEnhancedTransactions(
   address: string
-): Promise<EnhancedTx[]> {
+): Promise<TxFetchResult> {
   const base = heliusRestBase();
   const key = heliusApiKey();
-  if (!base || !key) return [];
+  if (!base || !key) return { txs: [], failed: true, truncated: false };
 
   const all: EnhancedTx[] = [];
   let beforeSig: string | undefined;
+  let failed = false;
+  let truncated = false;
 
   for (let page = 0; page < WALLET_TX_PAGES; page++) {
+    // This REST endpoint only accepts the key as a query param (headers → 401).
     let url = `${base}/addresses/${address}/transactions?api-key=${encodeURIComponent(key)}&limit=${WALLET_TX_PER_PAGE}`;
     if (beforeSig) url += `&before=${beforeSig}`;
 
@@ -160,12 +199,15 @@ async function fetchEnhancedTransactions(
       all.push(...data);
       beforeSig = data[data.length - 1].signature;
       if (data.length < WALLET_TX_PER_PAGE) break;
+      // Full final page — assume more history beyond the window
+      if (page === WALLET_TX_PAGES - 1) truncated = true;
     } catch {
+      failed = true;
       break;
     }
   }
 
-  return all;
+  return { txs: all, failed, truncated };
 }
 
 // ── Swap P&L computation ───────────────────────────────────────────
@@ -264,9 +306,11 @@ function parseSwaps(
           }
           walletChangeLam = solIn - solOut;
         }
-        if (nativeInLam === 0 && walletChangeLam < 0)
+        // Noise floor: a sub-0.005 SOL change is fee dust (e.g. a USDC-quoted
+        // swap), not a SOL leg — don't record it as cost basis
+        if (nativeInLam === 0 && walletChangeLam < -MIN_NATIVE_CHANGE_LAM)
           nativeInLam = Math.abs(walletChangeLam);
-        if (nativeOutLam === 0 && walletChangeLam > 0)
+        if (nativeOutLam === 0 && walletChangeLam > MIN_NATIVE_CHANGE_LAM)
           nativeOutLam = walletChangeLam;
       }
 
@@ -370,7 +414,11 @@ function parseSwaps(
       const solChangeSol = walletSolChangeLam / LAMPORTS;
 
       // BUY: wallet lost SOL, received tokens (SWAP-type only)
-      if (tx.type === "SWAP" && solChangeSol < -0.005 && tokensIn.length > 0) {
+      if (
+        tx.type === "SWAP" &&
+        solChangeSol < -MIN_NATIVE_CHANGE_SOL &&
+        tokensIn.length > 0
+      ) {
         const spent = Math.abs(solChangeSol);
         for (const t of tokensIn) {
           recordBuy(t.mint, spent / tokensIn.length, tsMs);
@@ -378,7 +426,7 @@ function parseSwaps(
       }
 
       // SELL: wallet gained SOL, sent tokens (any tx type)
-      if (solChangeSol > 0.005 && tokensOut.length > 0) {
+      if (solChangeSol > MIN_NATIVE_CHANGE_SOL && tokensOut.length > 0) {
         for (const t of tokensOut) {
           recordSell(t.mint, solChangeSol / tokensOut.length, tsMs);
         }
@@ -386,7 +434,9 @@ function parseSwaps(
     }
   }
 
-  console.log(`[wallet] swap parsing: ${buyCount} buys, ${sellCount} sells, ${map.size} unique tokens`);
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[wallet] swap parsing: ${buyCount} buys, ${sellCount} sells, ${map.size} unique tokens`);
+  }
   return map;
 }
 
@@ -644,27 +694,39 @@ export async function analyzeWallet(
 ): Promise<WalletAnalysis> {
   const start = Date.now();
 
-  const [holdings, txs] = await Promise.all([
+  const [holdingsRes, txRes] = await Promise.all([
     fetchHoldings(address),
     fetchEnhancedTransactions(address),
   ]);
+  const holdings = holdingsRes.holdings;
+  const txs = txRes.txs;
 
-  const typeCounts = new Map<string, number>();
-  let withSwapEvent = 0;
-  let withTokenTransfers = 0;
+  let oldestTxMs: number | null = null;
   for (const tx of txs) {
-    typeCounts.set(tx.type, (typeCounts.get(tx.type) ?? 0) + 1);
-    if (tx.events?.swap) withSwapEvent++;
-    if (tx.tokenTransfers && tx.tokenTransfers.length > 0) withTokenTransfers++;
+    const tsMs = tx.timestamp * 1000;
+    if (oldestTxMs === null || tsMs < oldestTxMs) oldestTxMs = tsMs;
   }
-  const typeStr: string[] = [];
-  typeCounts.forEach((cnt, type) => typeStr.push(`${type}=${cnt}`));
-  console.log(
-    `[wallet] ${address.slice(0, 8)}... ${txs.length} txs, types: ${typeStr.join(", ")}, withSwapEvent=${withSwapEvent}, withTokenTransfers=${withTokenTransfers}, holdings=${holdings.length}`
-  );
+
+  if (process.env.NODE_ENV === "development") {
+    const typeCounts = new Map<string, number>();
+    let withSwapEvent = 0;
+    let withTokenTransfers = 0;
+    for (const tx of txs) {
+      typeCounts.set(tx.type, (typeCounts.get(tx.type) ?? 0) + 1);
+      if (tx.events?.swap) withSwapEvent++;
+      if (tx.tokenTransfers && tx.tokenTransfers.length > 0) withTokenTransfers++;
+    }
+    const typeStr: string[] = [];
+    typeCounts.forEach((cnt, type) => typeStr.push(`${type}=${cnt}`));
+    console.log(
+      `[wallet] ${address.slice(0, 8)}... ${txs.length} txs, types: ${typeStr.join(", ")}, withSwapEvent=${withSwapEvent}, withTokenTransfers=${withTokenTransfers}, holdings=${holdings.length}`
+    );
+  }
 
   const swapMap = parseSwaps(txs, address, holdings);
-  console.log(`[wallet] parsed ${swapMap.size} token swaps`);
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[wallet] parsed ${swapMap.size} token swaps`);
+  }
 
   const heldMints = holdings.map((h) => h.mint);
   const swapMints = Array.from(swapMap.keys());
@@ -672,9 +734,11 @@ export async function analyzeWallet(
     new Set([...heldMints, ...swapMints].filter((m) => m !== SOL_MINT))
   );
 
-  const { prices, names: dexNames } = await fetchCurrentPrices(
-    allMints.slice(0, 75)
-  );
+  // SOL_MINT rides along so the SOL/USD price resolves for totalPnlUsd
+  const { prices, names: dexNames } = await fetchCurrentPrices([
+    ...allMints.slice(0, 75),
+    SOL_MINT,
+  ]);
 
   // Collect mints still missing names after DexScreener
   const holdingNames = new Map<string, TokenMeta>();
@@ -712,16 +776,20 @@ export async function analyzeWallet(
         acc.symbol = meta.symbol;
       }
     });
-    console.log(
-      `[wallet] resolved ${heliusNames.size}/${missingNameMints.length} token names via Helius DAS`
-    );
+    if (process.env.NODE_ENV === "development") {
+      console.log(
+        `[wallet] resolved ${heliusNames.size}/${missingNameMints.length} token names via Helius DAS`
+      );
+    }
   }
 
   const now = Date.now();
   const tokenPnl: TokenPnlEntry[] = [];
 
+  const holdingsByMint = new Map(holdings.map((h) => [h.mint, h]));
+
   swapMap.forEach((acc, mint) => {
-    const holding = holdings.find((h) => h.mint === mint);
+    const holding = holdingsByMint.get(mint);
     const price = prices.get(mint);
     const holdingAmount = holding?.amount ?? 0;
     const currentValueSol =
@@ -801,6 +869,10 @@ export async function analyzeWallet(
     tokenPnl: tokenPnl.slice(0, 50),
     sideWallets,
     txCount: txs.length,
+    solBalanceLamports: holdingsRes.nativeBalanceLamports ?? undefined,
+    partial: holdingsRes.failed || txRes.failed,
+    truncated: txRes.truncated,
+    oldestTxMs,
     timing: Date.now() - start,
   };
 }

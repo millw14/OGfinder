@@ -34,6 +34,22 @@ function PnlColor({ value }: { value: number }) {
 export function WalletView({ data }: { data: WalletAnalysis }) {
   return (
     <div className="space-y-6">
+      {/* Data honesty banners */}
+      {data.partial && (
+        <div className="rounded-lg border border-amber-800/40 bg-amber-900/20 px-4 py-3 text-center text-sm text-amber-400">
+          Some wallet data could not be fetched — results may be incomplete.
+        </div>
+      )}
+      {data.truncated && (
+        <div className="rounded-lg border border-amber-800/40 bg-amber-900/20 px-4 py-3 text-center text-sm text-amber-400">
+          Analyzed last {data.txCount} txs
+          {data.oldestTxMs
+            ? ` since ${new Date(data.oldestTxMs).toLocaleDateString()}`
+            : ""}{" "}
+          — older history not included; P&L may be incomplete.
+        </div>
+      )}
+
       {/* Summary cards */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="rounded-xl border border-gray-800/60 bg-gray-900/50 p-4">
@@ -46,6 +62,11 @@ export function WalletView({ data }: { data: WalletAnalysis }) {
           {data.totalPnlUsd != null && (
             <p className="mt-0.5 text-xs text-gray-500">
               ~${data.totalPnlUsd.toLocaleString()}
+            </p>
+          )}
+          {data.solBalanceLamports != null && (
+            <p className="mt-0.5 text-xs text-gray-500">
+              {formatSol(data.solBalanceLamports / 1e9)} SOL balance
             </p>
           )}
         </div>
