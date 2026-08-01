@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
 import Lottie, { LottieRefCurrentProps } from "lottie-react";
 import { TokenResult } from "@/lib/types";
+import { formatDate, timeAgo } from "@/lib/format";
 import copyHover from "@/assets/lottie/copy-hover.json";
 import {
   OGBadge,
@@ -11,24 +12,12 @@ import {
   PlatformBadge,
   RankBadge,
   ScannedMintBadge,
+  BurnedBadge,
 } from "./Badge";
 
 function truncateMint(mint: string): string {
   if (mint.length <= 16) return mint;
   return `${mint.slice(0, 6)}...${mint.slice(-6)}`;
-}
-
-function formatDate(isoStr: string | null): string {
-  if (!isoStr) return "Unknown";
-  try {
-    return new Date(isoStr).toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
-  } catch {
-    return "Unknown";
-  }
 }
 
 function formatUsdVol(n: number): string {
@@ -38,38 +27,31 @@ function formatUsdVol(n: number): string {
   return `$${n.toFixed(0)}`;
 }
 
-function timeAgo(isoStr: string | null): string {
-  if (!isoStr) return "";
-  try {
-    const ms = Date.now() - new Date(isoStr).getTime();
-    const days = Math.floor(ms / 86400000);
-    if (days < 1) return "today";
-    if (days === 1) return "1 day ago";
-    if (days < 30) return `${days}d ago`;
-    const months = Math.floor(days / 30);
-    if (months < 12) return `${months}mo ago`;
-    const years = Math.floor(months / 12);
-    const rem = months % 12;
-    if (rem === 0) return `${years}y ago`;
-    return `${years}y ${rem}mo ago`;
-  } catch {
-    return "";
-  }
-}
-
 export function TokenCard({ token }: { token: TokenResult }) {
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const copyLottieRef = useRef<LottieRefCurrentProps>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
 
   const copyMint = async () => {
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
     try {
       await navigator.clipboard.writeText(token.mint);
+      setCopyFailed(false);
       setCopied(true);
       copyLottieRef.current?.stop();
       copyLottieRef.current?.play();
-      setTimeout(() => setCopied(false), 1500);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
     } catch {
-      /* */
+      setCopied(false);
+      setCopyFailed(true);
+      copyTimerRef.current = setTimeout(() => setCopyFailed(false), 1500);
     }
   };
 
@@ -103,6 +85,7 @@ export function TokenCard({ token }: { token: TokenResult }) {
             {token.rankingMode === "creation" && (
               <OGBadge rank={token.rank} />
             )}
+            {token.supplyZero && <BurnedBadge />}
             <PlatformBadge dexId={token.dexId} />
           </div>
 
@@ -111,6 +94,14 @@ export function TokenCard({ token }: { token: TokenResult }) {
             <span className="font-medium text-gray-300">
               {formatDate(token.createdAt)}
             </span>
+            {token.createdAtIsLowerBound && (
+              <span
+                className="text-[10px] font-medium text-amber-500/80"
+                title="Active token — creation may be older than shown"
+              >
+                may be older
+              </span>
+            )}
             {ago && (
               <span className="text-gray-600">({ago})</span>
             )}
@@ -164,12 +155,22 @@ export function TokenCard({ token }: { token: TokenResult }) {
                 }
               }}
               className="inline-flex items-center gap-1.5 rounded-md border border-gray-700/50 bg-gray-800/50 px-2 py-0.5 font-mono text-[11px] text-gray-400 transition-colors hover:border-gray-600 hover:bg-gray-800/80 hover:text-gray-200"
-              title={copied ? "Copied" : `Copy ${token.mint}`}
+              title={
+                copied
+                  ? "Copied"
+                  : copyFailed
+                    ? "Copy failed"
+                    : `Copy ${token.mint}`
+              }
             >
               <span>{truncateMint(token.mint)}</span>
               {copied ? (
                 <span className="text-[10px] font-medium text-emerald-400">
                   Copied
+                </span>
+              ) : copyFailed ? (
+                <span className="text-[10px] font-medium text-red-400">
+                  Copy failed
                 </span>
               ) : (
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center">

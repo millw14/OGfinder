@@ -68,6 +68,17 @@ export interface SearchResponse {
   error?: string;
 }
 
+/** Scan-mode summary the client keeps from a SearchResponse (server verdict is authoritative). */
+export type ScanSummary = Pick<
+  SearchResponse,
+  | "mode"
+  | "isScannedOG"
+  | "scannedRank"
+  | "scanName"
+  | "scanSymbol"
+  | "scannedMint"
+>;
+
 /** Merged name-search cap: each mint runs Helius getAssetBatch + getCreationSlot (linear cost). */
 export const MAX_HELIUS = 240;
 export const MAX_RESULTS = 100;

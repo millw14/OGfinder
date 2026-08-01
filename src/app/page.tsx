@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
-import { TokenResult, SearchResponse } from "@/lib/types";
+import { TokenResult, SearchResponse, ScanSummary } from "@/lib/types";
 import { SearchBar } from "@/components/SearchBar";
-import { Results, ScanSummary } from "@/components/Results";
+import { Results } from "@/components/Results";
 import { NavTabs } from "@/components/NavTabs";
 
 /** Client-only: Lottie + canvas; avoids flaky dev SSR chunk splits (missing ./276.js). */
@@ -37,7 +37,11 @@ function getRecent(): string[] {
   if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(RECENT_KEY);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    const list: unknown = JSON.parse(raw);
+    return Array.isArray(list) && list.every((q) => typeof q === "string")
+      ? list
+      : [];
   } catch {
     return [];
   }
@@ -47,7 +51,11 @@ function addRecent(query: string) {
   const list = getRecent().filter((q) => q !== query);
   list.unshift(query);
   if (list.length > MAX_RECENT) list.pop();
-  localStorage.setItem(RECENT_KEY, JSON.stringify(list));
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(list));
+  } catch {
+    /* storage unavailable (private mode / quota) — non-fatal */
+  }
 }
 
 export default function Home() {
@@ -67,7 +75,16 @@ export default function Home() {
     setRecentSearches(getRecent());
   }, []);
 
+  const abortRef = useRef<AbortController | null>(null);
+  const requestSeqRef = useRef(0);
+
   const handleSearch = useCallback(async (query: string) => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const requestId = ++requestSeqRef.current;
+    const isStale = () => requestId !== requestSeqRef.current;
+
     setIsLoading(true);
     setHasSearched(true);
     setSearchError(null);
@@ -75,8 +92,11 @@ export default function Home() {
     setSearchMode(null);
 
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+      const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`, {
+        signal: controller.signal,
+      });
       const data: SearchResponse = await res.json();
+      if (isStale()) return;
 
       if (!res.ok) {
         setResults([]);
@@ -107,14 +127,22 @@ export default function Home() {
       }
       addRecent(query);
       setRecentSearches(getRecent());
-    } catch {
+    } catch (err) {
+      // Superseded request — a newer search aborted this one; stay silent.
+      if (
+        controller.signal.aborted ||
+        (err instanceof DOMException && err.name === "AbortError")
+      ) {
+        return;
+      }
+      if (isStale()) return;
       setResults([]);
       setTiming(undefined);
       setLastQuery("");
       setSearchMode(null);
       setSearchError("Network error — try again");
     } finally {
-      setIsLoading(false);
+      if (!isStale()) setIsLoading(false);
     }
   }, []);
 

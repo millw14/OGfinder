@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
-import { TokenResult } from "@/lib/types";
+import { TokenResult, ScanSummary } from "@/lib/types";
 import { bucketForDexId, LAUNCHPAD_BUCKETS } from "@/lib/launchpads";
 import {
   sortByCreationTime,
@@ -23,15 +23,6 @@ const TokenCard = dynamic(
     ),
   }
 );
-
-export interface ScanSummary {
-  mode?: "search" | "scan";
-  isScannedOG?: boolean;
-  scannedRank?: number | null;
-  scanName?: string | null;
-  scanSymbol?: string | null;
-  scannedMint?: string;
-}
 
 function SkeletonCard() {
   return (
@@ -141,35 +132,40 @@ export function Results({
 
   const filtersActive = selectedBucketIds.size > 0;
 
-  const displayed = useMemo(() => {
-    let subset = results;
-    if (filtersActive) {
-      subset = results.filter((t) =>
-        selectedBucketIds.has(bucketForDexId(t.dexId))
-      );
-    }
+  // Rank/confidence are computed ONCE from the full unfiltered result set so
+  // every token keeps its global rank (and the OG crown stays on the globally
+  // oldest token) no matter which launchpad filters are active.
+  const ranked = useMemo(() => {
     if (searchMode === "social") {
-      const sorted = sortByMarketCapLeaderboard([...subset]);
+      const sorted = sortByMarketCapLeaderboard([...results]);
       return scoreMarketCapRank(sorted);
     }
-    const sorted = sortByCreationTime([...subset]);
+    const sorted = sortByCreationTime([...results]);
     return scoreConfidence(sorted, lastQuery);
-  }, [results, lastQuery, filtersActive, selectedBucketIds, searchMode]);
+  }, [results, lastQuery, searchMode]);
 
-  const scannedRow = useMemo(() => {
-    if (scan?.mode !== "scan" || !scan.scannedMint) return null;
-    return displayed.find((t) => t.mint === scan.scannedMint) ?? null;
+  const displayed = useMemo(() => {
+    if (!filtersActive) return ranked;
+    return ranked.filter((t) =>
+      selectedBucketIds.has(bucketForDexId(t.dexId))
+    );
+  }, [ranked, filtersActive, selectedBucketIds]);
+
+  const scannedVisible = useMemo(() => {
+    if (scan?.mode !== "scan" || !scan.scannedMint) return false;
+    return displayed.some((t) => t.mint === scan.scannedMint);
   }, [displayed, scan]);
 
   const hiddenByFilter = Boolean(
     scan?.mode === "scan" &&
       scan.scannedMint &&
       filtersActive &&
-      !scannedRow
+      !scannedVisible
   );
 
-  const effectiveRank = scannedRow?.rank ?? null;
-  const effectiveIsOG = scannedRow?.rank === 1;
+  // The server's scan verdict is authoritative — never recomputed client-side.
+  const effectiveRank = scan?.scannedRank ?? null;
+  const effectiveIsOG = scan?.isScannedOG === true;
 
   function toggleBucket(id: string) {
     setSelectedBucketIds((prev) => {

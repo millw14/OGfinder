@@ -1,18 +1,32 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 
 const WALLET = "CmLvaDkNRiJGRcWD3uEwVZLSyPUaMcFcZkaDnzhBwfrH";
 
 export function DonationAddress() {
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
 
   async function copy() {
+    if (timerRef.current) clearTimeout(timerRef.current);
     try {
       await navigator.clipboard.writeText(WALLET);
+      setCopyFailed(false);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch { /* noop */ }
+      timerRef.current = setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+      setCopyFailed(true);
+      timerRef.current = setTimeout(() => setCopyFailed(false), 2000);
+    }
   }
 
   return (
@@ -26,7 +40,9 @@ export function DonationAddress() {
       <span className="font-mono text-gray-600 group-hover:text-gray-400">
         {WALLET.slice(0, 4)}...{WALLET.slice(-4)}
       </span>
-      <span className="text-[10px]">{copied ? "Copied!" : "Copy"}</span>
+      <span className={`text-[10px]${copyFailed ? " text-red-400" : ""}`}>
+        {copied ? "Copied!" : copyFailed ? "Copy failed" : "Copy"}
+      </span>
     </button>
   );
 }

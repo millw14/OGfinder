@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { isLikelyMintAddress } from "@/lib/solana";
-import { MAX_QUERY, MAX_MINT_LEN, MAX_SOCIAL_URL } from "@/lib/types";
+import { MIN_QUERY, MAX_QUERY, MAX_MINT_LEN, MAX_SOCIAL_URL } from "@/lib/types";
 import { isLikelySocialUrl } from "@/lib/social-url";
 
 interface SearchBarProps {
@@ -19,11 +19,8 @@ function shouldTriggerSearch(trimmed: string): boolean {
   if (mint && trimmed.length >= 32 && trimmed.length <= MAX_MINT_LEN) {
     return true;
   }
-  if (!mint && trimmed.length >= 2 && trimmed.length <= MAX_QUERY) {
+  if (!mint && trimmed.length >= MIN_QUERY && trimmed.length <= MAX_QUERY) {
     return true;
-  }
-  if (trimmed.length > MAX_QUERY && !mint) {
-    return false;
   }
   return false;
 }
@@ -65,6 +62,10 @@ export function SearchBar({ onSearch, isLoading }: SearchBarProps) {
     isLikelySocialUrl(trimmed) &&
     trimmed.length >= 8 &&
     trimmed.length <= MAX_SOCIAL_URL;
+  // Dead zone: too long for a name search, but not a valid mint or URL either
+  // (e.g. a 31-char base58 string, or a name over MAX_QUERY characters).
+  const hintDeadZone =
+    !hintMint && !hintSocial && trimmed.length > MAX_QUERY;
 
   return (
     <form onSubmit={handleSubmit} className="mx-auto w-full max-w-xl">
@@ -110,10 +111,15 @@ export function SearchBar({ onSearch, isLoading }: SearchBarProps) {
           <span className="text-amber-500/85">
             Link detected — finding tokens with this URL in DexScreener socials
           </span>
+        ) : hintDeadZone ? (
+          <span className="text-red-400/90">
+            Not searchable — too long for a name (max {MAX_QUERY}), too short
+            for a mint ({32}–{MAX_MINT_LEN})
+          </span>
         ) : (
           <>
             <span className="text-gray-500">
-              Name: {2}–{MAX_QUERY} characters
+              Name: {MIN_QUERY}–{MAX_QUERY} characters
             </span>
             <span className="text-gray-700"> · </span>
             <span className="text-gray-500">

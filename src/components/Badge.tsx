@@ -71,6 +71,17 @@ export function ScannedMintBadge() {
   );
 }
 
+export function BurnedBadge() {
+  return (
+    <span
+      className="inline-flex items-center rounded-full bg-gray-800/60 px-2 py-0.5 text-[10px] font-medium text-gray-400 ring-1 ring-gray-700/50"
+      title="On-chain supply is zero — this token has been fully burned"
+    >
+      Burned
+    </span>
+  );
+}
+
 export function RankBadge({ rank }: { rank: number }) {
   if (rank === 1) {
     return (
