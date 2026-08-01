@@ -18,8 +18,12 @@ export function getSearchCache<T>(key: string): T | undefined {
   return searchCache.get<T>(key);
 }
 
-export function setSearchCache<T>(key: string, value: T): void {
-  searchCache.set(key, value);
+export function setSearchCache<T>(key: string, value: T, ttl?: number): void {
+  if (ttl !== undefined) {
+    searchCache.set(key, value, ttl);
+  } else {
+    searchCache.set(key, value);
+  }
 }
 
 export function getDexCache<T>(key: string): T | undefined {

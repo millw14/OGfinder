@@ -31,11 +31,17 @@ export function getDb(): Database.Database {
   return db;
 }
 
-const upsertStmt = () =>
-  getDb().prepare(`
-    INSERT OR IGNORE INTO token_links (mint, url_norm, url_raw, source, discovered_at)
-    VALUES (?, ?, ?, ?, ?)
-  `);
+let upsertStmt: Database.Statement | null = null;
+
+function getUpsertStmt(): Database.Statement {
+  if (!upsertStmt) {
+    upsertStmt = getDb().prepare(`
+      INSERT OR IGNORE INTO token_links (mint, url_norm, url_raw, source, discovered_at)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+  }
+  return upsertStmt;
+}
 
 export function upsertTokenLinks(
   mint: string,
@@ -43,7 +49,7 @@ export function upsertTokenLinks(
   source: string
 ): void {
   const now = Date.now();
-  const stmt = upsertStmt();
+  const stmt = getUpsertStmt();
   const tx = getDb().transaction(() => {
     for (const raw of urls) {
       const norm = normalizeForSocialMatch(raw);
@@ -65,17 +71,29 @@ function escapeSqlLike(s: string): string {
  * Find mints whose stored URLs path-prefix-match any normalized target.
  * Avoids bare-host false positives (e.g. x.com matching every community URL).
  */
+let searchStmt: Database.Statement | null = null;
+
+function getSearchStmt(): Database.Statement {
+  if (!searchStmt) {
+    // Reverse prefix check uses substr/length instead of LIKE so stored
+    // url_norm values containing % or _ can't act as wildcard patterns.
+    searchStmt = getDb().prepare(
+      `SELECT DISTINCT mint FROM token_links
+       WHERE url_norm = ?
+          OR url_norm LIKE ? ESCAPE '\\'
+          OR (substr(?, 1, length(url_norm) + 1) = url_norm || '/'
+              AND url_norm LIKE '%/%')
+       LIMIT 500`
+    );
+  }
+  return searchStmt;
+}
+
 export function searchByUrl(targetNorms: string[]): string[] {
   if (targetNorms.length === 0) return [];
-  const d = getDb();
   const mints = new Set<string>();
 
-  const stmt = d.prepare(
-    `SELECT DISTINCT mint FROM token_links
-     WHERE url_norm = ?
-        OR url_norm LIKE ? ESCAPE '\\'
-        OR (? LIKE url_norm || '/%' AND url_norm LIKE '%/%')`
-  );
+  const stmt = getSearchStmt();
 
   for (const t of targetNorms) {
     if (!t || t.length < 3) continue;

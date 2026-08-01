@@ -60,7 +60,10 @@ export async function searchDex(query: string): Promise<RawToken[]> {
         pairMs != null &&
         (!existing.oldestPairTime || pairMs < existing.oldestPairTime)
       ) {
+        // Keep the OLDEST pair's identity too (dexId/name/symbol), so the
+        // launch venue reflects where the token actually launched.
         existing.oldestPairTime = pairMs;
+        existing.pair = pair;
       }
     }
 
