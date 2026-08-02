@@ -101,6 +101,12 @@ export interface TokenResult {
     /** Head start over the next-earliest claimant (ms) */
     leadMs: number;
   };
+  /**
+   * Scan mode, scanned + OG mints only: % of supply held by the 10 largest
+   * token accounts. Includes LP pools and burn addresses — an UPPER BOUND on
+   * wallet concentration.
+   */
+  topHolderPct?: number;
 }
 
 export interface SearchResponse {

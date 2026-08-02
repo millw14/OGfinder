@@ -228,6 +228,76 @@ export async function getMintHeliusDataRpcFallback(
 }
 
 /**
+ * Pure math behind getTopHolderShare — exported for unit tests. `amounts` are
+ * raw token amounts in descending order (as getTokenLargestAccounts returns
+ * them); non-finite/negative entries are dropped. Percentages are clamped to
+ * 100 because raw supplies above 2^53 lose precision in Number().
+ */
+export function computeHolderShare(
+  amounts: number[],
+  supply: number
+): { topTenPct: number; largestPct: number } | null {
+  if (!Number.isFinite(supply) || supply <= 0) return null;
+  const valid = amounts.filter((a) => Number.isFinite(a) && a >= 0);
+  if (valid.length === 0) return null;
+  const topTen = valid.slice(0, 10).reduce((sum, a) => sum + a, 0);
+  return {
+    topTenPct: Math.min(100, (100 * topTen) / supply),
+    largestPct: Math.min(100, (100 * valid[0]) / supply),
+  };
+}
+
+/**
+ * Share of supply in the largest token accounts via getTokenLargestAccounts.
+ * Includes LP pools and burn addresses — an UPPER BOUND on wallet
+ * concentration. Falls back to getTokenSupply when the caller has no DAS
+ * supply. Any failure returns null.
+ */
+export async function getTopHolderShare(
+  mint: string,
+  supplyRaw: number | null
+): Promise<{ topTenPct: number; largestPct: number } | null> {
+  try {
+    const response = (await standardRpc("getTokenLargestAccounts", [
+      mint,
+      { commitment: "confirmed" },
+    ])) as {
+      result?: {
+        value?: {
+          address: string;
+          amount: string;
+          decimals: number;
+          uiAmount: number | null;
+        }[];
+      };
+    };
+    const accounts = response?.result?.value;
+    if (!Array.isArray(accounts) || accounts.length === 0) return null;
+
+    let supply =
+      supplyRaw != null && Number.isFinite(supplyRaw) && supplyRaw > 0
+        ? supplyRaw
+        : null;
+    if (supply == null) {
+      const supplyResponse = (await standardRpc("getTokenSupply", [mint])) as {
+        result?: { value?: { amount?: string } };
+      };
+      const amount = supplyResponse?.result?.value?.amount;
+      const parsed = amount != null && amount !== "" ? Number(amount) : NaN;
+      if (Number.isFinite(parsed) && parsed > 0) supply = parsed;
+    }
+    if (supply == null) return null;
+
+    return computeHolderShare(
+      accounts.map((a) => Number(a?.amount)),
+      supply
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Get the actual creation slot/blockTime for a mint by paginating backward
  * through getSignaturesForAddress until we find the very first transaction.
  *

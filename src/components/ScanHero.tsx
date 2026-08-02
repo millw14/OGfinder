@@ -5,7 +5,7 @@ import { TokenResult, ScanSummary } from "@/lib/types";
 import { formatDate, timeAgo, formatAgeGap } from "@/lib/format";
 import { encodeSharePayload, SharePayload } from "@/lib/share";
 import { LottieHover } from "./LottieHover";
-import { RiskChips } from "./Badge";
+import { RiskChips, HolderConcChip } from "./Badge";
 import crownOg from "@/assets/lottie/crown-og.json";
 
 function truncateMint(mint: string): string {
@@ -255,6 +255,9 @@ export function ScanHero({
               size="md"
             />
           )}
+          {scanned?.topHolderPct != null && (
+            <HolderConcChip pct={scanned.topHolderPct} size="md" />
+          )}
           <span className="text-gray-700">·</span>
           <span className="text-xs text-gray-400">
             minted{" "}
@@ -357,6 +360,11 @@ export function ScanHero({
                 {formatDate(og.createdAt)}
                 {ogAgo && <span className="text-gray-600"> ({ogAgo})</span>}
               </p>
+              {og.topHolderPct != null && (
+                <div className="mt-1.5">
+                  <HolderConcChip pct={og.topHolderPct} />
+                </div>
+              )}
             </div>
           </div>
         </div>

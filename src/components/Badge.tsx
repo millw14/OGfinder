@@ -185,6 +185,42 @@ export function RiskChips({
 }
 
 /**
+ * Top-10 token-account concentration for scanned/OG mints. Includes LP pools
+ * and burn addresses, so the number is an UPPER BOUND on wallet concentration.
+ */
+export function HolderConcChip({
+  pct,
+  size = "sm",
+}: {
+  pct: number;
+  size?: "sm" | "md";
+}) {
+  const base =
+    size === "md"
+      ? "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium ring-1"
+      : "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1";
+
+  const colors =
+    pct > 50
+      ? "bg-red-950/60 text-red-400 ring-red-800/50"
+      : pct > 25
+        ? "bg-amber-950/60 text-amber-400 ring-amber-800/50"
+        : "bg-gray-800/60 text-gray-400 ring-gray-700/50";
+
+  const label =
+    pct >= 10 ? String(Math.round(pct)) : pct >= 0.1 ? pct.toFixed(1) : "<0.1";
+
+  return (
+    <span
+      className={`${base} ${colors}`}
+      title="Share of supply in the 10 largest token accounts. Includes liquidity pools and burn addresses, so treat as an upper bound."
+    >
+      top 10 accounts hold {label}%
+    </span>
+  );
+}
+
+/**
  * Emerald-outline chip: earliest indexed claimant of a contested social /
  * website link. Based on when OGfinder's index first OBSERVED each claim —
  * never on when the link was created.

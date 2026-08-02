@@ -11,7 +11,11 @@ import { searchTokens } from "@/lib/search";
 import { buildTokenResults } from "@/lib/enrich-results";
 import { isLikelyMintAddress } from "@/lib/solana";
 import { deriveSearchTermFromMintMetadata } from "@/lib/mint-search";
-import { getAssetBatch, getMintHeliusDataRpcFallback } from "@/lib/helius";
+import {
+  getAssetBatch,
+  getMintHeliusDataRpcFallback,
+  getTopHolderShare,
+} from "@/lib/helius";
 import { getJupiterTokenByMint } from "@/lib/jupiter";
 import { isLikelySocialUrl, normalizeForSocialMatch } from "@/lib/social-url";
 import { searchDexBySocialUrl } from "@/lib/dex-social";
@@ -458,6 +462,28 @@ async function runMintScan(
   // Earliest-link-claim evidence from the local index — sub-ms SQLite read,
   // runs on both fast and full paths (try/caught inside the lib).
   annotateLinkProvenance(final, q);
+
+  // Holder concentration — full scans only (cost control): scanned mint + OG,
+  // deduped when they're the same token. Baked into the cache payload below;
+  // any RPC failure just leaves topHolderPct absent.
+  if (!options?.fast) {
+    const og = final.length > 0 ? final[0] : undefined;
+    const scanned = final.find((t) => t.mint === q);
+    const jobs: { token: TokenResult; supply: number | null }[] = [];
+    if (scanned) jobs.push({ token: scanned, supply: h.supply });
+    if (og && og.mint !== q) {
+      // DAS supply is usually a warm heliusMeta cache hit from enrichment;
+      // null falls back to getTokenSupply inside getTopHolderShare.
+      const ogMeta = (await getAssetBatch([og.mint])).get(og.mint);
+      jobs.push({ token: og, supply: ogMeta?.supply ?? null });
+    }
+    const shares = await Promise.all(
+      jobs.map((job) => getTopHolderShare(job.token.mint, job.supply))
+    );
+    shares.forEach((share, i) => {
+      if (share) jobs[i].token.topHolderPct = share.topTenPct;
+    });
+  }
 
   const payload: MintScanPayload = {
     results: final,
