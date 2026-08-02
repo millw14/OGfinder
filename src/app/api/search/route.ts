@@ -15,6 +15,7 @@ import { getAssetBatch, getMintHeliusDataRpcFallback } from "@/lib/helius";
 import { getJupiterTokenByMint } from "@/lib/jupiter";
 import { isLikelySocialUrl, normalizeForSocialMatch } from "@/lib/social-url";
 import { searchDexBySocialUrl } from "@/lib/dex-social";
+import { annotateLinkProvenance } from "@/lib/provenance";
 import { ensurePollerStarted } from "@/lib/poller";
 import {
   rateLimitRequest,
@@ -454,6 +455,9 @@ async function runMintScan(
     scannedMint: q,
     ...(options?.fast ? { skipSignatureScan: true } : {}),
   });
+  // Earliest-link-claim evidence from the local index — sub-ms SQLite read,
+  // runs on both fast and full paths (try/caught inside the lib).
+  annotateLinkProvenance(final, q);
 
   const payload: MintScanPayload = {
     results: final,

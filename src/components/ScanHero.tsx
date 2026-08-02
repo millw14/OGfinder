@@ -292,6 +292,21 @@ export function ScanHero({
               impersonation
             </span>
           )}
+          {scanned?.linkProvenance && (
+            <span
+              className="basis-full text-xs font-medium text-amber-400/90"
+              title="Based on when OGfinder's link index first observed each claim — not when the link was created. The index only covers recently listed tokens."
+            >
+              Listed{" "}
+              <span className="break-all font-mono text-[11px] text-amber-300/90">
+                {scanned.linkProvenance.url}
+              </span>{" "}
+              — first seen by OGfinder{" "}
+              {formatAgeGap(scanned.linkProvenance.leadMs)} before{" "}
+              {scanned.linkProvenance.rivalCount} rival token
+              {scanned.linkProvenance.rivalCount === 1 ? "" : "s"}
+            </span>
+          )}
         </div>
       </div>
 

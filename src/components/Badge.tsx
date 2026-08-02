@@ -184,6 +184,22 @@ export function RiskChips({
   );
 }
 
+/**
+ * Emerald-outline chip: earliest indexed claimant of a contested social /
+ * website link. Based on when OGfinder's index first OBSERVED each claim —
+ * never on when the link was created.
+ */
+export function ProvenanceBadge() {
+  return (
+    <span
+      className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium text-emerald-400 ring-1 ring-emerald-600/50"
+      title="Based on when OGfinder's link index first observed each claim — not when the link was created. The index only covers recently listed tokens."
+    >
+      first link claim
+    </span>
+  );
+}
+
 /** Red warning chip: name matches the search only via lookalike folding. */
 export function HomoglyphBadge() {
   return (

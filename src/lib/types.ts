@@ -85,6 +85,22 @@ export interface TokenResult {
   freezeAuthorityActive?: boolean;
   /** True = metadata mutable (name/image can change); false = immutable; absent = unknown */
   metadataMutable?: boolean;
+  /**
+   * Earliest-claim evidence for a contested social/website link. firstSeenMs
+   * is when OGFINDER'S link index first observed this mint claiming the URL —
+   * NOT when the link was created or first posted. The index only covers
+   * recently listed tokens, so absence of this field proves nothing.
+   */
+  linkProvenance?: {
+    /** Normalized claimed URL — render as plain text, never as an href */
+    url: string;
+    /** When our index first saw this mint claim the URL (ms) */
+    firstSeenMs: number;
+    /** Other indexed tokens claiming the same URL */
+    rivalCount: number;
+    /** Head start over the next-earliest claimant (ms) */
+    leadMs: number;
+  };
 }
 
 export interface SearchResponse {

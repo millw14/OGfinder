@@ -157,6 +157,37 @@ export function searchByUrl(targetNorms: string[]): string[] {
   return searchByUrlDetailed(targetNorms).map((h) => h.mint);
 }
 
+export interface MintLinkRow {
+  mint: string;
+  url_norm: string;
+  /** When OUR poller first saw this link — NOT when the link was created. */
+  discovered_at: number;
+}
+
+/** Max mints per getLinksForMints call (placeholder count stays bounded). */
+const LINKS_FOR_MINTS_CAP = 30;
+
+/**
+ * All indexed links for the given mints (first 30 mints, max 500 rows).
+ * Failures return [] — provenance is best-effort and must never break a scan.
+ */
+export function getLinksForMints(mints: string[]): MintLinkRow[] {
+  const capped = mints.slice(0, LINKS_FOR_MINTS_CAP);
+  if (capped.length === 0) return [];
+  try {
+    const placeholders = capped.map(() => "?").join(",");
+    return getDb()
+      .prepare(
+        `SELECT mint, url_norm, discovered_at FROM token_links
+         WHERE mint IN (${placeholders})
+         LIMIT 500`
+      )
+      .all(...capped) as MintLinkRow[];
+  } catch {
+    return [];
+  }
+}
+
 export function countIndexedTokens(): number {
   const row = getDb()
     .prepare("SELECT COUNT(DISTINCT mint) as cnt FROM token_links")

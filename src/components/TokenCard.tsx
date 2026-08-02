@@ -15,6 +15,7 @@ import {
   BurnedBadge,
   ExactNameBadge,
   HomoglyphBadge,
+  ProvenanceBadge,
   RiskChips,
 } from "./Badge";
 
@@ -139,6 +140,7 @@ export function TokenCard({ token }: { token: TokenResult }) {
               <OGBadge rank={token.rank} />
             )}
             {token.exactMatch && token.rank !== 1 && <ExactNameBadge />}
+            {token.linkProvenance && <ProvenanceBadge />}
             {token.homoglyphSuspect && <HomoglyphBadge />}
             {token.supplyZero && <BurnedBadge />}
             <PlatformBadge dexId={token.dexId} mint={token.mint} />
