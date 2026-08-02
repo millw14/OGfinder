@@ -660,14 +660,16 @@ export function formatRegistryVerdict(
 async function sendChatMessage(
   chatId: string,
   text: string,
-  opts?: { replyToMessageId?: number }
+  opts?: { replyToMessageId?: number; linkPreviewUrl?: string }
 ): Promise<number | null> {
   try {
     const res = (await tgCall("sendMessage", {
       chat_id: chatId,
       text,
       parse_mode: "HTML",
-      link_preview_options: { is_disabled: true },
+      link_preview_options: opts?.linkPreviewUrl
+        ? { is_disabled: false, url: opts.linkPreviewUrl }
+        : { is_disabled: true },
       ...(opts?.replyToMessageId != null
         ? {
             reply_parameters: {
@@ -684,75 +686,107 @@ async function sendChatMessage(
   }
 }
 
+/** Best-effort delete of one of the bot's own messages (own messages are always deletable within 48h). */
+async function deleteChatMessage(
+  chatId: string,
+  messageId: number
+): Promise<void> {
+  try {
+    await tgCall("deleteMessage", { chat_id: chatId, message_id: messageId });
+  } catch {
+    /* deletion is best-effort — worst case the old message lingers */
+  }
+}
+
+/**
+ * Replace an interim bot message with a fresh one at the BOTTOM of the chat:
+ * send the new message first (so a send failure never orphans the reply),
+ * then delete the old one. Active groups bury in-place edits up-scroll —
+ * the verdict must arrive as a new message.
+ */
+async function replaceChatMessage(
+  chatId: string,
+  oldMessageId: number,
+  text: string,
+  opts?: { replyToMessageId?: number; linkPreviewUrl?: string }
+): Promise<number | null> {
+  const newId = await sendChatMessage(chatId, text, opts);
+  if (newId != null) await deleteChatMessage(chatId, oldMessageId);
+  return newId;
+}
+
 const verdictCooldown = new VerdictCooldown(
   VERDICT_COOLDOWN_MS,
   VERDICT_COOLDOWN_MAX
 );
 let botScansInFlight = 0;
 
-/** Edit the placeholder into the final verdict (or a short error). Never throws. */
+/** Replace the interim message with a fresh final verdict (or a short error) at the bottom of the chat. Never throws. */
 async function finishVerdict(
   chatId: string,
-  messageId: number,
+  interimMessageId: number,
+  replyToMessageId: number | undefined,
   mint: string,
   outcome: MintScanOutcome | null
 ): Promise<void> {
   try {
     if (outcome?.ok) {
       const site = siteUrl();
-      await tgCall("editMessageText", {
-        chat_id: chatId,
-        message_id: messageId,
-        text: formatMintVerdict(mint, outcome.payload, site),
-        parse_mode: "HTML",
-        // Unfurl the OGfinder share link into its og:image verdict card.
-        link_preview_options: {
-          is_disabled: false,
-          url: verdictShareUrl(mint, outcome.payload, site),
-        },
-      });
+      await replaceChatMessage(
+        chatId,
+        interimMessageId,
+        formatMintVerdict(mint, outcome.payload, site),
+        {
+          replyToMessageId,
+          // Unfurl the OGfinder share link into its og:image verdict card.
+          linkPreviewUrl: verdictShareUrl(mint, outcome.payload, site),
+        }
+      );
     } else {
-      await tgCall("editMessageText", {
-        chat_id: chatId,
-        message_id: messageId,
-        text: "Couldn't verify this mint — not found on-chain or upstream APIs down",
-      });
+      await replaceChatMessage(
+        chatId,
+        interimMessageId,
+        "Couldn't verify this mint — not found on-chain or upstream APIs down",
+        { replyToMessageId }
+      );
     }
   } catch {
-    /* verdict edit is best-effort */
+    /* verdict delivery is best-effort */
   }
 }
 
 /**
  * Instant registry-backed answer: resolve the pasted mint's name cheaply
  * (getAssetBatch is heliusMeta-cached — repeats are free), look up the EXACT
- * name skeleton in the OG registry, and edit the placeholder immediately on a
- * fresh hit. Deliberately awaited BEFORE the detached full scan starts so the
- * definitive verdict edit always lands after (and wins over) this one.
- * Registry miss, stale entry, or any failure → no edit, behavior unchanged.
+ * name skeleton in the OG registry, and on a fresh hit replace the placeholder
+ * with a registry verdict at the bottom of the chat. Returns the new message
+ * id (which the final verdict replaces in turn), or null when the registry had
+ * no fresh answer. Deliberately awaited BEFORE the detached full scan starts
+ * so the definitive verdict always lands after (and wins over) this one.
  */
 async function sendRegistryPreVerdict(
   chatId: string,
-  messageId: number,
+  placeholderId: number,
+  replyToMessageId: number | undefined,
   mint: string
-): Promise<void> {
+): Promise<number | null> {
   try {
     const meta = (await getAssetBatch([mint])).get(mint);
     const name = meta?.heliusName?.trim();
-    if (!name) return;
+    if (!name) return null;
     const key = skeleton(name);
-    if (key.length < 2) return;
+    if (key.length < 2) return null;
     const entry = getRegisteredOg(key);
-    if (!entry || !isRegistryFresh(entry.verifiedAt)) return;
-    await tgCall("editMessageText", {
-      chat_id: chatId,
-      message_id: messageId,
-      text: formatRegistryVerdict(mint, entry),
-      parse_mode: "HTML",
-      link_preview_options: { is_disabled: true },
-    });
+    if (!entry || !isRegistryFresh(entry.verifiedAt)) return null;
+    return await replaceChatMessage(
+      chatId,
+      placeholderId,
+      formatRegistryVerdict(mint, entry),
+      { replyToMessageId }
+    );
   } catch {
-    /* registry pre-answer is best-effort — the full scan still edits */
+    /* registry pre-answer is best-effort — the full scan still replies */
+    return null;
   }
 }
 
@@ -775,8 +809,16 @@ async function startVerdictScan(
   );
   if (placeholderId == null) return;
   // Instant answer for exact names we've already verified — awaited so the
-  // detached full scan's edit below always lands later and wins.
-  await sendRegistryPreVerdict(chatId, placeholderId, mint);
+  // detached full scan's reply below always lands later and wins. When it
+  // fires, the placeholder is already replaced; the final verdict then
+  // replaces the registry message.
+  const registryMsgId = await sendRegistryPreVerdict(
+    chatId,
+    placeholderId,
+    replyToMessageId,
+    mint
+  );
+  const interimId = registryMsgId ?? placeholderId;
   // Detached on purpose: the long-poll loop stays responsive while the scan
   // runs; botScansInFlight bounds total concurrent pipeline work. scanMint
   // shares caches + in-flight coalescing with web scans, so warm mints are
@@ -784,8 +826,9 @@ async function startVerdictScan(
   botScansInFlight++;
   void scanMint(mint)
     .then(
-      (outcome) => finishVerdict(chatId, placeholderId, mint, outcome),
-      () => finishVerdict(chatId, placeholderId, mint, null)
+      (outcome) =>
+        finishVerdict(chatId, interimId, replyToMessageId, mint, outcome),
+      () => finishVerdict(chatId, interimId, replyToMessageId, mint, null)
     )
     .finally(() => {
       botScansInFlight--;
@@ -870,31 +913,32 @@ export function formatNameSearchReply(
   return lines.join("\n");
 }
 
-/** Edit the name-search placeholder into the result list (or a short error). */
+/** Replace the name-search placeholder with the result list (or a short error) at the bottom of the chat. */
 async function finishNameSearch(
   chatId: string,
-  messageId: number,
+  interimMessageId: number,
+  replyToMessageId: number | undefined,
   query: string,
   results: TokenResult[] | null
 ): Promise<void> {
   try {
     if (results) {
-      await tgCall("editMessageText", {
-        chat_id: chatId,
-        message_id: messageId,
-        text: formatNameSearchReply(query, results, siteUrl()),
-        parse_mode: "HTML",
-        link_preview_options: { is_disabled: true },
-      });
+      await replaceChatMessage(
+        chatId,
+        interimMessageId,
+        formatNameSearchReply(query, results, siteUrl()),
+        { replyToMessageId }
+      );
     } else {
-      await tgCall("editMessageText", {
-        chat_id: chatId,
-        message_id: messageId,
-        text: "Search failed — upstream APIs down, try again shortly",
-      });
+      await replaceChatMessage(
+        chatId,
+        interimMessageId,
+        "Search failed — upstream APIs down, try again shortly",
+        { replyToMessageId }
+      );
     }
   } catch {
-    /* result edit is best-effort */
+    /* result delivery is best-effort */
   }
 }
 
@@ -1038,8 +1082,9 @@ async function handleOg(
   botScansInFlight++;
   void runNameSearch(arg)
     .then(
-      (results) => finishNameSearch(chatId, placeholderId, arg, results),
-      () => finishNameSearch(chatId, placeholderId, arg, null)
+      (results) =>
+        finishNameSearch(chatId, placeholderId, replyToMessageId, arg, results),
+      () => finishNameSearch(chatId, placeholderId, replyToMessageId, arg, null)
     )
     .finally(() => {
       botScansInFlight--;
