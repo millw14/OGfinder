@@ -66,6 +66,8 @@ export interface TokenResult {
   priceChange24h?: number | null;
   /** How list order was determined (OG vs volume leaderboard) */
   rankingMode?: "creation" | "volume" | "marketcap";
+  /** Fast phase only: no creation time yet — signature scan still pending */
+  pendingAge?: true;
 }
 
 export interface SearchResponse {
@@ -81,6 +83,12 @@ export interface SearchResponse {
   scannedRank?: number | null;
   /** Raw user input (e.g. mint when scanning) */
   originalInput?: string;
+  /** Present on fast-phase responses (signature scans skipped) */
+  phase?: "fast";
+  /** True when a follow-up full request will deliver verified on-chain ages */
+  enriching?: boolean;
+  /** Scan fast phase: verdict computed without signature scans — not final */
+  verdictPreliminary?: boolean;
   error?: string;
 }
 
@@ -93,6 +101,7 @@ export type ScanSummary = Pick<
   | "scanName"
   | "scanSymbol"
   | "scannedMint"
+  | "verdictPreliminary"
 >;
 
 /** Merged name-search cap: each mint runs Helius getAssetBatch + getCreationSlot (linear cost). */

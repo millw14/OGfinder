@@ -132,9 +132,18 @@ export function TokenCard({ token }: { token: TokenResult }) {
 
           {/* Row 2: Date + mint */}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-400 sm:text-sm">
-            <span className="font-medium text-gray-300">
-              {formatDate(token.createdAt)}
-            </span>
+            {token.pendingAge ? (
+              <span
+                className="animate-pulse font-medium text-gray-600"
+                title="On-chain age check in progress"
+              >
+                dating…
+              </span>
+            ) : (
+              <span className="font-medium text-gray-300">
+                {formatDate(token.createdAt)}
+              </span>
+            )}
             {token.createdAtIsLowerBound && (
               <span
                 className="text-[10px] font-medium text-amber-500/80"

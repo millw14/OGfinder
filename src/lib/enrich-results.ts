@@ -26,9 +26,12 @@ export async function buildTokenResults(
     scannedMint?: string;
     /** Default: oldest-first (OG). Social: use marketcap (MC → vol → age). */
     rankBy?: "creation" | "volume" | "marketcap";
+    /** Fast phase: skip per-mint signature scans (DAS/DexScreener times only). */
+    skipSignatureScan?: boolean;
   }
 ): Promise<TokenResult[]> {
   const rankBy = options?.rankBy ?? "creation";
+  const skipSignatureScan = options?.skipSignatureScan === true;
   const mints = rawTokens.map((t) => t.mint);
   const heliusData = await getAssetBatch(mints);
 
@@ -95,12 +98,14 @@ export async function buildTokenResults(
   }
 
   const sigResults: Awaited<ReturnType<typeof getCreationSlot>>[] = [];
-  for (let i = 0; i < candidates.length; i += CREATION_SLOT_CONCURRENCY) {
-    const chunk = candidates.slice(i, i + CREATION_SLOT_CONCURRENCY);
-    const part = await Promise.all(
-      chunk.map((c) => getCreationSlot(c.raw.mint))
-    );
-    sigResults.push(...part);
+  if (!skipSignatureScan) {
+    for (let i = 0; i < candidates.length; i += CREATION_SLOT_CONCURRENCY) {
+      const chunk = candidates.slice(i, i + CREATION_SLOT_CONCURRENCY);
+      const part = await Promise.all(
+        chunk.map((c) => getCreationSlot(c.raw.mint))
+      );
+      sigResults.push(...part);
+    }
   }
 
   const enriched: TokenResult[] = [];
@@ -167,6 +172,10 @@ export async function buildTokenResults(
       ...(c.isScannedMint ? { isScanned: true } : {}),
       ...(c.supplyZero ? { supplyZero: true } : {}),
       ...(createdAtIsLowerBound ? { createdAtIsLowerBound: true } : {}),
+      // sortByCreationTime sends null createdAtMs to the bottom — no extra sort.
+      ...(skipSignatureScan && createdAtMs == null
+        ? { pendingAge: true as const }
+        : {}),
     });
   }
 

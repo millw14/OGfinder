@@ -61,6 +61,8 @@ export function ScanHero({
   const og = ranked.length > 0 ? ranked[0] : null;
   const isOG = scan.isScannedOG === true;
   const rank = scan.scannedRank ?? null;
+  /** Fast-phase verdict — ages unverified, so no definitive OG/NOT state yet. */
+  const preliminary = scan.verdictPreliminary === true;
 
   const name = scanned?.displayName ?? scan.scanName ?? "Unknown token";
   const symbol = scanned?.displaySymbol ?? scan.scanSymbol ?? null;
@@ -105,6 +107,7 @@ export function ScanHero({
   const showLogo = Boolean(scanned?.imageUrl) && !logoFailed;
 
   const shareVerdict = async () => {
+    if (preliminary) return;
     if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
     const payload: SharePayload = {
       n: name,
@@ -133,15 +136,21 @@ export function ScanHero({
   return (
     <section
       className={`mb-4 overflow-hidden rounded-2xl border ${
-        isOG
-          ? "border-yellow-600/40 bg-gradient-to-br from-yellow-950/30 via-gray-900/60 to-gray-900/40 og-glow"
-          : "border-red-900/40 bg-gradient-to-br from-red-950/20 via-gray-900/60 to-gray-900/40"
+        preliminary
+          ? "border-gray-700/50 bg-gradient-to-br from-gray-900/70 via-gray-900/60 to-gray-900/40"
+          : isOG
+            ? "border-yellow-600/40 bg-gradient-to-br from-yellow-950/30 via-gray-900/60 to-gray-900/40 og-glow"
+            : "border-red-900/40 bg-gradient-to-br from-red-950/20 via-gray-900/60 to-gray-900/40"
       }`}
     >
       <div className="p-4 sm:p-6">
         <p
           className={`text-[11px] font-semibold uppercase tracking-wider ${
-            isOG ? "text-yellow-500/90" : "text-red-400/80"
+            preliminary
+              ? "text-gray-500"
+              : isOG
+                ? "text-yellow-500/90"
+                : "text-red-400/80"
           }`}
         >
           Contract scan verdict
@@ -149,7 +158,11 @@ export function ScanHero({
 
         <div className="mt-3 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-center gap-3 sm:gap-4">
-            {isOG ? (
+            {preliminary ? (
+              <span className="flex h-12 w-12 flex-shrink-0 animate-pulse items-center justify-center rounded-2xl bg-gray-800/60 text-sm font-black text-gray-500 ring-1 ring-gray-700/50 sm:h-14 sm:w-14 sm:text-base">
+                #{rank}
+              </span>
+            ) : isOG ? (
               <span className="og-badge-crown flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-2xl bg-yellow-900/40 ring-1 ring-yellow-600/50 sm:h-14 sm:w-14">
                 <LottieHover animationData={crownOg} size={36} />
               </span>
@@ -161,13 +174,29 @@ export function ScanHero({
             <div>
               <h2
                 className={`text-2xl font-black uppercase tracking-tight sm:text-3xl ${
-                  isOG ? "text-yellow-400" : "text-gray-200"
+                  preliminary
+                    ? "animate-pulse text-gray-400"
+                    : isOG
+                      ? "text-yellow-400"
+                      : "text-gray-200"
                 }`}
               >
-                {isOG ? "This is the OG" : "Not the OG"}
+                {preliminary
+                  ? "Verifying…"
+                  : isOG
+                    ? "This is the OG"
+                    : "Not the OG"}
               </h2>
               <p className="mt-0.5 text-xs text-gray-500 sm:text-sm">
-                {isOG ? (
+                {preliminary ? (
+                  <>
+                    Checking on-chain ages of{" "}
+                    <span className="tabular-nums text-gray-400">
+                      {totalCount}
+                    </span>{" "}
+                    matching tokens
+                  </>
+                ) : isOG ? (
                   <>
                     Oldest of{" "}
                     <span className="tabular-nums text-gray-300">
@@ -190,13 +219,18 @@ export function ScanHero({
           <button
             type="button"
             onClick={shareVerdict}
-            title="Copy a shareable verdict link"
-            className={`inline-flex flex-shrink-0 items-center gap-1.5 self-start rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
+            disabled={preliminary}
+            title={
+              preliminary
+                ? "Verdict pending — verifying on-chain ages"
+                : "Copy a shareable verdict link"
+            }
+            className={`inline-flex flex-shrink-0 items-center gap-1.5 self-start rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
               copied
                 ? "border-emerald-500/50 bg-emerald-950/40 text-emerald-300"
                 : copyFailed
                   ? "border-red-500/50 bg-red-950/40 text-red-300"
-                  : isOG
+                  : isOG && !preliminary
                     ? "border-yellow-600/50 bg-yellow-950/40 text-yellow-300 hover:border-yellow-500/70 hover:bg-yellow-950/70"
                     : "border-gray-700/80 bg-gray-900/60 text-gray-300 hover:border-gray-600 hover:bg-gray-800/70"
             }`}
@@ -228,9 +262,18 @@ export function ScanHero({
           <span className="text-gray-700">·</span>
           <span className="text-xs text-gray-400">
             minted{" "}
-            <span className="font-medium text-gray-300">
-              {formatDate(scanned?.createdAt ?? null)}
-            </span>
+            {scanned?.pendingAge ? (
+              <span
+                className="animate-pulse font-medium text-gray-600"
+                title="On-chain age check in progress"
+              >
+                dating…
+              </span>
+            ) : (
+              <span className="font-medium text-gray-300">
+                {formatDate(scanned?.createdAt ?? null)}
+              </span>
+            )}
           </span>
           {ago && <span className="text-xs text-gray-600">({ago})</span>}
           {scanned?.createdAtIsLowerBound && (
@@ -247,8 +290,8 @@ export function ScanHero({
         </div>
       </div>
 
-      {/* Side-by-side comparison vs the actual #1 */}
-      {!isOG && og && og.mint !== scannedMint && (
+      {/* Side-by-side comparison vs the actual #1 — only once the verdict is final */}
+      {!preliminary && !isOG && og && og.mint !== scannedMint && (
         <div className="border-t border-gray-800/60 bg-gray-950/40 px-4 py-4 sm:px-6">
           <div className="grid gap-2.5 sm:grid-cols-[1fr_auto_1fr] sm:items-stretch sm:gap-3">
             <div className="rounded-xl border border-cyan-900/40 bg-cyan-950/15 px-3.5 py-2.5">

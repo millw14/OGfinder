@@ -79,6 +79,7 @@ function HomeInner() {
   const searchParams = useSearchParams();
   const [results, setResults] = useState<TokenResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isEnriching, setIsEnriching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [timing, setTiming] = useState<number | undefined>();
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
@@ -105,11 +106,71 @@ function HomeInner() {
       const isStale = () => requestId !== requestSeqRef.current;
 
       setIsLoading(true);
+      setIsEnriching(false);
       setHasSearched(true);
       setSearchError(null);
       setScan(null);
       setSearchMode(null);
 
+      const isAbort = (err: unknown) =>
+        controller.signal.aborted ||
+        (err instanceof DOMException && err.name === "AbortError");
+
+      const applyResponse = (data: SearchResponse, preliminary: boolean) => {
+        setLastQuery(data.query ?? "");
+        setResults(data.results ?? []);
+        setTiming(data.timing);
+        setSearchMode(data.mode ?? "search");
+        setIsEnriching(preliminary);
+        if (data.mode === "scan" && data.scannedMint) {
+          setScan({
+            mode: "scan",
+            isScannedOG: data.isScannedOG,
+            scannedRank: data.scannedRank ?? null,
+            scanName: data.scanName ?? null,
+            scanSymbol: data.scanSymbol ?? null,
+            scannedMint: data.scannedMint,
+            ...(preliminary && data.verdictPreliminary === true
+              ? { verdictPreliminary: true }
+              : {}),
+          });
+        } else {
+          setScan(null);
+        }
+      };
+
+      const recordSearch = () => {
+        addRecent(query);
+        setRecentSearches(getRecent());
+        // Keep the URL shareable: it always reflects the current search.
+        router.replace(`/?q=${encodeURIComponent(query)}`, { scroll: false });
+      };
+
+      // ——— Fast phase (best-effort): instant results, signature scans skipped ———
+      let fastApplied = false;
+      try {
+        const res = await fetch(
+          `/api/search?q=${encodeURIComponent(query)}&phase=fast`,
+          { signal: controller.signal }
+        );
+        const data: SearchResponse = await res.json();
+        if (isStale()) return;
+        if (res.ok) {
+          const preliminary = data.enriching === true;
+          applyResponse(data, preliminary);
+          setIsLoading(false);
+          recordSearch();
+          fastApplied = true;
+          // Server had the final result cached — no follow-up needed.
+          if (!preliminary) return;
+        }
+        // Non-ok fast responses fall through: the full request owns errors.
+      } catch (err) {
+        if (isAbort(err) || isStale()) return;
+        // Fast phase is best-effort — fall through to the full request.
+      }
+
+      // ——— Full phase (authoritative): verified on-chain ages ———
       try {
         const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`, {
           signal: controller.signal,
@@ -118,6 +179,11 @@ function HomeInner() {
         if (isStale()) return;
 
         if (!res.ok) {
+          if (fastApplied) {
+            // Keep the fast results on screen; just stop the enriching pulse.
+            setIsEnriching(false);
+            return;
+          }
           setResults([]);
           setTiming(undefined);
           setLastQuery("");
@@ -128,35 +194,15 @@ function HomeInner() {
           return;
         }
 
-        setLastQuery(data.query ?? "");
-        setResults(data.results ?? []);
-        setTiming(data.timing);
-        setSearchMode(data.mode ?? "search");
-        if (data.mode === "scan" && data.scannedMint) {
-          setScan({
-            mode: "scan",
-            isScannedOG: data.isScannedOG,
-            scannedRank: data.scannedRank ?? null,
-            scanName: data.scanName ?? null,
-            scanSymbol: data.scanSymbol ?? null,
-            scannedMint: data.scannedMint,
-          });
-        } else {
-          setScan(null);
-        }
-        addRecent(query);
-        setRecentSearches(getRecent());
-        // Keep the URL shareable: it always reflects the current search.
-        router.replace(`/?q=${encodeURIComponent(query)}`, { scroll: false });
+        applyResponse(data, false);
+        if (!fastApplied) recordSearch();
       } catch (err) {
         // Superseded request — a newer search aborted this one; stay silent.
-        if (
-          controller.signal.aborted ||
-          (err instanceof DOMException && err.name === "AbortError")
-        ) {
+        if (isAbort(err) || isStale()) return;
+        if (fastApplied) {
+          setIsEnriching(false);
           return;
         }
-        if (isStale()) return;
         setResults([]);
         setTiming(undefined);
         setLastQuery("");
@@ -236,6 +282,7 @@ function HomeInner() {
             lastQuery={lastQuery}
             searchMode={searchMode}
             isLoading={isLoading}
+            isEnriching={isEnriching}
             hasSearched={hasSearched}
             timing={timing}
             error={searchError}

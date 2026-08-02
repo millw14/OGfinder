@@ -107,6 +107,8 @@ interface ResultsProps {
   lastQuery: string;
   searchMode?: "search" | "scan" | "social" | null;
   isLoading: boolean;
+  /** Fast-phase results shown — the full request is still verifying ages. */
+  isEnriching?: boolean;
   hasSearched: boolean;
   timing?: number;
   error?: string | null;
@@ -118,6 +120,7 @@ export function Results({
   lastQuery,
   searchMode = null,
   isLoading,
+  isEnriching = false,
   hasSearched,
   timing,
   error,
@@ -326,8 +329,14 @@ export function Results({
           {searchMode === "search" && lastQuery && (
             <CopyLinkButton query={lastQuery} />
           )}
-          {timing != null && (
-            <span className="tabular-nums text-gray-600">{timing}ms</span>
+          {isEnriching ? (
+            <span className="animate-pulse font-medium text-amber-500/90">
+              Verifying on-chain ages…
+            </span>
+          ) : (
+            timing != null && (
+              <span className="tabular-nums text-gray-600">{timing}ms</span>
+            )
           )}
         </span>
       </div>

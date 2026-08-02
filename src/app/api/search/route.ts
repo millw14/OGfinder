@@ -28,6 +28,9 @@ interface MintScanPayload {
 /** Empty results are cached this long (seconds) so repeated misses skip the pipeline. */
 const NEGATIVE_TTL = 60;
 
+/** Fast-phase results (signature scans skipped) are a stopgap — keep them briefly. */
+const FAST_TTL = 60;
+
 /** In-flight coalescing: concurrent identical cold searches share one pipeline run. */
 const inflight = new Map<string, Promise<unknown>>();
 
@@ -86,6 +89,9 @@ async function handleSearch(request: NextRequest) {
 
   const q = request.nextUrl.searchParams.get("q")?.trim() ?? "";
   const isMint = isLikelyMintAddress(q);
+  // Fast phase: same pipeline minus signature scans. Social mode ignores it
+  // (its full-cache result is returned below without the enriching flag).
+  const wantFast = request.nextUrl.searchParams.get("phase") === "fast";
 
   // ——— Social / website URL: tokens whose DexScreener profile includes this link ———
   if (isLikelySocialUrl(q)) {
@@ -151,20 +157,31 @@ async function handleSearch(request: NextRequest) {
     const cacheKey = `mint:${q}`;
     const cached = getSearchCache<MintScanPayload>(cacheKey);
     if (cached) {
-      const scanned = cached.results.find((t) => t.mint === q);
-      return NextResponse.json({
-        results: cached.results,
-        query: cached.query,
-        totalFound: cached.results.length,
-        timing: Date.now() - start,
-        mode: "scan" as const,
-        scannedMint: q,
-        scanName: cached.scanName ?? scanned?.displayName ?? null,
-        scanSymbol: cached.scanSymbol ?? scanned?.displaySymbol ?? null,
-        isScannedOG: scanned?.rank === 1,
-        scannedRank: scanned?.rank ?? null,
-        originalInput: q,
-      });
+      // Full cache hit serves final data even for phase=fast — no enriching flag,
+      // so the client skips its follow-up full request.
+      return NextResponse.json(scanResponseBody(cached, q, start, false));
+    }
+
+    // Fast phase: full pipeline minus signature scans — preliminary verdict.
+    if (wantFast) {
+      const fastKey = `fast:${cacheKey}`;
+      const cachedFast = getSearchCache<MintScanPayload>(fastKey);
+      if (cachedFast) {
+        return NextResponse.json(scanResponseBody(cachedFast, q, start, true));
+      }
+
+      const fastOutcome = await coalesce(fastKey, () =>
+        runMintScan(q, fastKey, start, { fast: true })
+      );
+      if (!fastOutcome.ok) {
+        return NextResponse.json(
+          { error: fastOutcome.error, results: [], totalFound: 0 },
+          { status: fastOutcome.status }
+        );
+      }
+      return NextResponse.json(
+        scanResponseBody(fastOutcome.payload, q, start, true)
+      );
     }
 
     const outcome = await coalesce(cacheKey, () =>
@@ -177,22 +194,7 @@ async function handleSearch(request: NextRequest) {
       );
     }
 
-    const { results, query, scanName, scanSymbol } = outcome.payload;
-    const scanned = results.find((t) => t.mint === q);
-
-    return NextResponse.json({
-      results,
-      query,
-      totalFound: results.length,
-      timing: Date.now() - start,
-      mode: "scan" as const,
-      scannedMint: q,
-      scanName,
-      scanSymbol,
-      isScannedOG: scanned?.rank === 1,
-      scannedRank: scanned?.rank ?? null,
-      originalInput: q,
-    });
+    return NextResponse.json(scanResponseBody(outcome.payload, q, start, false));
   }
 
   // ——— Text search ———
@@ -200,12 +202,44 @@ async function handleSearch(request: NextRequest) {
 
   const cached = getSearchCache<TokenResult[]>(normalizedQuery);
   if (cached) {
+    // Full cache hit serves final data even for phase=fast — no enriching flag,
+    // so the client skips its follow-up full request.
     return NextResponse.json({
       results: cached,
       query: normalizedQuery,
       totalFound: cached.length,
       timing: Date.now() - start,
       mode: "search" as const,
+    });
+  }
+
+  // Fast phase: full pipeline minus signature scans, cached separately.
+  if (wantFast) {
+    const fastKey = `fast:${normalizedQuery}`;
+    const cachedFast = getSearchCache<TokenResult[]>(fastKey);
+    const fastResults =
+      cachedFast ??
+      (await coalesce(fastKey, async () => {
+        const rawTokens = await searchTokens(q);
+        if (rawTokens.length === 0) {
+          setSearchCache(fastKey, [] as TokenResult[], FAST_TTL);
+          return [] as TokenResult[];
+        }
+        const results = await buildTokenResults(rawTokens, q, {
+          skipSignatureScan: true,
+        });
+        setSearchCache(fastKey, results, FAST_TTL);
+        return results;
+      }));
+
+    return NextResponse.json({
+      results: fastResults,
+      query: normalizedQuery,
+      totalFound: fastResults.length,
+      timing: Date.now() - start,
+      mode: "search" as const,
+      phase: "fast" as const,
+      enriching: true,
     });
   }
 
@@ -236,6 +270,36 @@ async function handleSearch(request: NextRequest) {
   });
 }
 
+/** Scan response JSON — fast responses add phase/enriching/verdictPreliminary. */
+function scanResponseBody(
+  payload: MintScanPayload,
+  q: string,
+  start: number,
+  fast: boolean
+) {
+  const scanned = payload.results.find((t) => t.mint === q);
+  return {
+    results: payload.results,
+    query: payload.query,
+    totalFound: payload.results.length,
+    timing: Date.now() - start,
+    mode: "scan" as const,
+    scannedMint: q,
+    scanName: payload.scanName ?? scanned?.displayName ?? null,
+    scanSymbol: payload.scanSymbol ?? scanned?.displaySymbol ?? null,
+    isScannedOG: scanned?.rank === 1,
+    scannedRank: scanned?.rank ?? null,
+    originalInput: q,
+    ...(fast
+      ? {
+          phase: "fast" as const,
+          enriching: true,
+          verdictPreliminary: true,
+        }
+      : {}),
+  };
+}
+
 type MintScanOutcome =
   | { ok: true; payload: MintScanPayload }
   | { ok: false; status: number; error: string };
@@ -243,7 +307,8 @@ type MintScanOutcome =
 async function runMintScan(
   q: string,
   cacheKey: string,
-  start: number
+  start: number,
+  options?: { fast?: boolean }
 ): Promise<MintScanOutcome> {
   const pre = await getAssetBatch([q]);
   let h = pre.get(q);
@@ -323,6 +388,7 @@ async function runMintScan(
   const normalizedQuery = normalize(searchTerm);
   const final = await buildTokenResults(rawTokens, searchTerm, {
     scannedMint: q,
+    ...(options?.fast ? { skipSignatureScan: true } : {}),
   });
 
   const payload: MintScanPayload = {
@@ -331,7 +397,11 @@ async function runMintScan(
     scanName: h.heliusName,
     scanSymbol: h.heliusSymbol,
   };
-  setSearchCache(cacheKey, payload);
+  if (options?.fast) {
+    setSearchCache(cacheKey, payload, FAST_TTL);
+  } else {
+    setSearchCache(cacheKey, payload);
+  }
 
   logSearch(
     normalizedQuery,
