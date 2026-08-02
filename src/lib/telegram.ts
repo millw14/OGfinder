@@ -11,7 +11,14 @@ import {
 import { encodeSharePayload, formatShareDate, type SharePayload } from "./share";
 import { timeAgo, formatAgeGap } from "./format";
 import { isLikelyMintAddress } from "./solana";
-import { MIN_QUERY, MAX_QUERY, type TokenResult } from "./types";
+import {
+  MIN_QUERY,
+  MAX_QUERY,
+  SERIAL_DEPLOYER_MIN,
+  FRESH_WALLET_MS,
+  TOKENS_CREATED_CAP,
+  type TokenResult,
+} from "./types";
 import { normalize, skeleton } from "./normalize";
 import { getAssetBatch } from "./helius";
 import {
@@ -478,6 +485,43 @@ function fmtCompactUsd(v: number): string {
   return `$${Math.round(v)}`;
 }
 
+/**
+ * Deployer intelligence line for a scanned token:
+ * "👤 dev: <short> · N tokens created · wallet since <year>". Serial deployers
+ * (≥ SERIAL_DEPLOYER_MIN launches) and fresh wallets (< 7 days) get ⚠️
+ * prefixes; unknown fields are omitted; no deployer → null (no line at all).
+ * Pure; exported for tests.
+ */
+export function formatDeployerLine(
+  t: TokenResult,
+  now = Date.now()
+): string | null {
+  const addr = t.deployerAddress;
+  if (!addr) return null;
+  const short =
+    addr.length > 12 ? `${addr.slice(0, 4)}…${addr.slice(-4)}` : addr;
+  const parts: string[] = [`👤 dev: <code>${escapeHtml(short)}</code>`];
+  const n = t.deployerTokensCreated;
+  if (n != null) {
+    const shown = `${n}${n >= TOKENS_CREATED_CAP ? "+" : ""}`;
+    parts.push(
+      n >= SERIAL_DEPLOYER_MIN
+        ? `⚠️ serial deployer: ${shown} tokens created`
+        : `${shown} token${n === 1 ? "" : "s"} created`
+    );
+  }
+  if (t.deployerWalletFirstSeenMs != null) {
+    parts.push(
+      now - t.deployerWalletFirstSeenMs < FRESH_WALLET_MS
+        ? "⚠️ fresh wallet"
+        : `wallet since ${new Date(t.deployerWalletFirstSeenMs).getUTCFullYear()}`
+    );
+  } else if (t.deployerIsOldWallet) {
+    parts.push("established wallet");
+  }
+  return parts.join(" · ");
+}
+
 /** Share URL whose /api/og card Telegram unfurls — built like ScanHero's shareVerdict. */
 export function verdictShareUrl(
   mint: string,
@@ -552,6 +596,9 @@ export function formatMintVerdict(
   }
   if (scanned.homoglyphSuspect) risk.push("🎭 lookalike characters");
   if (risk.length > 0) lines.push(risk.join(" · "));
+
+  const dev = formatDeployerLine(scanned);
+  if (dev) lines.push(dev);
 
   const market: string[] = [];
   if (scanned.priceUsd != null && scanned.priceUsd > 0) {

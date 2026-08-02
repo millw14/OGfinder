@@ -1,4 +1,9 @@
-import { HeliusSlotData, HELIUS_TIMEOUT, MAX_SIG_PAGES } from "./types";
+import {
+  HeliusSlotData,
+  HELIUS_TIMEOUT,
+  MAX_SIG_PAGES,
+  TOKENS_CREATED_CAP,
+} from "./types";
 import { fetchWithTimeout } from "./fetch";
 import {
   getHeliusMeta,
@@ -6,6 +11,12 @@ import {
   getCreationSlotCache,
   setCreationSlotCache,
 } from "./cache";
+import {
+  getDeployerPersisted,
+  setDeployerPersisted,
+  getDeployerProfilePersisted,
+  setDeployerProfilePersisted,
+} from "./store";
 
 /** Public read-only fallback when HELIUS_API_KEY is missing on the server (e.g. Vercel env not set). */
 const PUBLIC_MAINNET_RPC = "https://api.mainnet-beta.solana.com";
@@ -298,63 +309,232 @@ export async function getTopHolderShare(
 }
 
 /**
+ * Backward-paginate getSignaturesForAddress to the address's very first
+ * transaction. limit:1000 per page, up to MAX_SIG_PAGES pages; truncated=true
+ * means the oldest page was still full — the result is only a lower bound.
+ * Throws on RPC failure (callers wrap).
+ */
+async function findOldestSignature(
+  address: string
+): Promise<{ oldest: SignatureResult; truncated: boolean } | null> {
+  let before: string | undefined = undefined;
+  let oldestSig: SignatureResult | null = null;
+  let truncated = false;
+
+  for (let page = 0; page < MAX_SIG_PAGES; page++) {
+    const params: [string, { limit: number; before?: string }] = [
+      address,
+      { limit: 1000 },
+    ];
+    if (before) params[1].before = before;
+
+    const response = (await standardRpc(
+      "getSignaturesForAddress",
+      params
+    )) as { result?: SignatureResult[] };
+
+    const sigs = response?.result;
+    if (!Array.isArray(sigs) || sigs.length === 0) {
+      truncated = false;
+      break;
+    }
+
+    oldestSig = sigs[sigs.length - 1];
+    before = oldestSig.signature;
+
+    // If fewer than 1000 results, we've reached the beginning
+    if (sigs.length < 1000) {
+      truncated = false;
+      break;
+    }
+
+    // Full page: if we run out of pages here, oldest time is only a lower bound
+    truncated = true;
+  }
+
+  if (!oldestSig) return null;
+  return { oldest: oldestSig, truncated };
+}
+
+/**
  * Get the actual creation slot/blockTime for a mint by paginating backward
  * through getSignaturesForAddress until we find the very first transaction.
  *
- * Uses limit:1000 per page, up to MAX_SIG_PAGES pages.
- * If we get fewer than 1000 results, we've reached the beginning.
+ * The oldest signature rides along in the L1 cache only (deployer resolution
+ * uses it); L2 persists just slot/blockTime as before.
  */
 export async function getCreationSlot(
   mint: string
-): Promise<{ slot: number; blockTime: number; truncated: boolean } | null> {
+): Promise<{
+  slot: number;
+  blockTime: number;
+  truncated: boolean;
+  signature?: string;
+} | null> {
   const cached = getCreationSlotCache(mint);
   if (cached) return { ...cached, truncated: false };
 
   try {
-    let before: string | undefined = undefined;
-    let oldestSig: SignatureResult | null = null;
-    let truncated = false;
+    const found = await findOldestSignature(mint);
+    if (!found) return null;
 
-    for (let page = 0; page < MAX_SIG_PAGES; page++) {
-      const params: [string, { limit: number; before?: string }] = [
-        mint,
-        { limit: 1000 },
-      ];
-      if (before) params[1].before = before;
-
-      const response = (await standardRpc(
-        "getSignaturesForAddress",
-        params
-      )) as { result?: SignatureResult[] };
-
-      const sigs = response?.result;
-      if (!Array.isArray(sigs) || sigs.length === 0) {
-        truncated = false;
-        break;
-      }
-
-      oldestSig = sigs[sigs.length - 1];
-      before = oldestSig.signature;
-
-      // If fewer than 1000 results, we've reached the beginning
-      if (sigs.length < 1000) {
-        truncated = false;
-        break;
-      }
-
-      // Full page: if we run out of pages here, oldest time is only a lower bound
-      truncated = true;
-    }
-
-    if (!oldestSig) return null;
-
-    const data = { slot: oldestSig.slot, blockTime: oldestSig.blockTime };
+    const data = {
+      slot: found.oldest.slot,
+      blockTime: found.oldest.blockTime,
+      signature: found.oldest.signature,
+    };
     // Only cache complete scans with real blockTimes — truncated results are a
     // lower bound, so leave them uncached for a later deeper look to retry.
-    if (!truncated && data.blockTime > 0) {
+    if (!found.truncated && data.blockTime > 0) {
       setCreationSlotCache(mint, data);
     }
-    return { ...data, truncated };
+    return { ...data, truncated: found.truncated };
+  } catch {
+    return null;
+  }
+}
+
+// ————————————————————— Deployer intelligence —————————————————————
+
+/**
+ * Resolve the wallet that deployed a mint: fee payer (accountKeys[0]) of the
+ * mint's very first transaction. Persisted in creation_slots.deployer so
+ * repeats are free. Truncated history (mint older than MAX_SIG_PAGES pages) or
+ * any RPC failure → null. Never throws.
+ */
+export async function getDeployer(mint: string): Promise<string | null> {
+  const persisted = getDeployerPersisted(mint);
+  if (persisted) return persisted;
+
+  try {
+    // The scan pipeline has usually just run getCreationSlot(mint) — the L1
+    // hit carries the oldest signature for free. L2-only hits (post-restart)
+    // lack the signature and re-run the bounded pagination once.
+    const cs = await getCreationSlot(mint);
+    if (!cs || cs.truncated) return null;
+
+    let sig = cs.signature;
+    let slot = cs.slot;
+    let blockTime = cs.blockTime;
+    if (!sig) {
+      const found = await findOldestSignature(mint);
+      if (!found || found.truncated) return null;
+      sig = found.oldest.signature;
+      slot = found.oldest.slot;
+      blockTime = found.oldest.blockTime;
+    }
+
+    const response = (await standardRpc("getTransaction", [
+      sig,
+      { maxSupportedTransactionVersion: 0, encoding: "jsonParsed" },
+    ])) as {
+      result?: {
+        transaction?: {
+          message?: {
+            accountKeys?: ({ pubkey?: string } | string)[];
+          };
+        };
+      };
+    };
+    const first = response?.result?.transaction?.message?.accountKeys?.[0];
+    const deployer =
+      typeof first === "string" ? first : first?.pubkey ?? null;
+    if (!deployer || typeof deployer !== "string") return null;
+
+    setDeployerPersisted(mint, deployer, { slot, blockTime });
+    return deployer;
+  } catch {
+    return null;
+  }
+}
+
+/** Deployer profiles are refreshed after 24h — wallets keep launching tokens. */
+export const DEPLOYER_PROFILE_FRESH_MS = 24 * 60 * 60 * 1000;
+
+/** True while a persisted deployer profile is inside the freshness window. */
+export function isDeployerProfileFresh(
+  checkedAt: number,
+  now = Date.now()
+): boolean {
+  return now - checkedAt < DEPLOYER_PROFILE_FRESH_MS;
+}
+
+export interface DeployerProfile {
+  /**
+   * Helius-parsed CREATE (token launch, e.g. pump.fun) transactions by this
+   * wallet, capped at TOKENS_CREATED_CAP. null = count unavailable.
+   * NOT DAS searchAssets(creatorAddress): pump.fun mints carry an empty
+   * on-chain creators array, so that query returns 0 for exactly the wallets
+   * we care about (verified empirically 2026-08).
+   */
+  tokensCreated: number | null;
+  /** blockTime of the wallet's first transaction (ms). null = unknown or too deep. */
+  walletFirstSeenMs: number | null;
+  /** History deeper than MAX_SIG_PAGES pages — an established wallet, not a fresh one. */
+  isOldWallet: boolean;
+  checkedAt: number;
+}
+
+/**
+ * Count token-launch transactions via the Helius Enhanced Transactions API
+ * (type=CREATE — pump.fun launches are CREATE/PUMP_FUN). One page, capped.
+ * Throws on fetch failure (caller maps to null).
+ */
+async function countDeployerCreates(deployer: string): Promise<number | null> {
+  const key = process.env.HELIUS_API_KEY?.trim();
+  if (!key) return null;
+  const url =
+    `https://api.helius.xyz/v0/addresses/${encodeURIComponent(deployer)}` +
+    `/transactions?api-key=${encodeURIComponent(key)}` +
+    `&type=CREATE&limit=${TOKENS_CREATED_CAP}`;
+  const res = await fetchWithTimeout(url, HELIUS_TIMEOUT);
+  if (!Array.isArray(res)) return null;
+  return Math.min(res.length, TOKENS_CREATED_CAP);
+}
+
+/**
+ * Profile a deployer wallet: launch count + wallet age. Served from the
+ * deployer_profiles table while fresh (<24h); refreshed on expiry. A profile
+ * with no signal at all (both lookups failed) is returned but never persisted,
+ * so a transient outage can't pin nulls for 24h. Never throws.
+ */
+export async function getDeployerProfile(
+  deployer: string
+): Promise<DeployerProfile | null> {
+  try {
+    const cached = getDeployerProfilePersisted(deployer);
+    if (cached && isDeployerProfileFresh(cached.checkedAt)) return cached;
+
+    let tokensCreated: number | null = null;
+    try {
+      tokensCreated = await countDeployerCreates(deployer);
+    } catch {
+      tokensCreated = null;
+    }
+
+    // Wallet age via the same first-transaction machinery mints use —
+    // truncated pagination means deep history: old wallet, exact date unknown.
+    let walletFirstSeenMs: number | null = null;
+    let isOldWallet = false;
+    const cs = await getCreationSlot(deployer);
+    if (cs) {
+      if (cs.truncated) {
+        isOldWallet = true;
+      } else if (cs.blockTime > 0) {
+        walletFirstSeenMs = cs.blockTime * 1000;
+      }
+    }
+
+    const profile: DeployerProfile = {
+      tokensCreated,
+      walletFirstSeenMs,
+      isOldWallet,
+      checkedAt: Date.now(),
+    };
+    if (tokensCreated != null || walletFirstSeenMs != null || isOldWallet) {
+      setDeployerProfilePersisted(deployer, profile);
+    }
+    return profile;
   } catch {
     return null;
   }

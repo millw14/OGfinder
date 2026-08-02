@@ -107,7 +107,33 @@ export interface TokenResult {
    * wallet concentration.
    */
   topHolderPct?: number;
+  /**
+   * Scan mode, scanned mint only: wallet that paid for the mint's very first
+   * transaction (fee payer) — the deployer. Absent when history is too deep
+   * to resolve or RPC failed.
+   */
+  deployerAddress?: string;
+  /**
+   * Helius-parsed CREATE (token launch, e.g. pump.fun) transactions by the
+   * deployer, capped at 100 (100 = "100 or more"). null = count unavailable.
+   * ≥ SERIAL_DEPLOYER_MIN is the serial-deployer tell.
+   */
+  deployerTokensCreated?: number | null;
+  /** When the deployer wallet first transacted (ms). null = unknown or deep history. */
+  deployerWalletFirstSeenMs?: number | null;
+  /**
+   * Deployer history deeper than the signature-scan page budget — an
+   * established wallet (definitely NOT fresh), exact age unknown.
+   */
+  deployerIsOldWallet?: boolean;
 }
+
+/** Deployer launched ≥ this many tokens → flag as serial deployer. */
+export const SERIAL_DEPLOYER_MIN = 10;
+/** Deployer wallet younger than this → flag as fresh wallet. */
+export const FRESH_WALLET_MS = 7 * 24 * 60 * 60 * 1000;
+/** deployerTokensCreated is counted from one Enhanced-API page — the cap means "or more". */
+export const TOKENS_CREATED_CAP = 100;
 
 /** One side of an OG-flip verdict (values are from the newer snapshot). */
 export interface FlipParty {

@@ -38,7 +38,24 @@ function ensureStoreSchema(): void {
       expires_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_search_cache_expires ON search_cache(expires_at);
+    CREATE TABLE IF NOT EXISTS deployer_profiles (
+      deployer            TEXT PRIMARY KEY,
+      tokens_created      INTEGER,
+      wallet_first_seen_ms INTEGER,
+      is_old_wallet       INTEGER NOT NULL DEFAULT 0,
+      checked_at          INTEGER NOT NULL
+    );
   `);
+  // Migration: creation_slots.deployer (ALTER TABLE has no IF NOT EXISTS) —
+  // same guarded pattern as url-index's token_links columns.
+  const csCols = new Set(
+    (db.pragma("table_info(creation_slots)") as { name: string }[]).map(
+      (c) => c.name
+    )
+  );
+  if (!csCols.has("deployer")) {
+    db.exec("ALTER TABLE creation_slots ADD COLUMN deployer TEXT");
+  }
   schemaReady = true;
   // One checkpoint at init — the WAL can grow large between restarts.
   try {
@@ -144,6 +161,131 @@ export function setSearchCachePersisted<T>(
       `);
     }
     setSearchStmt.run(key, JSON.stringify(value), expiresAtMs);
+  } catch {
+    /* persistence is best-effort */
+  }
+}
+
+// ————————————————— Deployer intelligence persistence —————————————————
+
+let getDeployerStmt: Database.Statement | null = null;
+let setDeployerStmt: Database.Statement | null = null;
+let getProfileStmt: Database.Statement | null = null;
+let setProfileStmt: Database.Statement | null = null;
+
+/** Persisted deployer wallet for a mint (creation_slots.deployer), if resolved. */
+export function getDeployerPersisted(mint: string): string | undefined {
+  try {
+    ensureStoreSchema();
+    if (!getDeployerStmt) {
+      getDeployerStmt = getDb().prepare(
+        "SELECT deployer FROM creation_slots WHERE mint = ?"
+      );
+    }
+    const row = getDeployerStmt.get(mint) as
+      | { deployer: string | null }
+      | undefined;
+    return row?.deployer ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Persist a resolved deployer. Upserts into creation_slots: an existing row
+ * (complete creation scan) only gains the deployer column; a fresh insert
+ * carries the slot/blockTime we just found — marked verified_complete only
+ * when the blockTime is a real timestamp, so getCreationSlotPersisted never
+ * serves a zero blockTime.
+ */
+export function setDeployerPersisted(
+  mint: string,
+  deployer: string,
+  slotData: { slot: number; blockTime: number }
+): void {
+  try {
+    ensureStoreSchema();
+    if (!setDeployerStmt) {
+      setDeployerStmt = getDb().prepare(`
+        INSERT INTO creation_slots (mint, slot, block_time, verified_complete, updated_at, deployer)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(mint) DO UPDATE SET
+          deployer   = excluded.deployer,
+          updated_at = excluded.updated_at
+      `);
+    }
+    setDeployerStmt.run(
+      mint,
+      slotData.slot,
+      slotData.blockTime,
+      slotData.blockTime > 0 ? 1 : 0,
+      Date.now(),
+      deployer
+    );
+  } catch {
+    /* persistence is best-effort */
+  }
+}
+
+/** Persisted profile of a deployer wallet — freshness is the CALLER's job. */
+export interface DeployerProfileRow {
+  tokensCreated: number | null;
+  walletFirstSeenMs: number | null;
+  isOldWallet: boolean;
+  checkedAt: number;
+}
+
+export function getDeployerProfilePersisted(
+  deployer: string
+): DeployerProfileRow | undefined {
+  try {
+    ensureStoreSchema();
+    if (!getProfileStmt) {
+      getProfileStmt = getDb().prepare(
+        `SELECT tokens_created, wallet_first_seen_ms, is_old_wallet, checked_at
+         FROM deployer_profiles WHERE deployer = ?`
+      );
+    }
+    const row = getProfileStmt.get(deployer) as
+      | {
+          tokens_created: number | null;
+          wallet_first_seen_ms: number | null;
+          is_old_wallet: number;
+          checked_at: number;
+        }
+      | undefined;
+    if (!row) return undefined;
+    return {
+      tokensCreated: row.tokens_created,
+      walletFirstSeenMs: row.wallet_first_seen_ms,
+      isOldWallet: row.is_old_wallet === 1,
+      checkedAt: row.checked_at,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+export function setDeployerProfilePersisted(
+  deployer: string,
+  p: DeployerProfileRow
+): void {
+  try {
+    ensureStoreSchema();
+    if (!setProfileStmt) {
+      setProfileStmt = getDb().prepare(`
+        INSERT OR REPLACE INTO deployer_profiles
+          (deployer, tokens_created, wallet_first_seen_ms, is_old_wallet, checked_at)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+    }
+    setProfileStmt.run(
+      deployer,
+      p.tokensCreated,
+      p.walletFirstSeenMs,
+      p.isOldWallet ? 1 : 0,
+      p.checkedAt
+    );
   } catch {
     /* persistence is best-effort */
   }

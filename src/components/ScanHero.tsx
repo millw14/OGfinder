@@ -1,7 +1,13 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { TokenResult, ScanSummary } from "@/lib/types";
+import {
+  TokenResult,
+  ScanSummary,
+  SERIAL_DEPLOYER_MIN,
+  FRESH_WALLET_MS,
+  TOKENS_CREATED_CAP,
+} from "@/lib/types";
 import { formatDate, timeAgo, formatAgeGap } from "@/lib/format";
 import { encodeSharePayload, SharePayload } from "@/lib/share";
 import { LottieHover } from "./LottieHover";
@@ -308,6 +314,70 @@ export function ScanHero({
           <span className="font-mono text-[11px] text-cyan-300/90">
             {truncateMint(scannedMint)}
           </span>
+          {scanned?.deployerAddress && (
+            <span className="basis-full text-xs text-gray-400">
+              <span className="text-gray-500">dev</span>{" "}
+              <a
+                href={`https://solscan.io/account/${scanned.deployerAddress}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-mono text-[11px] text-cyan-300/90 hover:underline"
+                title="Deployer wallet — fee payer of this mint's first transaction"
+              >
+                {truncateMint(scanned.deployerAddress)}
+              </a>
+              {scanned.deployerTokensCreated != null && (
+                <>
+                  {" · "}
+                  {scanned.deployerTokensCreated >= SERIAL_DEPLOYER_MIN ? (
+                    <span
+                      className="font-semibold text-amber-400"
+                      title="This wallet launches tokens in bulk — a common rug pattern"
+                    >
+                      ⚠️ serial deployer: {scanned.deployerTokensCreated}
+                      {scanned.deployerTokensCreated >= TOKENS_CREATED_CAP
+                        ? "+"
+                        : ""}{" "}
+                      tokens created
+                    </span>
+                  ) : (
+                    <span>
+                      {scanned.deployerTokensCreated} token
+                      {scanned.deployerTokensCreated === 1 ? "" : "s"} created
+                    </span>
+                  )}
+                </>
+              )}
+              {scanned.deployerWalletFirstSeenMs != null ? (
+                <>
+                  {" · "}
+                  {Date.now() - scanned.deployerWalletFirstSeenMs <
+                  FRESH_WALLET_MS ? (
+                    <span
+                      className="font-semibold text-amber-400"
+                      title="Deployer wallet is less than a week old"
+                    >
+                      ⚠️ fresh wallet
+                    </span>
+                  ) : (
+                    <span>
+                      wallet since{" "}
+                      {new Date(
+                        scanned.deployerWalletFirstSeenMs
+                      ).getUTCFullYear()}
+                    </span>
+                  )}
+                </>
+              ) : scanned.deployerIsOldWallet ? (
+                <>
+                  {" · "}
+                  <span title="Wallet history too deep to date — definitely not fresh">
+                    established wallet
+                  </span>
+                </>
+              ) : null}
+            </span>
+          )}
           {scanned?.homoglyphSuspect && (
             <span
               className="basis-full text-xs font-semibold text-red-400"

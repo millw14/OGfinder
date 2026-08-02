@@ -8,6 +8,8 @@ import {
   getAssetBatch,
   getMintHeliusDataRpcFallback,
   getTopHolderShare,
+  getDeployer,
+  getDeployerProfile,
 } from "./helius";
 import { getJupiterTokenByMint } from "./jupiter";
 import { annotateLinkProvenance } from "./provenance";
@@ -179,6 +181,24 @@ export async function runMintScan(
     shares.forEach((share, i) => {
       if (share) jobs[i].token.topHolderPct = share.topTenPct;
     });
+
+    // Deployer intelligence — scanned mint only (serial-deployer and
+    // fresh-wallet are the strongest rug tells). getDeployer reuses the
+    // oldest signature the pipeline's own signature scan just cached, so a
+    // cold scan adds ~3 RPC calls; both layers persist, repeats are free.
+    // Both helpers swallow their failures and return null.
+    if (scanned) {
+      const deployer = await getDeployer(q);
+      if (deployer) {
+        scanned.deployerAddress = deployer;
+        const profile = await getDeployerProfile(deployer);
+        if (profile) {
+          scanned.deployerTokensCreated = profile.tokensCreated;
+          scanned.deployerWalletFirstSeenMs = profile.walletFirstSeenMs;
+          if (profile.isOldWallet) scanned.deployerIsOldWallet = true;
+        }
+      }
+    }
   }
 
   const payload: MintScanPayload = {

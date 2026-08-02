@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   extractMintCandidates,
+  formatDeployerLine,
   formatMintVerdict,
   formatNameSearchReply,
   formatRegistryVerdict,
@@ -310,6 +311,35 @@ describe("formatMintVerdict", () => {
     expect(lines[1]).toBe("minted unknown date");
   });
 
+  it("includes the dev line between risk and market when deployer data exists", () => {
+    const payload: MintScanPayload = {
+      results: [
+        tok({
+          mint: BONK,
+          displayName: "Bonk",
+          displaySymbol: "BONK",
+          rank: 1,
+          createdAt: OG_CREATED,
+          createdAtMs: Date.parse(OG_CREATED),
+          mintAuthorityActive: false,
+          priceUsd: 1.5,
+          deployerAddress: "7cJMTHUnZBZU3R48cobe4FesyRuddaUyCBT7LoPATgLq",
+          deployerTokensCreated: 3,
+          deployerWalletFirstSeenMs: Date.parse("2024-01-15T00:00:00.000Z"),
+        }),
+      ],
+      query: "bonk",
+      scanName: "Bonk",
+      scanSymbol: "BONK",
+    };
+    const lines = formatMintVerdict(BONK, payload, SITE).split("\n");
+    expect(lines[2]).toBe("🔒 renounced");
+    expect(lines[3]).toBe(
+      "👤 dev: <code>7cJM…TgLq</code> · 3 tokens created · wallet since 2024"
+    );
+    expect(lines[4]).toBe("💰 $1.50");
+  });
+
   it("falls back to a resolve-only message when the mint is not in results", () => {
     const payload: MintScanPayload = {
       results: [tok({ mint: BONK, displayName: "Bonk", rank: 1 })],
@@ -319,6 +349,88 @@ describe("formatMintVerdict", () => {
     };
     expect(formatMintVerdict(WSOL, payload, SITE)).toBe(
       "🔍 Resolved <b>Ghost &lt;T&gt;</b> ($GH) but couldn't rank it against lookalikes — try a name search on OGfinder."
+    );
+  });
+});
+
+// ————————————————————————— formatDeployerLine —————————————————————————
+
+describe("formatDeployerLine", () => {
+  const DEV = "7cJMTHUnZBZU3R48cobe4FesyRuddaUyCBT7LoPATgLq";
+  const NOW = Date.parse("2026-08-02T00:00:00.000Z");
+  const DAY = 24 * 60 * 60 * 1000;
+
+  it("returns null without a deployer address", () => {
+    expect(formatDeployerLine(tok({ mint: BONK }), NOW)).toBeNull();
+    expect(
+      formatDeployerLine(
+        tok({ mint: BONK, deployerTokensCreated: 50 }), // count but no address
+        NOW
+      )
+    ).toBeNull();
+  });
+
+  it("renders address-only when profile fields are null (graceful omission)", () => {
+    const line = formatDeployerLine(
+      tok({
+        mint: BONK,
+        deployerAddress: DEV,
+        deployerTokensCreated: null,
+        deployerWalletFirstSeenMs: null,
+      }),
+      NOW
+    );
+    expect(line).toBe("👤 dev: <code>7cJM…TgLq</code>");
+  });
+
+  it("flags serial deployers at the ≥10 threshold, plain count below", () => {
+    const at = (n: number) =>
+      formatDeployerLine(
+        tok({ mint: BONK, deployerAddress: DEV, deployerTokensCreated: n }),
+        NOW
+      );
+    expect(at(9)).toBe("👤 dev: <code>7cJM…TgLq</code> · 9 tokens created");
+    expect(at(10)).toBe(
+      "👤 dev: <code>7cJM…TgLq</code> · ⚠️ serial deployer: 10 tokens created"
+    );
+    expect(at(1)).toBe("👤 dev: <code>7cJM…TgLq</code> · 1 token created");
+    // The Enhanced-API count is one page — the cap reads as "or more".
+    expect(at(100)).toBe(
+      "👤 dev: <code>7cJM…TgLq</code> · ⚠️ serial deployer: 100+ tokens created"
+    );
+  });
+
+  it("flags fresh wallets (<7d) and shows the year for older ones", () => {
+    const at = (ms: number) =>
+      formatDeployerLine(
+        tok({ mint: BONK, deployerAddress: DEV, deployerWalletFirstSeenMs: ms }),
+        NOW
+      );
+    expect(at(NOW - 6 * DAY)).toBe(
+      "👤 dev: <code>7cJM…TgLq</code> · ⚠️ fresh wallet"
+    );
+    // Boundary: exactly 7 days is no longer fresh.
+    expect(at(NOW - 7 * DAY)).toBe(
+      "👤 dev: <code>7cJM…TgLq</code> · wallet since 2026"
+    );
+    expect(at(Date.parse("2022-03-01T00:00:00.000Z"))).toBe(
+      "👤 dev: <code>7cJM…TgLq</code> · wallet since 2022"
+    );
+  });
+
+  it("renders 'established wallet' when history is too deep to date", () => {
+    const line = formatDeployerLine(
+      tok({
+        mint: BONK,
+        deployerAddress: DEV,
+        deployerTokensCreated: 12,
+        deployerWalletFirstSeenMs: null,
+        deployerIsOldWallet: true,
+      }),
+      NOW
+    );
+    expect(line).toBe(
+      "👤 dev: <code>7cJM…TgLq</code> · ⚠️ serial deployer: 12 tokens created · established wallet"
     );
   });
 });

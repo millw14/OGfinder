@@ -63,10 +63,15 @@ export function setHeliusMeta(mint: string, data: HeliusSlotData): void {
 
 export function getCreationSlotCache(
   mint: string
-): { slot: number; blockTime: number } | undefined {
-  const hit = creationSlotCache.get<{ slot: number; blockTime: number }>(mint);
+): { slot: number; blockTime: number; signature?: string } | undefined {
+  const hit = creationSlotCache.get<{
+    slot: number;
+    blockTime: number;
+    signature?: string;
+  }>(mint);
   if (hit) return hit;
   // L2: creation slots are immutable facts — no expiry, L1 is a memory bound.
+  // (The oldest signature is L1-only; L2 hits come back without it.)
   const persisted = getCreationSlotPersisted(mint);
   if (persisted) creationSlotCache.set(mint, persisted);
   return persisted;
@@ -74,10 +79,14 @@ export function getCreationSlotCache(
 
 export function setCreationSlotCache(
   mint: string,
-  data: { slot: number; blockTime: number }
+  data: { slot: number; blockTime: number; signature?: string }
 ): void {
   creationSlotCache.set(mint, data);
-  setCreationSlotPersisted(mint, data, true);
+  setCreationSlotPersisted(
+    mint,
+    { slot: data.slot, blockTime: data.blockTime },
+    true
+  );
 }
 
 const walletCache = new NodeCache({ stdTTL: CACHE_WALLET, checkperiod: 60 });
