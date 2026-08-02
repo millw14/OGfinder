@@ -126,7 +126,7 @@ export async function getBirdeyeMetadataSingle(
   }
 }
 
-interface BirdeyeNewListingToken {
+export interface BirdeyeNewListingToken {
   address: string;
   name?: string;
   symbol?: string;
@@ -137,18 +137,23 @@ interface BirdeyeNewListingResponse {
   data?: { items?: BirdeyeNewListingToken[] };
 }
 
-/** Fetch recently listed tokens from Birdeye. Returns mint addresses. */
-export async function getBirdeyeNewListings(): Promise<string[]> {
+/** Fetch recently listed tokens from Birdeye, with name/symbol when present. */
+export async function getBirdeyeNewListingTokens(): Promise<
+  BirdeyeNewListingToken[]
+> {
   if (!apiKey()) return [];
   try {
     const url = `${BIRDEYE_BASE}/defi/v2/tokens/new_listing?limit=50`;
     const data = (await fetchWithTimeout(url, BIRDEYE_TIMEOUT, {
       headers: birdeyeHeaders(),
     })) as BirdeyeNewListingResponse;
-    return (data?.data?.items ?? [])
-      .map((t) => t.address)
-      .filter(Boolean);
+    return (data?.data?.items ?? []).filter((t) => !!t.address);
   } catch {
     return [];
   }
+}
+
+/** Fetch recently listed tokens from Birdeye. Returns mint addresses. */
+export async function getBirdeyeNewListings(): Promise<string[]> {
+  return (await getBirdeyeNewListingTokens()).map((t) => t.address);
 }

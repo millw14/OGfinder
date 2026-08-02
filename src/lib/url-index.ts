@@ -17,6 +17,7 @@ export function getDb(): Database.Database {
   db.pragma("journal_mode = WAL");
   db.pragma("synchronous = NORMAL");
   db.pragma("busy_timeout = 5000");
+  db.pragma("foreign_keys = ON");
   db.exec(`
     CREATE TABLE IF NOT EXISTS token_links (
       mint       TEXT    NOT NULL,
@@ -31,6 +32,19 @@ export function getDb(): Database.Database {
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS discovered_tokens (
+      mint            TEXT    PRIMARY KEY,
+      name            TEXT,
+      symbol          TEXT,
+      name_skeleton   TEXT,
+      source          TEXT    NOT NULL,
+      first_seen_at   INTEGER NOT NULL,
+      named_at        INTEGER,
+      pair_created_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_discovered_skeleton ON discovered_tokens(name_skeleton, first_seen_at);
+    CREATE INDEX IF NOT EXISTS idx_discovered_first_seen ON discovered_tokens(first_seen_at);
+    CREATE INDEX IF NOT EXISTS idx_discovered_unnamed ON discovered_tokens(first_seen_at) WHERE name IS NULL;
   `);
   // Migration: token_links freshness columns (ALTER TABLE has no IF NOT EXISTS).
   // Runs before any statement is prepared — all stmt singletons lazily call

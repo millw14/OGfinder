@@ -8,10 +8,19 @@ import {
 import { maintenanceTick } from "./store";
 import { fetchWithTimeout } from "./fetch";
 import {
-  getBirdeyeNewListings,
+  getBirdeyeNewListingTokens,
   getBirdeyeMetadataMultiple,
   hasBirdeyeKey,
 } from "./birdeye";
+import {
+  recordDiscoveredTokens,
+  getUnnamedRecentMints,
+  resolveNamesViaDex,
+  pruneDiscoveredTokens,
+  type DiscoveryInput,
+  type NewDiscovery,
+} from "./discovery";
+import { dexPairCreatedMs } from "./normalize";
 
 const POLL_INTERVAL_MS = 30_000;
 const GECKO_TIMEOUT = 10_000;
@@ -109,7 +118,7 @@ function extractGeckoTokenUrls(token: GeckoTokenInfo): string[] {
   return urls;
 }
 
-async function pollDexScreenerProfiles(): Promise<number> {
+async function pollDexScreenerProfiles(sink: NewDiscovery[]): Promise<number> {
   let indexed = 0;
   const endpoints = [
     "https://api.dexscreener.com/token-profiles/latest/v1",
@@ -119,8 +128,11 @@ async function pollDexScreenerProfiles(): Promise<number> {
     try {
       const data = (await fetchWithTimeout(ep, DEX_TIMEOUT)) as TokenProfile[];
       if (!Array.isArray(data)) continue;
+      const discovered: DiscoveryInput[] = [];
       for (const tp of data) {
         if (tp.chainId !== "solana" || !tp.tokenAddress) continue;
+        // Profiles carry no names — recorded unnamed for later resolution.
+        discovered.push({ mint: tp.tokenAddress });
         const urls: string[] = [];
         for (const link of tp.links ?? []) {
           if (link.url) urls.push(link.url);
@@ -130,6 +142,11 @@ async function pollDexScreenerProfiles(): Promise<number> {
           indexed++;
         }
       }
+      try {
+        sink.push(...recordDiscoveredTokens(discovered, "dexscreener"));
+      } catch {
+        /* discovery is best-effort */
+      }
     } catch {
       /* endpoint unavailable */
     }
@@ -137,11 +154,26 @@ async function pollDexScreenerProfiles(): Promise<number> {
   return indexed;
 }
 
-async function pollBirdeyeNewListings(): Promise<void> {
+async function pollBirdeyeNewListings(sink: NewDiscovery[]): Promise<void> {
   if (!hasBirdeyeKey()) return;
   try {
-    const mints = await getBirdeyeNewListings();
-    if (mints.length === 0) return;
+    const listings = await getBirdeyeNewListingTokens();
+    if (listings.length === 0) return;
+    try {
+      sink.push(
+        ...recordDiscoveredTokens(
+          listings.map((t) => ({
+            mint: t.address,
+            name: t.name,
+            symbol: t.symbol,
+          })),
+          "birdeye"
+        )
+      );
+    } catch {
+      /* discovery is best-effort */
+    }
+    const mints = listings.map((t) => t.address);
     const metaMap = await getBirdeyeMetadataMultiple(mints);
     metaMap.forEach((urls, mint) => {
       upsertTokenLinks(mint, urls, "birdeye");
@@ -151,22 +183,34 @@ async function pollBirdeyeNewListings(): Promise<void> {
   }
 }
 
-async function pollGeckoRecentTokens(): Promise<number> {
+async function pollGeckoRecentTokens(sink: NewDiscovery[]): Promise<number> {
   let indexed = 0;
   try {
     const url =
       "https://api.geckoterminal.com/api/v2/tokens/info_recently_updated";
     const data = (await fetchWithTimeout(url, GECKO_TIMEOUT)) as GeckoResponse;
     if (!Array.isArray(data?.data)) return 0;
+    const discovered: DiscoveryInput[] = [];
     for (const token of data.data) {
       if (!isSolanaGeckoToken(token)) continue;
       const addr = token.attributes.address;
       if (!addr) continue;
+      // Discovery sees every token, including ones with no URLs.
+      discovered.push({
+        mint: addr,
+        name: token.attributes.name,
+        symbol: token.attributes.symbol,
+      });
       const urls = extractGeckoTokenUrls(token);
       if (urls.length > 0) {
         upsertTokenLinks(addr, urls, "geckoterminal");
         indexed++;
       }
+    }
+    try {
+      sink.push(...recordDiscoveredTokens(discovered, "geckoterminal"));
+    } catch {
+      /* discovery is best-effort */
     }
   } catch {
     /* gecko unavailable */
@@ -174,7 +218,7 @@ async function pollGeckoRecentTokens(): Promise<number> {
   return indexed;
 }
 
-async function pollGeckoNewPools(): Promise<number> {
+async function pollGeckoNewPools(sink: NewDiscovery[]): Promise<number> {
   let indexed = 0;
   // Rotate the page cursor 1→2→3→1 across ticks for wider new-pool coverage.
   let page = 1;
@@ -205,13 +249,15 @@ async function pollGeckoNewPools(): Promise<number> {
     }
     if (addresses.length === 0) return 0;
     const unique = Array.from(new Set(addresses));
+    const discovered: DiscoveryInput[] = [];
     for (let i = 0; i < unique.length; i += 25) {
       const chunk = unique.slice(i, i + 25);
       const dexUrl = `https://api.dexscreener.com/tokens/v1/solana/${chunk.join(",")}`;
       try {
         const pairs = (await fetchWithTimeout(dexUrl, DEX_TIMEOUT)) as Array<{
           chainId: string;
-          baseToken: { address: string };
+          baseToken: { address: string; name?: string; symbol?: string };
+          pairCreatedAt?: number;
           info?: {
             websites?: { url?: string }[];
             socials?: { url?: string }[];
@@ -220,6 +266,13 @@ async function pollGeckoNewPools(): Promise<number> {
         if (!Array.isArray(pairs)) continue;
         for (const p of pairs) {
           if (p.chainId !== "solana" || !p.baseToken?.address) continue;
+          // Discovery sees every pair, including ones with no socials.
+          discovered.push({
+            mint: p.baseToken.address,
+            name: p.baseToken.name,
+            symbol: p.baseToken.symbol,
+            pairCreatedAtMs: dexPairCreatedMs(p.pairCreatedAt),
+          });
           const urls: string[] = [];
           for (const w of p.info?.websites ?? []) {
             if (w?.url) urls.push(w.url);
@@ -236,20 +289,39 @@ async function pollGeckoNewPools(): Promise<number> {
         /* dex batch failed */
       }
     }
+    try {
+      sink.push(...recordDiscoveredTokens(discovered, "geckoterminal-newpool"));
+    } catch {
+      /* discovery is best-effort */
+    }
   } catch {
     /* gecko unavailable */
   }
   return indexed;
 }
 
+/**
+ * Hook for this tick's new/newly-named tokens. Placeholder for now — the
+ * alerting change-set replaces the body with real processing.
+ */
+function processDiscoveries(discoveries: NewDiscovery[]): void {
+  if (process.env.NODE_ENV === "development" && discoveries.length > 0) {
+    console.log(
+      `[poller] discoveries: ${discoveries.length} new/newly-named tokens`
+    );
+  }
+}
+
 async function tick(): Promise<void> {
   const isDev = process.env.NODE_ENV === "development";
   try {
+    // Every source pushes its NewDiscovery rows here (single-threaded, safe).
+    const discoveries: NewDiscovery[] = [];
     const sources: [name: string, promise: Promise<number | void>][] = [
-      ["dexscreener", pollDexScreenerProfiles()],
-      ["birdeye", pollBirdeyeNewListings()],
-      ["gecko_recent", pollGeckoRecentTokens()],
-      ["gecko_new_pools", pollGeckoNewPools()],
+      ["dexscreener", pollDexScreenerProfiles(discoveries)],
+      ["birdeye", pollBirdeyeNewListings(discoveries)],
+      ["gecko_recent", pollGeckoRecentTokens(discoveries)],
+      ["gecko_new_pools", pollGeckoNewPools(discoveries)],
     ];
     const results = await Promise.allSettled(sources.map(([, p]) => p));
     const now = Date.now();
@@ -266,7 +338,25 @@ async function tick(): Promise<void> {
     } catch {
       /* poll_state is best-effort */
     }
+    // Cheap name resolution for recently-discovered unnamed mints (≤2 batches).
+    try {
+      const unnamed = getUnnamedRecentMints(50);
+      if (unnamed.length > 0) {
+        const resolved = await resolveNamesViaDex(unnamed);
+        if (resolved.length > 0) {
+          discoveries.push(...recordDiscoveredTokens(resolved, "dexscreener"));
+        }
+      }
+    } catch {
+      /* name resolution is best-effort */
+    }
+    try {
+      pruneDiscoveredTokens();
+    } catch {
+      /* prune is best-effort */
+    }
     maintenanceTick();
+    processDiscoveries(discoveries);
     if (isDev) {
       const count = (i: number): number => {
         const r = results[i];
@@ -277,7 +367,7 @@ async function tick(): Promise<void> {
       let total = 0;
       try { total = countIndexedTokens(); } catch { /* */ }
       console.log(
-        `[poller] tick: dex=${count(0)} geckoRecent=${count(2)} geckoPools=${count(3)} birdeye=${hasBirdeyeKey() ? "enabled" : "no-key"} | total indexed: ${total}`
+        `[poller] tick: dex=${count(0)} geckoRecent=${count(2)} geckoPools=${count(3)} birdeye=${hasBirdeyeKey() ? "enabled" : "no-key"} discovered=${discoveries.length} | total indexed: ${total}`
       );
     }
   } catch (err) {
