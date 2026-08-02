@@ -80,6 +80,20 @@ oldest-first ranking.
      set its config file to `railway.web.json` (service → Settings → Config
      as code).
 
+### Claude ↔ Railway (MCP)
+
+`.mcp.json` wires up Railway's official MCP server (bundled in the Railway
+CLI, runs via `npx @railway/cli mcp`) so Claude Code sessions in this repo can
+manage the Railway project directly — create services, set variables, deploy,
+read logs. For it to reach Railway, the Claude Code **environment** needs:
+
+1. A `RAILWAY_API_TOKEN` (account token — or `RAILWAY_TOKEN` project token if
+   the project already exists) added under the environment's variables.
+2. Network egress to `railway.app`, `railway.com` and
+   `backboard.railway.app` (or full network access).
+3. A fresh session after changing either — and approve the MCP server when
+   prompted.
+
 ### Website ↔ bot link
 
 The site shows the bot handle in the hero and footer. It defaults to
