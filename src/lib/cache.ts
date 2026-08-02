@@ -6,6 +6,13 @@ import {
   CACHE_WALLET,
   HeliusSlotData,
 } from "./types";
+import {
+  getCreationSlotPersisted,
+  setCreationSlotPersisted,
+  getSearchCachePersisted,
+  setSearchCachePersisted,
+  maintenanceTick,
+} from "./store";
 
 const searchCache = new NodeCache({ stdTTL: CACHE_SEARCH, checkperiod: 120 });
 const dexCache = new NodeCache({ stdTTL: CACHE_DEX, checkperiod: 60 });
@@ -15,15 +22,26 @@ const heliusMetaCache = new NodeCache({ stdTTL: CACHE_HELIUS, checkperiod: 120 }
 const creationSlotCache = new NodeCache({ stdTTL: CACHE_HELIUS, checkperiod: 120 });
 
 export function getSearchCache<T>(key: string): T | undefined {
-  return searchCache.get<T>(key);
+  const hit = searchCache.get<T>(key);
+  if (hit !== undefined) return hit;
+  // L2: SQLite-persisted full results survive restarts/redeploys.
+  const persisted = getSearchCachePersisted<T>(key);
+  if (!persisted) return undefined;
+  const remainingSec = Math.ceil((persisted.expiresAtMs - Date.now()) / 1000);
+  if (remainingSec <= 0) return undefined;
+  searchCache.set(key, persisted.value, remainingSec);
+  return persisted.value;
 }
 
 export function setSearchCache<T>(key: string, value: T, ttl?: number): void {
   if (ttl !== undefined) {
+    // Short-lived entries (fast phase / negative) stay memory-only.
     searchCache.set(key, value, ttl);
   } else {
     searchCache.set(key, value);
+    setSearchCachePersisted(key, value, Date.now() + CACHE_SEARCH * 1000);
   }
+  maintenanceTick();
 }
 
 export function getDexCache<T>(key: string): T | undefined {
@@ -45,7 +63,12 @@ export function setHeliusMeta(mint: string, data: HeliusSlotData): void {
 export function getCreationSlotCache(
   mint: string
 ): { slot: number; blockTime: number } | undefined {
-  return creationSlotCache.get(mint);
+  const hit = creationSlotCache.get<{ slot: number; blockTime: number }>(mint);
+  if (hit) return hit;
+  // L2: creation slots are immutable facts — no expiry, L1 is a memory bound.
+  const persisted = getCreationSlotPersisted(mint);
+  if (persisted) creationSlotCache.set(mint, persisted);
+  return persisted;
 }
 
 export function setCreationSlotCache(
@@ -53,6 +76,7 @@ export function setCreationSlotCache(
   data: { slot: number; blockTime: number }
 ): void {
   creationSlotCache.set(mint, data);
+  setCreationSlotPersisted(mint, data, true);
 }
 
 const walletCache = new NodeCache({ stdTTL: CACHE_WALLET, checkperiod: 60 });

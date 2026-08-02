@@ -7,7 +7,7 @@ import {
   searchTermsForDex,
   birdeyeSearchKeywords,
 } from "./social-url";
-import { searchByUrl, upsertTokenLinks } from "./url-index";
+import { searchByUrlDetailed, upsertTokenLinks, UrlIndexHit } from "./url-index";
 import { getBirdeyeMetadataSingle, searchBirdeye } from "./birdeye";
 
 const DEX_SEARCH = "https://api.dexscreener.com/latest/dex/search";
@@ -20,6 +20,9 @@ const TOKEN_BOOSTS_LATEST =
 const MAX_CANDIDATE_MINTS = 400;
 const TOKEN_BATCH = 25;
 const SEARCH_CONCURRENCY = 4;
+
+/** SQLite hits verified within this window bypass the live link re-check. */
+const TRUST_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 interface DexPairSocial {
   chainId: string;
@@ -126,20 +129,28 @@ async function findMintsFromLatestProfiles(
           for (const link of tp.links ?? []) {
             if (link.url) urls.push(link.url);
           }
-          // Index every profile into SQLite for future searches.
-          if (urls.length > 0 && tp.tokenAddress) {
-            try {
-              upsertTokenLinks(tp.tokenAddress, urls, "dexscreener-profile");
-              indexed++;
-            } catch { /* non-critical */ }
-          }
           // Check if this profile matches the target URL.
+          let matched = false;
           for (const link of tp.links ?? []) {
             if (link.url && linkMatchesTarget(link.url, targets)) {
-              results.push(tp.tokenAddress);
+              matched = true;
               break;
             }
           }
+          // Index every profile into SQLite for future searches — a live
+          // link match counts as verification.
+          if (urls.length > 0 && tp.tokenAddress) {
+            try {
+              upsertTokenLinks(
+                tp.tokenAddress,
+                urls,
+                "dexscreener-profile",
+                matched ? { verified: true } : undefined
+              );
+              indexed++;
+            } catch { /* non-critical */ }
+          }
+          if (matched) results.push(tp.tokenAddress);
         }
         if (isDev) console.log(`[social] profile-scan ${endpoint.includes("boost") ? "boosts" : "profiles"}: indexed ${indexed}`);
       } catch {
@@ -204,15 +215,17 @@ export async function searchDexBySocialUrl(
   const seenPairKeys = new Set<string>();
   const candidateMintSet = new Set<string>();
   const directHits = new Map<string, DexPairSocial>();
+  /** Mints whose links matched the target live this request — safe to mark verified. */
+  const verifiedNow = new Set<string>();
 
   // Channel 1: SQLite local index (instant).
   // Channel 2+3: latest token profiles (run simultaneously).
   // Channel 4: name-based DexScreener search (parallel batches).
-  const sqliteMintsPromise = Promise.resolve().then(() => {
+  const sqliteHitsPromise = Promise.resolve().then(() => {
     try {
-      return searchByUrl(targets);
+      return searchByUrlDetailed(targets);
     } catch {
-      return [] as string[];
+      return [] as UrlIndexHit[];
     }
   });
   const profileMintsPromise = findMintsFromLatestProfiles(targets);
@@ -250,6 +263,7 @@ export async function searchDexBySocialUrl(
 
         if (p.info && pairMatchesTarget(p, targets)) {
           mergePairBest(directHits, p, mint);
+          verifiedNow.add(mint);
         }
 
         candidateMintSet.add(mint);
@@ -258,11 +272,21 @@ export async function searchDexBySocialUrl(
     if (candidateMintSet.size >= MAX_CANDIDATE_MINTS) break;
   }
 
-  // Merge mints from SQLite local index.
-  const sqliteMints = await sqliteMintsPromise;
-  if (isDev && sqliteMints.length > 0)
-    console.log(`[social] sqlite-index found ${sqliteMints.length} mints`);
-  for (const m of sqliteMints) candidateMintSet.add(m);
+  // Merge mints from SQLite local index. Hits verified within the trust
+  // window bypass the live re-check; stale hits stay candidates only.
+  const sqliteHits = await sqliteHitsPromise;
+  const trustCutoff = Date.now() - TRUST_MAX_AGE_MS;
+  const sqliteTrustedMints: string[] = [];
+  for (const h of sqliteHits) {
+    candidateMintSet.add(h.mint);
+    if (h.lastVerifiedAt !== null && h.lastVerifiedAt >= trustCutoff) {
+      sqliteTrustedMints.push(h.mint);
+    }
+  }
+  if (isDev && sqliteHits.length > 0)
+    console.log(
+      `[social] sqlite-index found ${sqliteHits.length} mints (${sqliteTrustedMints.length} trusted)`
+    );
 
   const birdeyeMints = await birdeyeMintsPromise;
   if (isDev && birdeyeMints.length > 0)
@@ -285,10 +309,10 @@ export async function searchDexBySocialUrl(
       `[social] directHits=${directHits.size} candidates=${candidateMints.length}`
     );
 
-  // Mints from SQLite + profile scan are pre-verified URL matches.
-  // They bypass the pairMatchesTarget re-check below.
+  // Recently-verified SQLite hits + profile-scan matches are pre-verified
+  // URL matches. They bypass the pairMatchesTarget re-check below.
   const trustedMints = new Set<string>();
-  for (const m of sqliteMints) trustedMints.add(m);
+  for (const m of sqliteTrustedMints) trustedMints.add(m);
   for (const m of profileMints) trustedMints.add(m);
   if (isDev && trustedMints.size > 0)
     console.log(`[social] trusted (pre-verified) mints: ${trustedMints.size}`);
@@ -305,7 +329,9 @@ export async function searchDexBySocialUrl(
       if (p.chainId !== "solana") continue;
       const mint = p.baseToken.address;
       const isTrusted = trustedMints.has(mint);
-      if (!isTrusted && !pairMatchesTarget(p, targets)) continue;
+      const matches = pairMatchesTarget(p, targets);
+      if (!isTrusted && !matches) continue;
+      if (matches) verifiedNow.add(mint);
       mergePairBest(byMint, p, mint);
     }
   }
@@ -336,11 +362,17 @@ export async function searchDexBySocialUrl(
   }
 
   // Index links discovered from DexScreener tokens/v1 for future lookups.
+  // Mints whose links matched live this request refresh their verification.
   byMint.forEach((pair, mint) => {
     const urls = collectLinkStrings(pair.info);
     if (urls.length > 0) {
       try {
-        upsertTokenLinks(mint, urls, "dexscreener-search");
+        upsertTokenLinks(
+          mint,
+          urls,
+          "dexscreener-search",
+          verifiedNow.has(mint) ? { verified: true } : undefined
+        );
       } catch {
         /* non-critical */
       }
