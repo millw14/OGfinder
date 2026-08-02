@@ -122,6 +122,92 @@ export function decodeSharePayload(raw: string): SharePayload | null {
   };
 }
 
+// ————— Comparison share payloads (?cv=) — sibling of ?v=, never replaces it —————
+
+/** One side of a shared head-to-head comparison. */
+export interface CompareShareSide {
+  /** Token name */
+  n: string;
+  /** Token symbol */
+  s: string;
+  /** Created date, sliced to YYYY-MM-DD */
+  d: string | null;
+  /** Mint address */
+  m: string;
+}
+
+export interface ComparePayload {
+  a: CompareShareSide;
+  b: CompareShareSide;
+  /** Winner (older side): 0 = a, 1 = b, null = no verdict */
+  w: 0 | 1 | null;
+}
+
+/** Name/symbol cap for compare payloads (two tokens must fit one card). */
+const MAX_COMPARE_NAME = 24;
+/** Created-date cap: "YYYY-MM-DD". */
+const MAX_COMPARE_DATE = 10;
+/** Raw ?cv= length cap (two sides, so larger than the 512 ?v= cap). */
+const MAX_COMPARE_RAW = 768;
+
+function compactCompareSide(s: CompareShareSide): CompareShareSide {
+  return {
+    n: s.n.slice(0, MAX_COMPARE_NAME),
+    s: s.s.slice(0, MAX_COMPARE_NAME),
+    d: s.d === null ? null : s.d.slice(0, MAX_COMPARE_DATE),
+    m: truncate(s.m),
+  };
+}
+
+export function encodeComparePayload(p: ComparePayload): string {
+  const compact: ComparePayload = {
+    a: compactCompareSide(p.a),
+    b: compactCompareSide(p.b),
+    w: p.w,
+  };
+  return toBase64Url(JSON.stringify(compact));
+}
+
+function decodeCompareSide(v: unknown): CompareShareSide | null {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
+  const s = v as Record<string, unknown>;
+  if (typeof s.n !== "string" || typeof s.s !== "string") return null;
+  if (!isNullableString(s.d)) return null;
+  if (typeof s.m !== "string") return null;
+  return compactCompareSide({ n: s.n, s: s.s, d: s.d, m: s.m });
+}
+
+/** Decode an untrusted ?cv= param. Returns null on ANY malformed input. */
+export function decodeComparePayload(raw: string): ComparePayload | null {
+  if (
+    typeof raw !== "string" ||
+    raw.length === 0 ||
+    raw.length > MAX_COMPARE_RAW
+  ) {
+    return null;
+  }
+  const json = fromBase64Url(raw);
+  if (json === null) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return null;
+  }
+  const p = parsed as Record<string, unknown>;
+
+  const a = decodeCompareSide(p.a);
+  const b = decodeCompareSide(p.b);
+  if (a === null || b === null) return null;
+  if (p.w !== 0 && p.w !== 1 && p.w !== null) return null;
+
+  return { a, b, w: p.w };
+}
+
 /** "2022-12-20T21:10:46.000Z" → "Dec 20, 2022" (UTC), null when unparsable. */
 export function formatShareDate(d: string | null): string | null {
   if (!d) return null;

@@ -105,7 +105,7 @@ function CopyLinkButton({ query }: { query: string }) {
 interface ResultsProps {
   results: TokenResult[];
   lastQuery: string;
-  searchMode?: "search" | "scan" | "social" | null;
+  searchMode?: "search" | "scan" | "social" | "compare" | null;
   isLoading: boolean;
   /** Fast-phase results shown — the full request is still verifying ages. */
   isEnriching?: boolean;

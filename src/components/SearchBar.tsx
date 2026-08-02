@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { isLikelyMintAddress } from "@/lib/solana";
+import { parseCompareInput } from "@/lib/compare";
 import { MIN_QUERY, MAX_QUERY, MAX_MINT_LEN, MAX_SOCIAL_URL } from "@/lib/types";
 import { isLikelySocialUrl } from "@/lib/social-url";
 
@@ -15,6 +16,7 @@ function shouldTriggerSearch(trimmed: string): boolean {
   if (isLikelySocialUrl(trimmed)) {
     return trimmed.length >= 8 && trimmed.length <= MAX_SOCIAL_URL;
   }
+  if (parseCompareInput(trimmed)) return true;
   const mint = isLikelyMintAddress(trimmed);
   if (mint && trimmed.length >= 32 && trimmed.length <= MAX_MINT_LEN) {
     return true;
@@ -54,6 +56,7 @@ export function SearchBar({ onSearch, isLoading }: SearchBarProps) {
   };
 
   const trimmed = value.trim();
+  const hintCompare = parseCompareInput(trimmed) !== null;
   const hintMint =
     trimmed.length >= 32 &&
     trimmed.length <= MAX_MINT_LEN &&
@@ -65,7 +68,7 @@ export function SearchBar({ onSearch, isLoading }: SearchBarProps) {
   // Dead zone: too long for a name search, but not a valid mint or URL either
   // (e.g. a 31-char base58 string, or a name over MAX_QUERY characters).
   const hintDeadZone =
-    !hintMint && !hintSocial && trimmed.length > MAX_QUERY;
+    !hintCompare && !hintMint && !hintSocial && trimmed.length > MAX_QUERY;
 
   return (
     <form onSubmit={handleSubmit} className="mx-auto w-full max-w-xl">
@@ -103,7 +106,11 @@ export function SearchBar({ onSearch, isLoading }: SearchBarProps) {
         />
       </div>
       <p className="mt-3 text-center text-[11px] leading-relaxed text-gray-600">
-        {hintMint ? (
+        {hintCompare ? (
+          <span className="text-cyan-500/90">
+            Two mints detected — comparing head-to-head
+          </span>
+        ) : hintMint ? (
           <span className="text-cyan-500/90">
             Mint detected — resolving name and comparing against older mints
           </span>

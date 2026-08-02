@@ -11,6 +11,19 @@ export function formatDate(isoStr: string | null): string {
   });
 }
 
+/** Age gap between two creation times: "2y 3mo" / "8mo" / "12 days". */
+export function formatAgeGap(gapMs: number): string {
+  const days = Math.floor(gapMs / 86400000);
+  if (days < 1) return "less than a day";
+  if (days === 1) return "1 day";
+  if (days < 30) return `${days} days`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo`;
+  const years = Math.floor(months / 12);
+  const rem = months % 12;
+  return rem === 0 ? `${years}y` : `${years}y ${rem}mo`;
+}
+
 export function timeAgo(isoStr: string | null): string {
   if (!isoStr) return "";
   const date = new Date(isoStr);

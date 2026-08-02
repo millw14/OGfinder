@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 import { HomeClient } from "@/components/HomeClient";
-import { decodeSharePayload, formatShareDate } from "@/lib/share";
+import {
+  decodeSharePayload,
+  decodeComparePayload,
+  formatShareDate,
+} from "@/lib/share";
 
 type PageSearchParams = { [key: string]: string | string[] | undefined };
 
@@ -35,6 +39,37 @@ export function generateMetadata({
               : ""
           }. Find the real OG with OGfinder.`;
       const ogImage = `/api/og?v=${encodeURIComponent(rawV)}`;
+      return {
+        title,
+        description,
+        openGraph: {
+          title,
+          description,
+          siteName: "OGfinder",
+          type: "website",
+          images: [ogImage],
+        },
+        twitter: {
+          card: "summary_large_image",
+          title,
+          description,
+          images: [ogImage],
+        },
+      };
+    }
+  }
+
+  // Comparison share link: ?cv=<base64url ComparePayload> (untrusted).
+  const rawCv = typeof searchParams.cv === "string" ? searchParams.cv : null;
+  if (rawCv) {
+    const p = decodeComparePayload(rawCv);
+    if (p) {
+      const title = `${p.a.n} vs ${p.b.n} — which is older? | OGfinder`;
+      const older = p.w === 0 ? p.a : p.w === 1 ? p.b : null;
+      const description = older
+        ? `${p.a.n} ($${p.a.s}) vs ${p.b.n} ($${p.b.s}) head-to-head — ${older.n} is the older mint on Solana. Compared by verified on-chain age with OGfinder.`
+        : `${p.a.n} ($${p.a.s}) vs ${p.b.n} ($${p.b.s}) — compared head-to-head by on-chain age with OGfinder.`;
+      const ogImage = `/api/og?cv=${encodeURIComponent(rawCv)}`;
       return {
         title,
         description,

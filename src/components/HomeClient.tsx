@@ -4,8 +4,15 @@ import { Suspense, useState, useCallback, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { TokenResult, SearchResponse, ScanSummary } from "@/lib/types";
+import {
+  parseCompareInput,
+  emptyCompareSide,
+  CompareState,
+  CompareSideState,
+} from "@/lib/compare";
 import { SearchBar } from "@/components/SearchBar";
 import { Results } from "@/components/Results";
+import { ComparisonCard } from "@/components/ComparisonCard";
 import { NavTabs } from "@/components/NavTabs";
 
 /** Client-only: Lottie + canvas; avoids flaky dev SSR chunk splits (missing ./276.js). */
@@ -87,9 +94,10 @@ function HomeInner() {
   const [scan, setScan] = useState<ScanSummary | null>(null);
   const [lastQuery, setLastQuery] = useState("");
   const [searchMode, setSearchMode] = useState<
-    "search" | "scan" | "social" | null
+    "search" | "scan" | "social" | "compare" | null
   >(null);
   const [degraded, setDegraded] = useState<string[] | null>(null);
+  const [compare, setCompare] = useState<CompareState | null>(null);
 
   useEffect(() => {
     setRecentSearches(getRecent());
@@ -113,6 +121,7 @@ function HomeInner() {
       setScan(null);
       setSearchMode(null);
       setDegraded(null);
+      setCompare(null);
 
       const isAbort = (err: unknown) =>
         controller.signal.aborted ||
@@ -148,6 +157,56 @@ function HomeInner() {
         // Keep the URL shareable: it always reflects the current search.
         router.replace(`/?q=${encodeURIComponent(query)}`, { scroll: false });
       };
+
+      // ——— Compare mode: two full CA scans composed client-side ———
+      // The combined "A vs B" string is NEVER sent to /api/search; each mint
+      // runs its own full search (fast phase skipped = exactly 2 rate tokens).
+      const compareInput = parseCompareInput(query);
+      if (compareInput) {
+        const { a, b } = compareInput;
+        setSearchMode("compare");
+        setLastQuery(query);
+        setResults([]);
+        setTiming(undefined);
+        setCompare({
+          a: emptyCompareSide(a),
+          b: emptyCompareSide(b),
+          loading: true,
+        });
+        recordSearch();
+
+        const fetchSide = async (mint: string): Promise<CompareSideState> => {
+          const side = emptyCompareSide(mint);
+          const res = await fetch(`/api/search?q=${encodeURIComponent(mint)}`, {
+            signal: controller.signal,
+          });
+          const data: SearchResponse = await res.json();
+          if (!res.ok) {
+            side.error =
+              typeof data.error === "string" ? data.error : "Request failed";
+            return side;
+          }
+          // The scanned mint is always pinned into its own results.
+          side.token = (data.results ?? []).find((t) => t.mint === mint) ?? null;
+          side.isScannedOG = data.isScannedOG ?? null;
+          side.scannedRank = data.scannedRank ?? null;
+          side.totalFound = data.totalFound ?? data.results?.length ?? null;
+          return side;
+        };
+
+        const [ra, rb] = await Promise.allSettled([fetchSide(a), fetchSide(b)]);
+        if (isStale() || controller.signal.aborted) return;
+        const settle = (
+          r: PromiseSettledResult<CompareSideState>,
+          mint: string
+        ): CompareSideState =>
+          r.status === "fulfilled"
+            ? r.value
+            : { ...emptyCompareSide(mint), error: "Network error — try again" };
+        setCompare({ a: settle(ra, a), b: settle(rb, b), loading: false });
+        setIsLoading(false);
+        return;
+      }
 
       // ——— Fast phase (best-effort): instant results, signature scans skipped ———
       let fastApplied = false;
@@ -280,18 +339,22 @@ function HomeInner() {
         )}
 
         <div className="mt-8">
-          <Results
-            results={results}
-            lastQuery={lastQuery}
-            searchMode={searchMode}
-            isLoading={isLoading}
-            isEnriching={isEnriching}
-            hasSearched={hasSearched}
-            timing={timing}
-            error={searchError}
-            scan={scan}
-            degraded={degraded}
-          />
+          {searchMode === "compare" && compare ? (
+            <ComparisonCard state={compare} />
+          ) : (
+            <Results
+              results={results}
+              lastQuery={lastQuery}
+              searchMode={searchMode}
+              isLoading={isLoading}
+              isEnriching={isEnriching}
+              hasSearched={hasSearched}
+              timing={timing}
+              error={searchError}
+              scan={scan}
+              degraded={degraded}
+            />
+          )}
         </div>
       </main>
 

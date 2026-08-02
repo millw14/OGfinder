@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { TokenResult, ScanSummary } from "@/lib/types";
-import { formatDate, timeAgo } from "@/lib/format";
+import { formatDate, timeAgo, formatAgeGap } from "@/lib/format";
 import { encodeSharePayload, SharePayload } from "@/lib/share";
 import { LottieHover } from "./LottieHover";
 import { RiskChips } from "./Badge";
@@ -11,19 +11,6 @@ import crownOg from "@/assets/lottie/crown-og.json";
 function truncateMint(mint: string): string {
   if (mint.length <= 16) return mint;
   return `${mint.slice(0, 6)}...${mint.slice(-6)}`;
-}
-
-/** Age gap between the OG and the scanned mint: "2y 3mo" / "8mo" / "12 days". */
-function formatAgeGap(gapMs: number): string {
-  const days = Math.floor(gapMs / 86400000);
-  if (days < 1) return "less than a day";
-  if (days === 1) return "1 day";
-  if (days < 30) return `${days} days`;
-  const months = Math.floor(days / 30);
-  if (months < 12) return `${months}mo`;
-  const years = Math.floor(months / 12);
-  const rem = months % 12;
-  return rem === 0 ? `${years}y` : `${years}y ${rem}mo`;
 }
 
 interface ScanHeroProps {

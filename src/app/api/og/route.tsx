@@ -2,16 +2,21 @@ import { ImageResponse } from "next/og";
 import type { NextRequest } from "next/server";
 import {
   decodeSharePayload,
+  decodeComparePayload,
   formatShareDate,
   SharePayload,
+  ComparePayload,
+  CompareShareSide,
 } from "@/lib/share";
+import { formatAgeGap } from "@/lib/format";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
 /**
  * 1200x630 social card. ?v=<base64url SharePayload> renders the verdict;
- * anything else (or nothing) renders the generic branded card.
+ * ?cv=<base64url ComparePayload> (when v is absent) renders the head-to-head
+ * card; anything else (or nothing) renders the generic branded card.
  * ImageResponse constraints: inline styles, flexbox only, default font.
  */
 
@@ -193,6 +198,133 @@ function VerdictCard({ p }: { p: SharePayload }) {
   );
 }
 
+function CompareCol({
+  side,
+  older,
+}: {
+  side: CompareShareSide;
+  older: boolean;
+}) {
+  const minted = formatShareDate(side.d);
+  return (
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        border: older ? `3px solid ${AMBER_DEEP}` : `3px solid ${GRAY_CARD}`,
+        backgroundColor: older
+          ? "rgba(251,191,36,0.07)"
+          : "rgba(31,41,55,0.35)",
+        borderRadius: 28,
+        padding: "28px 24px",
+        height: 380,
+      }}
+    >
+      <div style={{ display: "flex", height: 52, alignItems: "center" }}>
+        {older && (
+          <div
+            style={{
+              display: "flex",
+              backgroundColor: AMBER_DEEP,
+              color: BG,
+              fontWeight: 900,
+              fontSize: 24,
+              padding: "6px 22px",
+              borderRadius: 14,
+            }}
+          >
+            OLDER
+          </div>
+        )}
+      </div>
+      <span
+        style={{
+          color: WHITE,
+          fontWeight: 900,
+          fontSize: side.n.length > 12 ? 36 : 48,
+          marginTop: 12,
+          maxWidth: 380,
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+        }}
+      >
+        {side.n}
+      </span>
+      <span
+        style={{
+          color: GRAY_DIM,
+          fontWeight: 700,
+          fontSize: 26,
+          marginTop: 6,
+        }}
+      >
+        ${side.s}
+      </span>
+      <span style={{ color: GRAY, fontSize: 26, marginTop: 20 }}>
+        {minted ? `minted ${minted}` : "mint date unknown"}
+      </span>
+      <span style={{ color: CYAN, fontSize: 20, marginTop: 10 }}>
+        {truncMint(side.m)}
+      </span>
+    </div>
+  );
+}
+
+function CompareOgCard({ p }: { p: ComparePayload }) {
+  // Gap is recomputed from the shared dates — only shown with a winner.
+  let gap: string | null = null;
+  if (p.w !== null && p.a.d && p.b.d) {
+    const aMs = Date.parse(p.a.d);
+    const bMs = Date.parse(p.b.d);
+    if (!Number.isNaN(aMs) && !Number.isNaN(bMs) && aMs !== bMs) {
+      gap = formatAgeGap(Math.abs(aMs - bMs));
+    }
+  }
+  return (
+    <Frame>
+      <div style={{ display: "flex", justifyContent: "center" }}>
+        <span style={{ color: GRAY, fontSize: 30 }}>which is older?</span>
+      </div>
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          alignItems: "center",
+          marginTop: 20,
+        }}
+      >
+        <CompareCol side={p.a} older={p.w === 0} />
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            width: 170,
+          }}
+        >
+          <span style={{ color: GRAY_DIM, fontWeight: 900, fontSize: 40 }}>
+            VS
+          </span>
+          {gap && (
+            <span style={{ color: AMBER, fontSize: 22, marginTop: 10 }}>
+              by {gap}
+            </span>
+          )}
+        </div>
+        <CompareCol side={p.b} older={p.w === 1} />
+      </div>
+      <div
+        style={{ display: "flex", justifyContent: "center", marginTop: 18 }}
+      >
+        <Wordmark />
+      </div>
+    </Frame>
+  );
+}
+
 function GenericCard() {
   return (
     <Frame>
@@ -229,8 +361,16 @@ function GenericCard() {
 export function GET(req: NextRequest) {
   const raw = req.nextUrl.searchParams.get("v");
   const payload = raw ? decodeSharePayload(raw) : null;
-  return new ImageResponse(
-    payload ? <VerdictCard p={payload} /> : <GenericCard />,
-    { width: 1200, height: 630 }
-  );
+  if (payload) {
+    return new ImageResponse(<VerdictCard p={payload} />, {
+      width: 1200,
+      height: 630,
+    });
+  }
+  const rawCv = req.nextUrl.searchParams.get("cv");
+  const cv = rawCv ? decodeComparePayload(rawCv) : null;
+  return new ImageResponse(cv ? <CompareOgCard p={cv} /> : <GenericCard />, {
+    width: 1200,
+    height: 630,
+  });
 }
