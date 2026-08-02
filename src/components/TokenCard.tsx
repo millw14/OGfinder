@@ -27,9 +27,31 @@ function formatUsdVol(n: number): string {
   return `$${n.toFixed(0)}`;
 }
 
+/** Token price with sub-cent precision (e.g. $0.0000123 stays readable). */
+function formatPrice(n: number): string {
+  if (n >= 1) {
+    return `$${n.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  }
+  if (n >= 0.01) return `$${n.toFixed(4)}`;
+  // Sub-cent: keep 3 significant digits, never scientific notation.
+  const fixed = n.toFixed(18);
+  const m = fixed.match(/^0\.(0*)([1-9]\d*)$/);
+  if (!m) return `$${n.toFixed(6)}`;
+  return `$0.${m[1]}${m[2].slice(0, 3)}`;
+}
+
+function formatPct(n: number): string {
+  const fixed = Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(1);
+  return `${n >= 0 ? "+" : ""}${fixed}%`;
+}
+
 export function TokenCard({ token }: { token: TokenResult }) {
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
+  const [logoFailed, setLogoFailed] = useState(false);
   const copyLottieRef = useRef<LottieRefCurrentProps>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -58,6 +80,11 @@ export function TokenCard({ token }: { token: TokenResult }) {
   const isOG = token.rank === 1 && token.rankingMode === "creation";
   const isScanned = token.isScanned === true;
   const ago = timeAgo(token.createdAt);
+  const showLogo = Boolean(token.imageUrl) && !logoFailed;
+  const hasPrice = token.priceUsd != null && token.priceUsd > 0;
+  const hasLiquidity = token.liquidityUsd != null && token.liquidityUsd > 0;
+  const hasChange = token.priceChange24h != null;
+  const hasMarketRow = hasPrice || hasLiquidity || hasChange;
 
   return (
     <div
@@ -70,7 +97,21 @@ export function TokenCard({ token }: { token: TokenResult }) {
       }`}
     >
       <div className="flex gap-3 sm:gap-4">
-        <RankBadge rank={token.rank} />
+        <div className="flex flex-shrink-0 flex-col items-center gap-2">
+          <RankBadge rank={token.rank} />
+          {showLogo && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={token.imageUrl!}
+              alt={token.displayName}
+              width={40}
+              height={40}
+              loading="lazy"
+              onError={() => setLogoFailed(true)}
+              className="h-10 w-10 rounded-xl object-cover ring-1 ring-gray-700/50"
+            />
+          )}
+        </div>
 
         <div className="min-w-0 flex-1 space-y-2.5">
           {/* Row 1: Name + badges */}
@@ -86,7 +127,7 @@ export function TokenCard({ token }: { token: TokenResult }) {
               <OGBadge rank={token.rank} />
             )}
             {token.supplyZero && <BurnedBadge />}
-            <PlatformBadge dexId={token.dexId} />
+            <PlatformBadge dexId={token.dexId} mint={token.mint} />
           </div>
 
           {/* Row 2: Date + mint */}
@@ -185,6 +226,37 @@ export function TokenCard({ token }: { token: TokenResult }) {
               )}
             </button>
           </div>
+
+          {/* Row 2.5: Market data (price / liquidity / 24h change) */}
+          {hasMarketRow && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+              {hasPrice && (
+                <span
+                  className="font-medium text-emerald-400/90"
+                  title="Price (USD, highest-liquidity pair)"
+                >
+                  {formatPrice(token.priceUsd!)}
+                </span>
+              )}
+              {hasLiquidity && (
+                <span className="text-gray-500" title="DexScreener liquidity">
+                  {formatUsdVol(token.liquidityUsd!)} liq
+                </span>
+              )}
+              {hasChange && (
+                <span
+                  className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold ring-1 ${
+                    token.priceChange24h! >= 0
+                      ? "bg-emerald-950/50 text-emerald-400 ring-emerald-800/50"
+                      : "bg-red-950/50 text-red-400 ring-red-800/50"
+                  }`}
+                  title="24h price change"
+                >
+                  {formatPct(token.priceChange24h!)}
+                </span>
+              )}
+            </div>
+          )}
 
           {/* Row 3: Confidence + links */}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">

@@ -150,6 +150,14 @@ export async function buildTokenResults(
           : null,
       fdvUsd:
         typeof c.raw.dexFdvUsd === "number" ? c.raw.dexFdvUsd : null,
+      imageUrl: typeof c.raw.imageUrl === "string" ? c.raw.imageUrl : null,
+      priceUsd: typeof c.raw.priceUsd === "number" ? c.raw.priceUsd : null,
+      liquidityUsd:
+        typeof c.raw.liquidityUsd === "number" ? c.raw.liquidityUsd : null,
+      priceChange24h:
+        typeof c.raw.priceChange24h === "number"
+          ? c.raw.priceChange24h
+          : null,
       rankingMode:
         rankBy === "marketcap"
           ? "marketcap"

@@ -1,6 +1,7 @@
 "use client";
 
 import { LottieHover } from "./LottieHover";
+import { bucketForToken, labelForBucket } from "@/lib/launchpads";
 import crownOg from "@/assets/lottie/crown-og.json";
 
 export function OGBadge({ rank }: { rank: number }) {
@@ -34,23 +35,44 @@ export function ConfidenceStars({ score }: { score: number }) {
   );
 }
 
-export function PlatformBadge({ dexId }: { dexId: string | null }) {
-  if (!dexId) return null;
+export function PlatformBadge({
+  dexId,
+  mint,
+}: {
+  dexId: string | null;
+  mint: string;
+}) {
+  const bucket = bucketForToken(dexId, mint);
+  if (bucket === "unknown") return null;
 
   let label: string;
   let colors: string;
 
-  if (dexId === "pumpfun") {
+  if (bucket === "pumpfun") {
     label = "Pump.fun";
     colors = "bg-pink-950/60 text-pink-400 ring-pink-800/50";
-  } else if (dexId === "pumpswap") {
+  } else if (bucket === "pumpswap") {
     label = "PumpSwap";
     colors = "bg-pink-950/60 text-pink-400 ring-pink-800/50";
-  } else if (dexId === "raydium") {
+  } else if (bucket === "raydium") {
     label = "Raydium";
     colors = "bg-purple-950/60 text-purple-400 ring-purple-800/50";
+  } else if (bucket === "letsbonk") {
+    label = "LetsBonk";
+    colors = "bg-orange-950/60 text-orange-400 ring-orange-800/50";
+  } else if (bucket === "meteora") {
+    label = "Meteora";
+    colors = "bg-red-950/60 text-red-400 ring-red-800/50";
+  } else if (bucket === "orca") {
+    label = "Orca";
+    colors = "bg-sky-950/60 text-sky-400 ring-sky-800/50";
+  } else if (bucket === "other") {
+    label = dexId
+      ? dexId.charAt(0).toUpperCase() + dexId.slice(1)
+      : "Other";
+    colors = "bg-gray-800/60 text-gray-400 ring-gray-700/50";
   } else {
-    label = dexId.charAt(0).toUpperCase() + dexId.slice(1);
+    label = labelForBucket(bucket);
     colors = "bg-gray-800/60 text-gray-400 ring-gray-700/50";
   }
 

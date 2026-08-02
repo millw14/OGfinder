@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import { TokenResult, ScanSummary } from "@/lib/types";
-import { bucketForDexId, LAUNCHPAD_BUCKETS } from "@/lib/launchpads";
+import { bucketForToken, LAUNCHPAD_BUCKETS } from "@/lib/launchpads";
 import {
   sortByCreationTime,
   sortByMarketCapLeaderboard,
@@ -147,9 +147,20 @@ export function Results({
   const displayed = useMemo(() => {
     if (!filtersActive) return ranked;
     return ranked.filter((t) =>
-      selectedBucketIds.has(bucketForDexId(t.dexId))
+      selectedBucketIds.has(bucketForToken(t.dexId, t.mint))
     );
   }, [ranked, filtersActive, selectedBucketIds]);
+
+  // Per-bucket counts from the UNFILTERED ranked list, so chip counts stay
+  // stable no matter which filters are active.
+  const bucketCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const t of ranked) {
+      const bucket = bucketForToken(t.dexId, t.mint);
+      counts.set(bucket, (counts.get(bucket) ?? 0) + 1);
+    }
+    return counts;
+  }, [ranked]);
 
   const scannedVisible = useMemo(() => {
     if (scan?.mode !== "scan" || !scan.scannedMint) return false;
@@ -246,18 +257,32 @@ export function Results({
         <div className="flex flex-wrap gap-2">
           {LAUNCHPAD_BUCKETS.map(({ id, label }) => {
             const on = selectedBucketIds.has(id);
+            const count = bucketCounts.get(id) ?? 0;
+            const empty = count === 0;
             return (
               <button
                 key={id}
                 type="button"
+                disabled={empty}
                 onClick={() => toggleBucket(id)}
                 className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
-                  on
-                    ? "border-amber-500/60 bg-amber-950/40 text-amber-200"
-                    : "border-gray-700/80 bg-gray-900/50 text-gray-500 hover:border-gray-600 hover:text-gray-300"
+                  empty
+                    ? "cursor-default border-gray-800/60 bg-gray-900/30 text-gray-600 opacity-40"
+                    : on
+                      ? "border-amber-500/60 bg-amber-950/40 text-amber-200"
+                      : "border-gray-700/80 bg-gray-900/50 text-gray-500 hover:border-gray-600 hover:text-gray-300"
                 }`}
               >
                 {label}
+                {!empty && (
+                  <span
+                    className={`ml-1 tabular-nums ${
+                      on ? "text-amber-400/80" : "text-gray-600"
+                    }`}
+                  >
+                    {count}
+                  </span>
+                )}
               </button>
             );
           })}

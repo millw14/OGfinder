@@ -12,6 +12,14 @@ export interface RawToken {
   dexMarketCapUsd?: number;
   /** DexScreener FDV (USD), when market cap is missing */
   dexFdvUsd?: number;
+  /** DexScreener token logo (info.imageUrl), from the highest-liquidity pair */
+  imageUrl?: string;
+  /** DexScreener price (USD), from the highest-liquidity pair */
+  priceUsd?: number;
+  /** DexScreener liquidity (USD), from the highest-liquidity pair */
+  liquidityUsd?: number;
+  /** DexScreener 24h price change (%), from the highest-liquidity pair */
+  priceChange24h?: number;
 }
 
 export interface HeliusSlotData {
@@ -48,6 +56,14 @@ export interface TokenResult {
   marketCapUsd?: number | null;
   /** Social-link search: DexScreener FDV when MC missing */
   fdvUsd?: number | null;
+  /** DexScreener token logo URL, when present */
+  imageUrl?: string | null;
+  /** DexScreener price (USD), from the highest-liquidity pair */
+  priceUsd?: number | null;
+  /** DexScreener liquidity (USD), from the highest-liquidity pair */
+  liquidityUsd?: number | null;
+  /** DexScreener 24h price change (%) */
+  priceChange24h?: number | null;
   /** How list order was determined (OG vs volume leaderboard) */
   rankingMode?: "creation" | "volume" | "marketcap";
 }

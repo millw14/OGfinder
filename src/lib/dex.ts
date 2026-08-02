@@ -9,6 +9,10 @@ interface DexPair {
   chainId: string;
   dexId: string;
   pairCreatedAt?: number;
+  priceUsd?: string;
+  liquidity?: { usd?: number };
+  priceChange?: { h24?: number };
+  info?: { imageUrl?: string };
   baseToken: {
     address: string;
     name: string;
@@ -43,10 +47,11 @@ export async function searchDex(query: string): Promise<RawToken[]> {
       return name.includes(normalizedQuery) || symbol.includes(normalizedQuery);
     });
 
-    // Group by baseToken.address and keep the OLDEST pairCreatedAt per token
+    // Group by baseToken.address and keep the OLDEST pairCreatedAt per token,
+    // plus the HIGHEST-LIQUIDITY pair for market data (price/liq/24h/logo).
     const tokenMap = new Map<
       string,
-      { pair: DexPair; oldestPairTime: number | undefined }
+      { pair: DexPair; oldestPairTime: number | undefined; marketPair: DexPair }
     >();
 
     for (const pair of solanaPairs) {
@@ -55,8 +60,10 @@ export async function searchDex(query: string): Promise<RawToken[]> {
       const existing = tokenMap.get(mint);
 
       if (!existing) {
-        tokenMap.set(mint, { pair, oldestPairTime: pairMs });
-      } else if (
+        tokenMap.set(mint, { pair, oldestPairTime: pairMs, marketPair: pair });
+        continue;
+      }
+      if (
         pairMs != null &&
         (!existing.oldestPairTime || pairMs < existing.oldestPairTime)
       ) {
@@ -64,6 +71,11 @@ export async function searchDex(query: string): Promise<RawToken[]> {
         // launch venue reflects where the token actually launched.
         existing.oldestPairTime = pairMs;
         existing.pair = pair;
+      }
+      if (
+        (pair.liquidity?.usd ?? 0) > (existing.marketPair.liquidity?.usd ?? 0)
+      ) {
+        existing.marketPair = pair;
       }
     }
 
@@ -76,13 +88,24 @@ export async function searchDex(query: string): Promise<RawToken[]> {
     });
 
     const tokens: RawToken[] = [];
-    for (const [mint, { pair, oldestPairTime }] of entries) {
+    for (const [mint, { pair, oldestPairTime, marketPair }] of entries) {
+      const price = Number(marketPair.priceUsd);
       tokens.push({
         mint,
         dexName: pair.baseToken.name,
         dexSymbol: pair.baseToken.symbol,
         dexId: pair.dexId,
         pairCreatedAt: oldestPairTime,
+        ...(marketPair.info?.imageUrl
+          ? { imageUrl: marketPair.info.imageUrl }
+          : {}),
+        ...(Number.isFinite(price) && price > 0 ? { priceUsd: price } : {}),
+        ...(typeof marketPair.liquidity?.usd === "number"
+          ? { liquidityUsd: marketPair.liquidity.usd }
+          : {}),
+        ...(typeof marketPair.priceChange?.h24 === "number"
+          ? { priceChange24h: marketPair.priceChange.h24 }
+          : {}),
       });
       if (tokens.length >= DEX_LIMIT) break;
     }
