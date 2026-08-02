@@ -16,7 +16,12 @@ import { getJupiterTokenByMint } from "@/lib/jupiter";
 import { isLikelySocialUrl, normalizeForSocialMatch } from "@/lib/social-url";
 import { searchDexBySocialUrl } from "@/lib/dex-social";
 import { ensurePollerStarted } from "@/lib/poller";
-import { rateLimitRequest } from "@/lib/rate-limit";
+import {
+  rateLimitRequest,
+  clientIpFromHeaders,
+  registerPrepaidSearch,
+  consumePrepaidSearch,
+} from "@/lib/rate-limit";
 import {
   runWithFailureCollection,
   currentFailures,
@@ -74,15 +79,23 @@ function logSearch(
 
 export async function GET(request: NextRequest) {
   try {
-    const limited = rateLimitRequest(request.headers);
-    if (limited) {
-      return NextResponse.json(
-        { error: limited.error },
-        {
-          status: limited.status,
-          headers: { "Retry-After": String(limited.retryAfterSec) },
-        }
-      );
+    // One rate token per logical search: the fast request pays and prepays its
+    // full follow-up; a full request with a matching prepaid entry rides free.
+    const q = request.nextUrl.searchParams.get("q")?.trim() ?? "";
+    const wantFast = request.nextUrl.searchParams.get("phase") === "fast";
+    const ip = clientIpFromHeaders(request.headers);
+    if (wantFast || !consumePrepaidSearch(ip, q)) {
+      const limited = rateLimitRequest(request.headers);
+      if (limited) {
+        return NextResponse.json(
+          { error: limited.error },
+          {
+            status: limited.status,
+            headers: { "Retry-After": String(limited.retryAfterSec) },
+          }
+        );
+      }
+      if (wantFast) registerPrepaidSearch(ip, q);
     }
     // Collect provider failures for this request so responses can carry a
     // degraded list. Coalesce joiners and cache hits omit it (documented).
@@ -104,8 +117,8 @@ async function handleSearch(request: NextRequest) {
 
   const q = request.nextUrl.searchParams.get("q")?.trim() ?? "";
   const isMint = isLikelyMintAddress(q);
-  // Fast phase: same pipeline minus signature scans. Social mode ignores it
-  // (its full-cache result is returned below without the enriching flag).
+  // Fast phase: same pipeline minus signature scans, for all three modes.
+  // Full-cache hits are always served without the enriching flag.
   const wantFast = request.nextUrl.searchParams.get("phase") === "fast";
 
   // ——— Social / website URL: tokens whose DexScreener profile includes this link ———
@@ -128,6 +141,38 @@ async function handleSearch(request: NextRequest) {
         totalFound: cached.length,
         timing: Date.now() - start,
         mode: "social" as const,
+      });
+    }
+
+    // Fast phase: same social pipeline minus signature scans.
+    if (wantFast) {
+      const fastKey = `fast:${cacheKey}`;
+      const cachedFast = getSearchCache<TokenResult[]>(fastKey);
+      const fastResults =
+        cachedFast ??
+        (await coalesce(fastKey, async () => {
+          const rawTokens = await searchDexBySocialUrl(q);
+          if (rawTokens.length === 0) {
+            setSearchCache(fastKey, [] as TokenResult[], FAST_TTL);
+            return [] as TokenResult[];
+          }
+          const results = await buildTokenResults(rawTokens, q, {
+            rankBy: "marketcap",
+            skipSignatureScan: true,
+          });
+          setSearchCache(fastKey, results, FAST_TTL);
+          return results;
+        }));
+
+      return NextResponse.json({
+        results: fastResults,
+        query: socialQuery,
+        totalFound: fastResults.length,
+        timing: Date.now() - start,
+        mode: "social" as const,
+        phase: "fast" as const,
+        enriching: true,
+        ...degradedFields(),
       });
     }
 

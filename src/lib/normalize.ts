@@ -50,6 +50,11 @@ export function skeleton(s: string): string {
   return normalize(folded);
 }
 
+/** Remove invisible disguise characters (zero-width, word joiner, BOM, VS). */
+export function stripInvisibles(s: string): string {
+  return s.replace(INVISIBLES_RE, "");
+}
+
 /**
  * True when the string only reads "normal" after lookalike folding — it
  * contains invisibles, confusable Cyrillic/Greek twins, or NFKC-foldable
