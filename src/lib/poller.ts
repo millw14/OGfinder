@@ -1,4 +1,10 @@
-import { upsertTokenLinks, countIndexedTokens } from "./url-index";
+import {
+  upsertTokenLinks,
+  countIndexedTokens,
+  getPollState,
+  setPollState,
+} from "./url-index";
+import { maintenanceTick } from "./store";
 import { fetchWithTimeout } from "./fetch";
 import {
   getBirdeyeNewListings,
@@ -10,7 +16,29 @@ const POLL_INTERVAL_MS = 30_000;
 const GECKO_TIMEOUT = 10_000;
 const DEX_TIMEOUT = 10_000;
 
-let started = false;
+interface PollerState {
+  started: boolean;
+  ticking: boolean;
+  timer: ReturnType<typeof setTimeout> | null;
+  lastTickMs: number;
+}
+
+// State lives on globalThis so dev HMR module reloads can't spawn a second
+// loop. NOTE: editing this file in dev does NOT hot-swap the running loop —
+// the old closure keeps running until the dev server is restarted.
+const G = globalThis as typeof globalThis & { __ogfinderPoller?: PollerState };
+
+function getPollerState(): PollerState {
+  if (!G.__ogfinderPoller) {
+    G.__ogfinderPoller = {
+      started: false,
+      ticking: false,
+      timer: null,
+      lastTickMs: 0,
+    };
+  }
+  return G.__ogfinderPoller;
+}
 
 interface TokenProfile {
   chainId: string;
@@ -147,9 +175,21 @@ async function pollGeckoRecentTokens(): Promise<number> {
 
 async function pollGeckoNewPools(): Promise<number> {
   let indexed = 0;
+  // Rotate the page cursor 1→2→3→1 across ticks for wider new-pool coverage.
+  let page = 1;
   try {
-    const url =
-      "https://api.geckoterminal.com/api/v2/networks/solana/new_pools?page=1";
+    const stored = Number(getPollState("gecko:new_pools:page"));
+    if (stored === 2 || stored === 3) page = stored;
+  } catch {
+    /* poll_state unavailable — default page 1 */
+  }
+  try {
+    setPollState("gecko:new_pools:page", String(page >= 3 ? 1 : page + 1));
+  } catch {
+    /* poll_state is best-effort */
+  }
+  try {
+    const url = `https://api.geckoterminal.com/api/v2/networks/solana/new_pools?page=${page}`;
     const data = (await fetchWithTimeout(
       url,
       GECKO_TIMEOUT
@@ -204,17 +244,39 @@ async function pollGeckoNewPools(): Promise<number> {
 async function tick(): Promise<void> {
   const isDev = process.env.NODE_ENV === "development";
   try {
-    const [dexCount, , geckoRecentCount, geckoPoolCount] = await Promise.all([
-      pollDexScreenerProfiles(),
-      pollBirdeyeNewListings(),
-      pollGeckoRecentTokens(),
-      pollGeckoNewPools(),
-    ]);
+    const sources: [name: string, promise: Promise<number | void>][] = [
+      ["dexscreener", pollDexScreenerProfiles()],
+      ["birdeye", pollBirdeyeNewListings()],
+      ["gecko_recent", pollGeckoRecentTokens()],
+      ["gecko_new_pools", pollGeckoNewPools()],
+    ];
+    const results = await Promise.allSettled(sources.map(([, p]) => p));
+    const now = Date.now();
+    results.forEach((r, i) => {
+      if (r.status !== "fulfilled") return;
+      try {
+        setPollState(`src:${sources[i][0]}:last_ok_ms`, String(now));
+      } catch {
+        /* poll_state is best-effort */
+      }
+    });
+    try {
+      setPollState("poller:last_tick_ms", String(now));
+    } catch {
+      /* poll_state is best-effort */
+    }
+    maintenanceTick();
     if (isDev) {
+      const count = (i: number): number => {
+        const r = results[i];
+        return r?.status === "fulfilled" && typeof r.value === "number"
+          ? r.value
+          : 0;
+      };
       let total = 0;
       try { total = countIndexedTokens(); } catch { /* */ }
       console.log(
-        `[poller] tick: dex=${dexCount} geckoRecent=${geckoRecentCount} geckoPools=${geckoPoolCount} birdeye=${hasBirdeyeKey() ? "enabled" : "no-key"} | total indexed: ${total}`
+        `[poller] tick: dex=${count(0)} geckoRecent=${count(2)} geckoPools=${count(3)} birdeye=${hasBirdeyeKey() ? "enabled" : "no-key"} | total indexed: ${total}`
       );
     }
   } catch (err) {
@@ -223,10 +285,26 @@ async function tick(): Promise<void> {
 }
 
 export function ensurePollerStarted(): void {
-  if (started) return;
-  started = true;
+  const state = getPollerState();
+  if (state.started) return;
+  state.started = true;
   const isDev = process.env.NODE_ENV === "development";
   if (isDev) console.log("[poller] starting background poller");
-  tick();
-  setInterval(tick, POLL_INTERVAL_MS);
+  // Self-scheduling loop (no setInterval): the next run is only armed after
+  // the current tick fully settles, so a slow tick can never overlap.
+  const run = async (): Promise<void> => {
+    if (state.ticking) return;
+    state.ticking = true;
+    try {
+      await tick();
+    } finally {
+      state.ticking = false;
+    }
+    state.lastTickMs = Date.now();
+    const jitter = Math.floor(Math.random() * 5000);
+    const timer = setTimeout(run, POLL_INTERVAL_MS + jitter);
+    timer.unref?.();
+    state.timer = timer;
+  };
+  void run();
 }
