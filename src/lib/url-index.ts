@@ -3,7 +3,9 @@ import path from "path";
 import fs from "fs";
 import { normalizeForSocialMatch } from "./social-url";
 
-const DB_DIR = path.join(process.cwd(), ".data");
+// On Railway, set DATA_DIR to the volume mount path (e.g. /data) so the
+// SQLite index survives redeploys; locally it defaults to .data/ in the repo.
+const DB_DIR = process.env.DATA_DIR?.trim() || path.join(process.cwd(), ".data");
 const DB_PATH = path.join(DB_DIR, "url-index.sqlite");
 
 let db: Database.Database | null = null;
