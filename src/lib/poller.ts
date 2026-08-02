@@ -21,6 +21,7 @@ import {
   type NewDiscovery,
 } from "./discovery";
 import { dexPairCreatedMs } from "./normalize";
+import { matchDiscoveriesAgainstWatches } from "./watches";
 
 const POLL_INTERVAL_MS = 30_000;
 const GECKO_TIMEOUT = 10_000;
@@ -301,10 +302,15 @@ async function pollGeckoNewPools(sink: NewDiscovery[]): Promise<number> {
 }
 
 /**
- * Hook for this tick's new/newly-named tokens. Placeholder for now — the
- * alerting change-set replaces the body with real processing.
+ * This tick's new/newly-named tokens feed the watchlist matcher, which
+ * inserts in-app `alerts` rows. Best-effort — never kills a tick.
  */
 function processDiscoveries(discoveries: NewDiscovery[]): void {
+  try {
+    matchDiscoveriesAgainstWatches(discoveries);
+  } catch {
+    /* alert matching is best-effort */
+  }
   if (process.env.NODE_ENV === "development" && discoveries.length > 0) {
     console.log(
       `[poller] discoveries: ${discoveries.length} new/newly-named tokens`

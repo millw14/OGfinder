@@ -6,6 +6,7 @@ import { formatDate, timeAgo, formatAgeGap } from "@/lib/format";
 import { encodeSharePayload, SharePayload } from "@/lib/share";
 import { LottieHover } from "./LottieHover";
 import { RiskChips, HolderConcChip } from "./Badge";
+import { WatchButton } from "./WatchButton";
 import crownOg from "@/assets/lottie/crown-og.json";
 
 function truncateMint(mint: string): string {
@@ -85,6 +86,15 @@ export function ScanHero({
       </div>
     );
   }
+
+  // Resolved scan name drives the clone-cluster watch; hidden when the name
+  // is unresolved or outside the server's 2-30 char watch bounds.
+  const watchQuery =
+    scanned?.displayName ?? scan.scanName ?? null;
+  const canWatch =
+    watchQuery !== null &&
+    watchQuery.trim().length >= 2 &&
+    watchQuery.trim().length <= 30;
 
   const ago = timeAgo(scanned?.createdAt ?? null);
   const ogAgo = og ? timeAgo(og.createdAt) : "";
@@ -204,30 +214,39 @@ export function ScanHero({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={shareVerdict}
-            disabled={preliminary}
-            title={
-              preliminary
-                ? "Verdict pending — verifying on-chain ages"
-                : "Copy a shareable verdict link"
-            }
-            className={`inline-flex flex-shrink-0 items-center gap-1.5 self-start rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-              copied
-                ? "border-emerald-500/50 bg-emerald-950/40 text-emerald-300"
-                : copyFailed
-                  ? "border-red-500/50 bg-red-950/40 text-red-300"
-                  : isOG && !preliminary
-                    ? "border-yellow-600/50 bg-yellow-950/40 text-yellow-300 hover:border-yellow-500/70 hover:bg-yellow-950/70"
-                    : "border-gray-700/80 bg-gray-900/60 text-gray-300 hover:border-gray-600 hover:bg-gray-800/70"
-            }`}
-          >
-            <span className="sr-only" role="status">
-              {copied ? "Link copied" : copyFailed ? "Copy failed" : ""}
-            </span>
-            {copied ? "Link copied" : copyFailed ? "Copy failed" : "Share verdict"}
-          </button>
+          <div className="flex flex-shrink-0 flex-wrap items-center gap-2 self-start">
+            {canWatch && (
+              <WatchButton
+                query={watchQuery!.trim()}
+                kind="mint-cluster"
+                originMint={scannedMint}
+              />
+            )}
+            <button
+              type="button"
+              onClick={shareVerdict}
+              disabled={preliminary}
+              title={
+                preliminary
+                  ? "Verdict pending — verifying on-chain ages"
+                  : "Copy a shareable verdict link"
+              }
+              className={`inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                copied
+                  ? "border-emerald-500/50 bg-emerald-950/40 text-emerald-300"
+                  : copyFailed
+                    ? "border-red-500/50 bg-red-950/40 text-red-300"
+                    : isOG && !preliminary
+                      ? "border-yellow-600/50 bg-yellow-950/40 text-yellow-300 hover:border-yellow-500/70 hover:bg-yellow-950/70"
+                      : "border-gray-700/80 bg-gray-900/60 text-gray-300 hover:border-gray-600 hover:bg-gray-800/70"
+              }`}
+            >
+              <span className="sr-only" role="status">
+                {copied ? "Link copied" : copyFailed ? "Copy failed" : ""}
+              </span>
+              {copied ? "Link copied" : copyFailed ? "Copy failed" : "Share verdict"}
+            </button>
+          </div>
         </div>
 
         {/* Scanned token identity */}

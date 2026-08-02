@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { DonationAddress } from "@/components/DonationAddress";
+import { AlertsBell } from "@/components/AlertsBell";
 
 const tabs = [
   { href: "/", label: "OGfinder" },
@@ -36,7 +37,10 @@ export function NavTabs() {
           );
         })}
       </div>
-      <DonationAddress />
+      <div className="flex items-center gap-1.5">
+        <AlertsBell />
+        <DonationAddress />
+      </div>
     </nav>
   );
 }

@@ -45,6 +45,39 @@ export function getDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_discovered_skeleton ON discovered_tokens(name_skeleton, first_seen_at);
     CREATE INDEX IF NOT EXISTS idx_discovered_first_seen ON discovered_tokens(first_seen_at);
     CREATE INDEX IF NOT EXISTS idx_discovered_unnamed ON discovered_tokens(first_seen_at) WHERE name IS NULL;
+    CREATE TABLE IF NOT EXISTS watched_queries (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind            TEXT    NOT NULL DEFAULT 'name' CHECK (kind IN ('name','mint-cluster')),
+      query_skeleton  TEXT    NOT NULL,
+      display_query   TEXT    NOT NULL,
+      origin_mint     TEXT,
+      match_mode      TEXT    NOT NULL DEFAULT 'contains' CHECK (match_mode IN ('exact','contains')),
+      secret          TEXT    NOT NULL,
+      telegram_chat_id TEXT,
+      created_by_ip   TEXT,
+      created_at      INTEGER NOT NULL,
+      last_read_at    INTEGER,
+      alert_day       TEXT,
+      alert_count_day INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_watched_secret ON watched_queries(secret);
+    CREATE INDEX IF NOT EXISTS idx_watched_skeleton ON watched_queries(query_skeleton);
+    CREATE INDEX IF NOT EXISTS idx_watched_ip ON watched_queries(created_by_ip);
+    CREATE TABLE IF NOT EXISTS alerts (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      watch_id  INTEGER NOT NULL REFERENCES watched_queries(id) ON DELETE CASCADE,
+      kind      TEXT    NOT NULL DEFAULT 'clone' CHECK (kind IN ('clone','flip')),
+      mint      TEXT,
+      name      TEXT,
+      symbol    TEXT,
+      source    TEXT,
+      payload   TEXT,
+      matched_at INTEGER NOT NULL,
+      delivered_telegram INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(watch_id, mint)
+    );
+    CREATE INDEX IF NOT EXISTS idx_alerts_watch ON alerts(watch_id, matched_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_alerts_undelivered ON alerts(delivered_telegram) WHERE delivered_telegram = 0;
   `);
   // Migration: token_links freshness columns (ALTER TABLE has no IF NOT EXISTS).
   // Runs before any statement is prepared — all stmt singletons lazily call

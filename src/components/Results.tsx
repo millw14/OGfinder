@@ -10,6 +10,7 @@ import {
   scoreConfidence,
   scoreMarketCapRank,
 } from "@/lib/sort";
+import { WatchButton } from "./WatchButton";
 
 const TokenCard = dynamic(
   () =>
@@ -360,7 +361,10 @@ export function Results({
         </span>
         <span className="flex items-center gap-2">
           {searchMode === "search" && lastQuery && (
-            <CopyLinkButton query={lastQuery} />
+            <>
+              <WatchButton query={lastQuery} kind="name" />
+              <CopyLinkButton query={lastQuery} />
+            </>
           )}
           {isEnriching ? (
             <span className="animate-pulse font-medium text-amber-500/90">
