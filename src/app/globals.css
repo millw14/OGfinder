@@ -144,4 +144,10 @@
     opacity: 1;
     transform: none;
   }
+
+  /* Skeleton shimmer sweep — park it off-canvas so nothing flashes. */
+  .animate-shimmer {
+    animation: none;
+    opacity: 0;
+  }
 }

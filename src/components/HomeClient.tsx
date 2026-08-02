@@ -20,6 +20,7 @@ import { Results } from "@/components/Results";
 import { ComparisonCard } from "@/components/ComparisonCard";
 import { NavTabs } from "@/components/NavTabs";
 import { SiteFooter } from "@/components/SiteFooter";
+import { TELEGRAM_GROUP_URL } from "@/lib/links";
 
 /** Client-only: Lottie + canvas; avoids flaky dev SSR chunk splits (missing ./276.js). */
 const OGLogo = dynamic(
@@ -30,11 +31,45 @@ const OGLogo = dynamic(
     loading: () => (
       <span
         aria-hidden
-        className="inline-flex h-16 w-[8.75rem] shrink-0 items-center justify-center rounded-xl bg-surface-2/60 sm:h-[4.25rem] sm:w-[9.25rem]"
+        className="inline-flex h-16 w-[7.75rem] shrink-0 items-center justify-center rounded-xl bg-surface-2/60"
       />
     ),
   }
 );
+
+/** Compact proof points under the search — the third opens the Telegram bot. */
+const TRUST_ITEMS = [
+  { label: "on-chain verified ages", icon: "check" as const },
+  { label: "risk + dev checks", icon: "shield" as const },
+  {
+    label: "works in your Telegram group",
+    icon: "send" as const,
+    href: TELEGRAM_GROUP_URL,
+  },
+];
+
+const TRUST_ICONS: Record<"check" | "shield" | "send", string> = {
+  check: "M20 6 9 17l-5-5",
+  shield: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z",
+  send: "m22 2-7 20-4-9-9-4 20-7Z",
+};
+
+function TrustIcon({ name }: { name: "check" | "shield" | "send" }) {
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-3 w-3 shrink-0 text-og"
+    >
+      <path d={TRUST_ICONS[name]} />
+    </svg>
+  );
+}
 
 const RECENT_KEY = "ogfinder_recent";
 const MAX_RECENT = 8;
@@ -97,6 +132,10 @@ function HomeInner() {
   const [degraded, setDegraded] = useState<string[] | null>(null);
   const [history, setHistory] = useState<SearchHistory | null>(null);
   const [compare, setCompare] = useState<CompareState | null>(null);
+
+  // Landing → working state. Purely presentational: the search bar itself is
+  // never unmounted, only the hero around it tightens.
+  const collapsed = hasSearched || results.length > 0;
 
   useEffect(() => {
     setRecentSearches(getRecent());
@@ -293,21 +332,40 @@ function HomeInner() {
 
       <NavTabs />
       <main className="relative mx-auto w-full max-w-3xl flex-1 px-4 pb-12 pt-8 sm:pt-12">
-        <div className="mb-10 text-center sm:mb-12">
-          <h1 className="flex flex-wrap items-center justify-center gap-0 text-5xl font-black tracking-tight sm:text-6xl">
+        {/* Landing state owns the viewport; once a search runs the hero
+            collapses to a compact lockup so the verdict leads. */}
+        <div
+          className={`text-center transition-all duration-200 ease-out motion-reduce:transition-none ${
+            collapsed ? "mb-5" : "mb-8 sm:mb-10"
+          }`}
+        >
+          <h1 className="flex flex-wrap items-center justify-center gap-0 font-display font-bold tracking-tight">
             <span className="sr-only">OGfinder</span>
             <span
               aria-hidden="true"
               className="flex flex-wrap items-center justify-center gap-0"
             >
-              <OGLogo className="sm:scale-105" />
-              <span className="font-display text-fg">finder</span>
+              <OGLogo
+                size={collapsed ? 38 : 64}
+                className={collapsed ? undefined : "sm:scale-105"}
+              />
+              <span
+                className={`font-display leading-none text-fg ${
+                  collapsed
+                    ? "text-[24px] sm:text-[26px]"
+                    : "text-[44px] sm:text-[54px]"
+                }`}
+              >
+                finder
+              </span>
             </span>
           </h1>
-          <p className="mt-3 max-w-md mx-auto text-sm text-fg-3 sm:text-base">
-            Find the original Solana token by name — or paste a mint to see if
-            yours is the oldest.
-          </p>
+          {!collapsed && (
+            <p className="mx-auto mt-4 max-w-lg text-balance text-sm leading-relaxed text-fg-2 sm:text-[15px]">
+              Paste a token name or contract address — we rank every lookalike
+              by real on-chain age.
+            </p>
+          )}
         </div>
 
         {/* Mobile: search stays reachable while scrolling results — it parks
@@ -317,18 +375,49 @@ function HomeInner() {
           <SearchBar onSearch={handleSearch} isLoading={isLoading} />
         </div>
 
+        {!collapsed && (
+          <ul className="mt-6 flex flex-wrap items-center justify-center gap-1.5 text-micro text-fg-3 sm:gap-2">
+            {TRUST_ITEMS.map(({ label, icon, href }) => {
+              const inner = (
+                <>
+                  <TrustIcon name={icon} />
+                  {label}
+                </>
+              );
+              return (
+                <li key={label}>
+                  {href ? (
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-full border bg-surface-1 px-2.5 py-1 transition-colors hover:border-og/40 hover:text-og"
+                    >
+                      {inner}
+                    </a>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border bg-surface-1 px-2.5 py-1">
+                      {inner}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
         {!hasSearched && recentSearches.length > 0 && (
-          <div className="mt-8 text-center">
-            <p className="mb-3 text-[11px] font-medium uppercase tracking-wider text-gray-600">
+          <div className="mt-7 text-center">
+            <p className="mb-2.5 text-micro font-medium uppercase tracking-[0.14em] text-fg-4">
               Recent
             </p>
-            <div className="flex flex-wrap justify-center gap-2">
+            <div className="flex flex-wrap justify-center gap-1.5">
               {recentSearches.map((q) => (
                 <button
                   key={q}
                   type="button"
                   onClick={() => handleSearch(q)}
-                  className="rounded-full border border-gray-800/80 bg-gray-900/50 px-3.5 py-1.5 text-sm text-gray-400 transition-all hover:border-gray-600 hover:bg-gray-800/60 hover:text-gray-200"
+                  className="rounded-full border bg-surface-2 px-3 py-1.5 text-meta text-fg-2 transition-colors hover:border-line-str hover:text-og"
                 >
                   {q.length > 24 ? `${q.slice(0, 10)}…${q.slice(-6)}` : q}
                 </button>

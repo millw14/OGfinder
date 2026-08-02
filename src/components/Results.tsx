@@ -13,16 +13,57 @@ import {
 } from "@/lib/sort";
 import { WatchButton } from "./WatchButton";
 
+/** Sweep used by every skeleton; parked by the reduced-motion block. */
+function Shimmer() {
+  return (
+    <span
+      aria-hidden
+      className="pointer-events-none absolute inset-0 animate-shimmer bg-gradient-to-r from-transparent via-white/[0.045] to-transparent"
+    />
+  );
+}
+
+/** ~96px tall and rounded-2xl — dimension-matched to a result card. */
+function SkeletonCard() {
+  return (
+    <div className="relative h-24 overflow-hidden rounded-2xl border bg-surface-1 p-4">
+      <div className="flex h-full items-center gap-3">
+        <div className="h-10 w-10 shrink-0 rounded-xl bg-surface-2" />
+        <div className="flex-1 space-y-2.5">
+          <div className="flex gap-2">
+            <div className="h-4 w-32 rounded-md bg-surface-2" />
+            <div className="h-4 w-12 rounded-md bg-surface-3" />
+          </div>
+          <div className="h-3 w-48 rounded-md bg-surface-2/80" />
+          <div className="h-3 w-28 rounded-md bg-surface-2/60" />
+        </div>
+      </div>
+      <Shimmer />
+    </div>
+  );
+}
+
+/** Taller stand-in for the verdict hero while its chunk loads. */
+function SkeletonHero() {
+  return (
+    <div className="relative mb-4 h-36 overflow-hidden rounded-2xl border bg-surface-1 p-5">
+      <div className="space-y-3">
+        <div className="h-3 w-24 rounded-md bg-surface-3" />
+        <div className="h-7 w-56 rounded-lg bg-surface-2" />
+        <div className="h-4 w-40 rounded-md bg-surface-2/80" />
+        <div className="h-4 w-64 rounded-md bg-surface-2/60" />
+      </div>
+      <Shimmer />
+    </div>
+  );
+}
+
 const TokenCard = dynamic(
   () =>
     import("./TokenCard").then((m) => ({ default: m.TokenCard })),
   {
     ssr: false,
-    loading: () => (
-      <div className="animate-pulse rounded-2xl border border-gray-800/60 bg-gray-900/40 p-5">
-        <div className="h-24 rounded-lg bg-gray-800/50" />
-      </div>
-    ),
+    loading: () => <SkeletonCard />,
   }
 );
 
@@ -32,31 +73,9 @@ const ScanHero = dynamic(
     import("./ScanHero").then((m) => ({ default: m.ScanHero })),
   {
     ssr: false,
-    loading: () => (
-      <div className="mb-4 animate-pulse rounded-2xl border border-gray-800/60 bg-gray-900/40 p-5">
-        <div className="h-28 rounded-lg bg-gray-800/50" />
-      </div>
-    ),
+    loading: () => <SkeletonHero />,
   }
 );
-
-function SkeletonCard() {
-  return (
-    <div className="animate-pulse rounded-2xl border border-gray-800/60 bg-gray-900/40 p-5">
-      <div className="flex gap-4">
-        <div className="h-10 w-10 flex-shrink-0 rounded-xl bg-gray-800/80" />
-        <div className="flex-1 space-y-3">
-          <div className="flex gap-3">
-            <div className="h-5 w-36 rounded-lg bg-gray-800/80" />
-            <div className="h-5 w-14 rounded-lg bg-gray-800/80" />
-          </div>
-          <div className="h-4 w-52 rounded-lg bg-gray-800/60" />
-          <div className="h-4 w-32 rounded-lg bg-gray-800/40" />
-        </div>
-      </div>
-    </div>
-  );
-}
 
 /** Copies a shareable /?q= link for the current search (plain text mode). */
 function CopyLinkButton({ query }: { query: string }) {
@@ -91,12 +110,12 @@ function CopyLinkButton({ query }: { query: string }) {
       type="button"
       onClick={copy}
       title="Copy a shareable link to this search"
-      className={`rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors ${
+      className={`rounded-full border px-2.5 py-1 text-micro font-medium transition-colors ${
         copied
-          ? "border-emerald-700/60 bg-emerald-950/40 text-emerald-400"
+          ? "border-up/40 bg-up/10 text-up"
           : failed
-            ? "border-red-700/60 bg-red-950/40 text-red-400"
-            : "border-gray-700/60 bg-gray-900/50 text-gray-500 hover:border-gray-600 hover:text-gray-300"
+            ? "border-down/40 bg-down/10 text-down"
+            : "bg-surface-2 text-fg-3 hover:border-line-str hover:text-fg-2"
       }`}
     >
       <span className="sr-only" role="status">
@@ -132,6 +151,10 @@ const PROVIDER_LABELS: Record<string, string> = {
   geckoterminal: "GeckoTerminal",
   "solana-rpc": "Solana RPC",
 };
+
+/** Entrance stagger: capped so a long list never crawls in. */
+const STAGGER_MS = 45;
+const MAX_STAGGERED = 8;
 
 export function Results({
   results,
@@ -209,7 +232,7 @@ export function Results({
 
   if (isLoading) {
     return (
-      <div className="space-y-3">
+      <div className="space-y-2.5">
         {Array.from({ length: 4 }, (_, i) => (
           <SkeletonCard key={i} />
         ))}
@@ -219,9 +242,11 @@ export function Results({
 
   if (error) {
     return (
-      <div className="rounded-2xl border border-red-900/40 bg-red-950/20 px-5 py-8 text-center">
-        <p className="text-sm font-medium text-red-300">{error}</p>
-        <p className="mt-2 text-xs text-red-400/80">
+      <div className="rounded-2xl border border-down/30 border-l-2 border-l-down/70 bg-down/[0.06] px-5 py-8 text-center">
+        <p className="font-display text-[15px] font-medium tracking-tight text-down">
+          {error}
+        </p>
+        <p className="mt-2 text-meta text-fg-3">
           Try a name, mint, or a social / website URL (8–512 characters).
         </p>
       </div>
@@ -230,13 +255,32 @@ export function Results({
 
   if (hasSearched && results.length === 0) {
     return (
-      <div className="py-16 text-center">
-        <div className="text-4xl opacity-90">🔍</div>
-        <p className="mt-4 text-base text-gray-400">No tokens found</p>
-        <p className="mt-1 text-sm text-gray-600">
+      <div className="rounded-2xl border bg-surface-1/60 px-5 py-14 text-center">
+        <span
+          aria-hidden
+          className="mx-auto flex h-11 w-11 items-center justify-center rounded-full border bg-surface-2 text-fg-3"
+        >
+          <svg
+            className="h-5 w-5"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+            />
+          </svg>
+        </span>
+        <p className="mt-4 font-display text-[15px] font-medium tracking-tight text-fg-2">
+          No tokens found
+        </p>
+        <p className="mx-auto mt-1.5 max-w-sm text-meta leading-relaxed text-fg-3">
           {searchMode === "social"
             ? "No pairs on DexScreener list this URL in websites or socials yet"
-            : "Try another name, mint, or social link"}
+            : "Try another name, mint, or social link — or paste the contract address straight from the chart"}
         </p>
       </div>
     );
@@ -259,11 +303,11 @@ export function Results({
       )}
 
       {searchMode === "social" && (
-        <div className="mb-4 rounded-2xl border border-amber-900/35 bg-amber-950/15 px-4 py-3 sm:px-5">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-500/90">
+        <div className="mb-4 rounded-2xl border bg-surface-1 px-4 py-3 sm:px-5">
+          <p className="text-micro font-semibold uppercase tracking-[0.14em] text-scan">
             Social link
           </p>
-          <p className="mt-1 text-sm text-gray-400">
+          <p className="mt-1 text-sm leading-relaxed text-fg-2">
             Tokens whose DexScreener profile includes this URL, ranked by market
             cap, then 24h volume, then newer pairs.
           </p>
@@ -271,10 +315,10 @@ export function Results({
       )}
 
       <div className="mb-3">
-        <p className="mb-2 px-1 text-[11px] font-medium uppercase tracking-wider text-gray-600">
+        <p className="mb-2 px-1 text-micro font-medium uppercase tracking-[0.14em] text-fg-4">
           Launchpad
         </p>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-1.5">
           {LAUNCHPAD_BUCKETS.map(({ id, label }) => {
             const on = selectedBucketIds.has(id);
             const count = bucketCounts.get(id) ?? 0;
@@ -286,19 +330,19 @@ export function Results({
                 disabled={empty}
                 aria-pressed={on}
                 onClick={() => toggleBucket(id)}
-                className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                className={`rounded-full border px-2.5 py-1 text-micro font-medium transition-colors ${
                   empty
-                    ? "cursor-default border-gray-800/60 bg-gray-900/30 text-gray-600 opacity-40"
+                    ? "cursor-default bg-surface-1 text-fg-4 opacity-40"
                     : on
-                      ? "border-amber-500/60 bg-amber-950/40 text-amber-200"
-                      : "border-gray-700/80 bg-gray-900/50 text-gray-500 hover:border-gray-600 hover:text-gray-300"
+                      ? "border-og/30 bg-og/10 text-og"
+                      : "bg-surface-2 text-fg-3 hover:border-line-str hover:text-fg-2"
                 }`}
               >
                 {label}
                 {!empty && (
                   <span
-                    className={`ml-1 tabular-nums ${
-                      on ? "text-amber-400/80" : "text-gray-600"
+                    className={`ml-1.5 font-mono ${
+                      on ? "text-og/70" : "text-fg-4"
                     }`}
                   >
                     {count}
@@ -311,7 +355,7 @@ export function Results({
             <button
               type="button"
               onClick={() => setSelectedBucketIds(new Set())}
-              className="rounded-full border border-transparent px-2 py-1 text-[11px] text-gray-500 underline-offset-2 hover:text-gray-300 hover:underline"
+              className="rounded-full border border-transparent px-2 py-1 text-micro text-fg-3 underline-offset-2 transition-colors hover:text-og hover:underline"
             >
               Clear
             </button>
@@ -322,7 +366,7 @@ export function Results({
       {degraded && degraded.length > 0 && (
         <div
           role="status"
-          className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-400/90"
+          className="mb-3 rounded-xl border border-warn/25 border-l-2 border-l-warn/70 bg-warn/[0.06] px-3 py-2 text-meta leading-relaxed text-warn"
         >
           {degraded
             .map((p) => PROVIDER_LABELS[p] ?? p)
@@ -335,16 +379,17 @@ export function Results({
       <div
         role="status"
         aria-live="polite"
-        className="mb-3 flex items-center justify-between px-1 text-xs text-gray-500"
+        className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-1 text-meta text-fg-3"
       >
         <span>
           {filtersActive ? (
             <>
-              <span className="tabular-nums text-gray-300">{shownCount}</span>
+              <span className="font-mono text-fg">{shownCount}</span>
               {shownCount !== 1 ? " tokens" : " token"} shown
-              <span className="text-gray-700"> · </span>
-              <span className="text-gray-600">{totalCount} total</span>
-              <span className="text-gray-700">
+              <span className="text-fg-4"> · </span>
+              <span className="font-mono text-fg-4">{totalCount}</span>
+              <span className="text-fg-4"> total</span>
+              <span className="text-fg-4">
                 {" "}
                 —{" "}
                 {searchMode === "social"
@@ -354,8 +399,9 @@ export function Results({
             </>
           ) : (
             <>
-              {totalCount} token{totalCount !== 1 ? "s" : ""} found
-              <span className="text-gray-700">
+              <span className="font-mono text-fg">{totalCount}</span> token
+              {totalCount !== 1 ? "s" : ""} found
+              <span className="text-fg-4">
                 {" "}
                 —{" "}
                 {searchMode === "social" ? "MC → vol → age" : "oldest first"}
@@ -371,12 +417,12 @@ export function Results({
             </>
           )}
           {isEnriching ? (
-            <span className="animate-pulse font-medium text-amber-500/90">
+            <span className="animate-pulse font-medium text-og">
               Verifying on-chain ages…
             </span>
           ) : (
             timing != null && (
-              <span className="tabular-nums text-gray-600">{timing}ms</span>
+              <span className="font-mono text-fg-4">{timing}ms</span>
             )
           )}
         </span>
@@ -384,36 +430,44 @@ export function Results({
 
       {searchMode === "search" && history && (
         history.flip?.flipped ? (
-          <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-300/90">
-            ⚡ Copycat flipped the OG on{" "}
+          <div className="mb-3 rounded-xl border border-og/30 border-l-2 border-l-og bg-og/[0.07] px-3 py-2 text-meta leading-relaxed text-og-light">
+            <span aria-hidden>⚡</span> Copycat flipped the OG on{" "}
             {formatDate(new Date(history.flip.at).toISOString())} —{" "}
             <span className="font-semibold">{history.flip.challenger.name}</span>{" "}
             overtook by{" "}
             {history.flip.metric === "marketcap" ? "market cap" : "liquidity"}
           </div>
         ) : history.snapshotCount >= 2 ? (
-          <p className="mb-3 px-1 text-[11px] text-gray-600">
+          <p className="mb-3 px-1 text-micro text-fg-4">
             Tracking since{" "}
             {formatDate(new Date(history.firstSnapshotAt).toISOString())}
-            <span className="text-gray-700"> · </span>
-            {history.snapshotCount} snapshots
-            <span className="text-gray-700"> · </span>
+            <span className="text-fg-4"> · </span>
+            <span className="font-mono">{history.snapshotCount}</span> snapshots
+            <span className="text-fg-4"> · </span>
             OG still leads
           </p>
         ) : null
       )}
 
       {filtersActive && shownCount === 0 ? (
-        <div className="rounded-2xl border border-gray-800/60 bg-gray-900/30 px-5 py-10 text-center">
-          <p className="text-sm text-gray-400">No tokens match these filters</p>
-          <p className="mt-1 text-xs text-gray-600">
+        <div className="rounded-2xl border bg-surface-1/60 px-5 py-10 text-center">
+          <p className="text-sm text-fg-2">No tokens match these filters</p>
+          <p className="mt-1 text-meta text-fg-3">
             Clear launchpad filters or pick fewer options
           </p>
         </div>
       ) : (
         <div className="space-y-2.5">
-          {displayed.map((token) => (
-            <TokenCard key={token.mint} token={token} />
+          {displayed.map((token, i) => (
+            <div
+              key={token.mint}
+              className="animate-rise"
+              style={{
+                animationDelay: `${Math.min(i, MAX_STAGGERED) * STAGGER_MS}ms`,
+              }}
+            >
+              <TokenCard token={token} />
+            </div>
           ))}
         </div>
       )}
