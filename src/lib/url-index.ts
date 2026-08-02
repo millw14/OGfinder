@@ -4,13 +4,15 @@ import fs from "fs";
 import { normalizeForSocialMatch } from "./social-url";
 
 const DB_DIR = path.join(process.cwd(), ".data");
-const DB_PATH = path.join(DB_DIR, "url-index.sqlite");
+/** Overridable for tests (":memory:" supported). */
+const DB_PATH =
+  process.env.OGFINDER_DB_PATH?.trim() || path.join(DB_DIR, "url-index.sqlite");
 
 let db: Database.Database | null = null;
 
 export function getDb(): Database.Database {
   if (db) return db;
-  fs.mkdirSync(DB_DIR, { recursive: true });
+  if (DB_PATH !== ":memory:") fs.mkdirSync(DB_DIR, { recursive: true });
   db = new Database(DB_PATH);
   db.pragma("journal_mode = WAL");
   db.pragma("synchronous = NORMAL");

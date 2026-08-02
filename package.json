@@ -9,6 +9,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
     "clean": "node -e \"const fs=require('fs'); try{fs.rmSync('.next',{recursive:true,force:true});}catch(e){} try{fs.rmSync('node_modules/.cache',{recursive:true,force:true});}catch(e){} console.log('Cleaned .next and node_modules/.cache')\""
   },
   "dependencies": {
@@ -28,6 +31,7 @@
     "eslint-config-next": "^14.2.0",
     "postcss": "^8.0.0",
     "tailwindcss": "^3.4.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^4.1.10"
   }
 }

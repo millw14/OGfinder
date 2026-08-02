@@ -130,7 +130,8 @@ async function fetchHoldings(address: string): Promise<HoldingsResult> {
 
 // ── Enhanced Transactions ──────────────────────────────────────────
 
-interface EnhancedTx {
+/** Exported for tests. */
+export interface EnhancedTx {
   signature: string;
   timestamp: number;
   type: string;
@@ -221,7 +222,8 @@ interface MintAccum {
   lastActivityMs: number;
 }
 
-function parseSwaps(
+/** Exported for tests — pure function over parsed Helius transactions. */
+export function parseSwaps(
   txs: EnhancedTx[],
   walletAddress: string,
   holdings: WalletHolding[]
