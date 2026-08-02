@@ -601,7 +601,11 @@ export function formatMintVerdict(
   if (dev) lines.push(dev);
 
   const market: string[] = [];
-  if (scanned.priceUsd != null && scanned.priceUsd > 0) {
+  const mc = scanned.marketCapUsd ?? scanned.fdvUsd;
+  if (mc != null && mc > 0) {
+    market.push(`MC ${fmtCompactUsd(mc)}`);
+  } else if (scanned.priceUsd != null && scanned.priceUsd > 0) {
+    // No market cap reported — price beats showing nothing.
     market.push(fmtPrice(scanned.priceUsd));
   }
   if (scanned.liquidityUsd != null && scanned.liquidityUsd > 0) {

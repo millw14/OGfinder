@@ -232,6 +232,7 @@ describe("formatMintVerdict", () => {
           metadataMutable: false,
           topHolderPct: 24.6,
           priceUsd: 0.0000345,
+          marketCapUsd: 2_310_000_000,
           liquidityUsd: 4_520_000,
           priceChange24h: -3.21,
         }),
@@ -247,7 +248,7 @@ describe("formatMintVerdict", () => {
         "👑 <b>THIS IS THE OG</b> — Bonk ($BONK)",
         `minted Dec 20, 2022 (${timeAgo(OG_CREATED)})`,
         "🔒 renounced · 👥 top10 hold 25%",
-        "💰 $0.0000345 · liq $4.5M · -3.2% 24h",
+        "💰 MC $2.3B · liq $4.5M · -3.2% 24h",
         `<a href="${verdictShareUrl(BONK, payload, SITE)}">OGfinder verdict</a> · ` +
           `<a href="https://dexscreener.com/solana/${BONK}">DexScreener</a> · ` +
           `<a href="https://trade.padre.gg/trade/solana/${BONK}">Padre</a>`,
