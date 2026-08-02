@@ -13,7 +13,17 @@ import {
   RankBadge,
   ScannedMintBadge,
   BurnedBadge,
+  ExactNameBadge,
 } from "./Badge";
+
+/** Hover copy for the rank-gated OG labels (creation ranking, rank 1 only). */
+const OG_LABEL_TITLES: Record<string, string> = {
+  OG: "Oldest matching token — exact name match, clear age gap to #2, verified age data",
+  "Likely OG":
+    "Oldest matching token, but the age gap to #2 is small or the name match is fuzzy",
+  "Oldest found":
+    "Oldest we could verify — its true creation may be older than shown",
+};
 
 function truncateMint(mint: string): string {
   if (mint.length <= 16) return mint;
@@ -126,6 +136,7 @@ export function TokenCard({ token }: { token: TokenResult }) {
             {token.rankingMode === "creation" && (
               <OGBadge rank={token.rank} />
             )}
+            {token.exactMatch && token.rank !== 1 && <ExactNameBadge />}
             {token.supplyZero && <BurnedBadge />}
             <PlatformBadge dexId={token.dexId} mint={token.mint} />
           </div>
@@ -271,9 +282,14 @@ export function TokenCard({ token }: { token: TokenResult }) {
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <div className="flex items-center gap-1.5">
               <ConfidenceStars score={token.confidence} />
-              <span className="text-[11px] text-gray-500">
-                {token.confidenceLabel}
-              </span>
+              {token.confidenceLabel && (
+                <span
+                  className="text-[11px] text-gray-500"
+                  title={OG_LABEL_TITLES[token.confidenceLabel]}
+                >
+                  {token.confidenceLabel}
+                </span>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-1.5 sm:ml-auto">

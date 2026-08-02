@@ -33,6 +33,26 @@ export function sortByMarketCapLeaderboard(
   });
 }
 
+/**
+ * Stars (0–5): AGE-DATA QUALITY for one token — how trustworthy its creation
+ * time is. NOT a name-match or OG score.
+ *   5 — Helius DAS created_at (on the full path a completed signature scan
+ *       found nothing older, corroborating it)
+ *   4 — completed signature scan alone
+ *   3 — DexScreener pair time only (pair creation lags token creation)
+ *  ≤3 — createdAtIsLowerBound (truncated scan): true age is unknown-older
+ *   1 — no time data yet (pendingAge / nothing found)
+ */
+export function ageDataQuality(token: TokenResult): number {
+  if (token.pendingAge === true || token.createdAtMs == null) return 1;
+  let stars = 1;
+  if (token.timeSource === "helius") stars = 5;
+  else if (token.timeSource === "signatures") stars = 4;
+  else if (token.timeSource === "dexscreener") stars = 3;
+  if (token.createdAtIsLowerBound === true) stars = Math.min(stars, 3);
+  return stars;
+}
+
 /** Rank labels for social-link search (sorted by 24h volume). */
 export function scoreVolumeRank(results: TokenResult[]): TokenResult[] {
   return results.map((token, index) => {
@@ -50,7 +70,7 @@ export function scoreVolumeRank(results: TokenResult[]): TokenResult[] {
     return {
       ...token,
       rankingMode: "volume" as const,
-      confidence: Math.max(1, 5 - Math.min(index, 4)),
+      confidence: ageDataQuality(token),
       confidenceLabel,
       rank,
       rankLabel,
@@ -75,7 +95,7 @@ export function scoreMarketCapRank(results: TokenResult[]): TokenResult[] {
     return {
       ...token,
       rankingMode: "marketcap" as const,
-      confidence: Math.max(1, 5 - Math.min(index, 4)),
+      confidence: ageDataQuality(token),
       confidenceLabel,
       rank,
       rankLabel,
@@ -83,6 +103,19 @@ export function scoreMarketCapRank(results: TokenResult[]): TokenResult[] {
   });
 }
 
+/**
+ * OG scoring for creation-ranked results (assumes `results` sorted oldest-first).
+ *
+ * Two separate axes — do not conflate them:
+ *  - LABEL (confidenceLabel/rankLabel) = OG-ness, rank-gated. Only rank 1 (the
+ *    oldest) can carry an OG-flavored label; ranks 2+ are later mints by
+ *    definition, so a perfect name match earns them no label (a copycat's whole
+ *    job is matching the name). Rank 1: "OG" (exact-ish match + clear time gap
+ *    to #2 + solid age data), "Likely OG" (weaker: small gap or fuzzy match),
+ *    "Oldest found" (createdAtIsLowerBound or missing/pending time — the
+ *    ordering itself is uncertain).
+ *  - STARS (confidence) = per-token age-data quality via ageDataQuality().
+ */
 export function scoreConfidence(
   results: TokenResult[],
   query: string
@@ -104,41 +137,33 @@ export function scoreConfidence(
   const significantGap = range > 0 && gapToSecond / range > 0.05;
 
   return results.map((token, index) => {
-    let score = 0;
+    const stars = ageDataQuality(token);
 
     const name = normalize(token.displayName);
     const symbol = normalize(token.displaySymbol);
+    const exactName = name === nq;
+    const exactSymbol = symbol === nq;
 
-    if (name === nq) score += 2;
-    if (symbol === nq) score += 1;
-    if (score < 3 && (name.includes(nq) || symbol.includes(nq))) score += 1;
-    if (index === 0 && significantGap) score += 1;
-
-    score = Math.min(score, 5);
-
-    // Rank-1 whose creation time is only a lower bound (truncated signature
-    // scan): its true age is unknown-older, so the ordering itself is uncertain
-    // — cap stars and withhold the OG labels.
-    const uncertainOG = index === 0 && token.createdAtIsLowerBound === true;
-    if (uncertainOG) score = Math.min(score, 3);
-
-    let confidenceLabel: string;
-    if (uncertainOG) confidenceLabel = "Low confidence";
-    else if (score >= 5) confidenceLabel = "OG";
-    else if (score >= 3) confidenceLabel = "Likely OG";
-    else confidenceLabel = "Low confidence";
-
-    let rankLabel: string;
-    if (index === 0) rankLabel = uncertainOG ? "Oldest found" : "OG";
-    else if (index <= 2) rankLabel = "Older";
-    else rankLabel = "Newer";
+    let confidenceLabel = "";
+    if (index === 0) {
+      const uncertainAge =
+        token.createdAtIsLowerBound === true ||
+        token.pendingAge === true ||
+        token.createdAtMs == null;
+      if (uncertainAge) confidenceLabel = "Oldest found";
+      else if ((exactName || exactSymbol) && significantGap && stars >= 4)
+        confidenceLabel = "OG";
+      else confidenceLabel = "Likely OG";
+    }
 
     return {
       ...token,
-      confidence: score,
+      confidence: stars,
       confidenceLabel,
       rank: index + 1,
-      rankLabel,
+      rankLabel: confidenceLabel,
+      // Informational only (small gray chip on ranks 2+) — no OG implication.
+      exactMatch: exactName && exactSymbol ? (true as const) : undefined,
     };
   });
 }

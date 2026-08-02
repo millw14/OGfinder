@@ -68,6 +68,8 @@ export interface TokenResult {
   rankingMode?: "creation" | "volume" | "marketcap";
   /** Fast phase only: no creation time yet — signature scan still pending */
   pendingAge?: true;
+  /** Name+symbol exactly match the search query (informational — no OG implication) */
+  exactMatch?: true;
 }
 
 export interface SearchResponse {

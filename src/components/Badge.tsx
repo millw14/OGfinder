@@ -16,21 +16,38 @@ export function OGBadge({ rank }: { rank: number }) {
   );
 }
 
+/** Stars = age-data quality (how reliable the creation time is), NOT OG-ness. */
 export function ConfidenceStars({ score }: { score: number }) {
   const clamped = Math.max(0, Math.min(5, score));
   return (
     <span
       className="inline-flex gap-px text-xs"
-      title={`Confidence: ${clamped}/5`}
+      title={`Age data quality: ${clamped}/5 — how reliable this token's creation time is`}
     >
+      <span className="sr-only">
+        Age data quality {clamped} of 5
+      </span>
       {Array.from({ length: 5 }, (_, i) => (
         <span
           key={i}
+          aria-hidden="true"
           className={i < clamped ? "text-yellow-500" : "text-gray-700"}
         >
           ★
         </span>
       ))}
+    </span>
+  );
+}
+
+/** Neutral info chip for ranks 2+ whose name+symbol exactly match the query. */
+export function ExactNameBadge() {
+  return (
+    <span
+      className="inline-flex items-center rounded-full bg-gray-800/60 px-2 py-0.5 text-[10px] font-medium text-gray-400 ring-1 ring-gray-700/50"
+      title="Name and symbol exactly match the search — says nothing about which token came first"
+    >
+      exact name
     </span>
   );
 }
