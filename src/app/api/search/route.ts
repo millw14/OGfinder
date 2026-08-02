@@ -20,6 +20,11 @@ import { getJupiterTokenByMint } from "@/lib/jupiter";
 import { isLikelySocialUrl, normalizeForSocialMatch } from "@/lib/social-url";
 import { searchDexBySocialUrl } from "@/lib/dex-social";
 import { annotateLinkProvenance } from "@/lib/provenance";
+import {
+  captureSnapshot,
+  detectAndRecordFlip,
+  getSearchHistory,
+} from "@/lib/snapshots";
 import { ensurePollerStarted } from "@/lib/poller";
 import {
   rateLimitRequest,
@@ -276,6 +281,7 @@ async function handleSearch(request: NextRequest) {
       totalFound: cached.length,
       timing: Date.now() - start,
       mode: "search" as const,
+      history: getSearchHistory(normalizedQuery),
     });
   }
 
@@ -306,6 +312,7 @@ async function handleSearch(request: NextRequest) {
       mode: "search" as const,
       phase: "fast" as const,
       enriching: true,
+      history: getSearchHistory(normalizedQuery),
       ...degradedFields(),
     });
   }
@@ -318,6 +325,11 @@ async function handleSearch(request: NextRequest) {
     }
     const results = await buildTokenResults(rawTokens, q);
     setSearchCache(normalizedQuery, results);
+    // OG-flip history: snapshot the leaderboard and alert on new flips. Both
+    // calls swallow their own failures; detect must follow capture directly
+    // (synchronous pair — the capture marker links them).
+    captureSnapshot(normalizedQuery, results);
+    detectAndRecordFlip(normalizedQuery);
     logSearch(
       normalizedQuery,
       results,
@@ -334,6 +346,7 @@ async function handleSearch(request: NextRequest) {
     totalFound: final.length,
     timing: Date.now() - start,
     mode: "search" as const,
+    history: getSearchHistory(normalizedQuery),
     ...degradedFields(),
   });
 }

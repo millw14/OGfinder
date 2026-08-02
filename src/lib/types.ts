@@ -109,6 +109,38 @@ export interface TokenResult {
   topHolderPct?: number;
 }
 
+/** One side of an OG-flip verdict (values are from the newer snapshot). */
+export interface FlipParty {
+  mint: string;
+  name: string;
+  value: number;
+}
+
+/**
+ * Leaderboard flip between the two most recent query snapshots. The OG is the
+ * older snapshot's rank-1 (oldest) token; the challenger is the top non-OG
+ * token by the selected metric. The metric is only chosen when BOTH sides
+ * carry it in BOTH snapshots — market cap and liquidity are never mixed.
+ */
+export interface FlipInfo {
+  /** True: the challenger currently leads the OG on the metric. */
+  flipped: boolean;
+  /** Set when the OG regained the lead it had lost in the older snapshot. */
+  reclaimed?: true;
+  /** taken_at of the newer snapshot (ms). */
+  at: number;
+  metric: "marketcap" | "liquidity";
+  og: FlipParty;
+  challenger: FlipParty;
+}
+
+/** Snapshot history for a text search, attached to text-mode responses. */
+export interface SearchHistory {
+  snapshotCount: number;
+  firstSnapshotAt: number;
+  flip: FlipInfo | null;
+}
+
 export interface SearchResponse {
   results: TokenResult[];
   query: string;
@@ -130,6 +162,8 @@ export interface SearchResponse {
   verdictPreliminary?: boolean;
   /** Providers that failed during this request — results may be incomplete */
   degraded?: string[];
+  /** Text mode only: leaderboard snapshot history + OG-flip verdict */
+  history?: SearchHistory | null;
   error?: string;
 }
 

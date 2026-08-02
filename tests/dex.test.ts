@@ -37,6 +37,8 @@ describe("searchDex", () => {
         pairCreatedAt: 1_800_000_000_000,
         priceUsd: "0.5",
         liquidity: { usd: 99_999 },
+        marketCap: 123_456,
+        fdv: 222_222,
         baseToken: { address: mint, name: "GroupCase One", symbol: "GC1" },
       }),
       pair({
@@ -44,6 +46,8 @@ describe("searchDex", () => {
         pairCreatedAt: 1_700_000_000_000,
         priceUsd: "0.1",
         liquidity: { usd: 5 },
+        marketCap: 1,
+        fdv: 2,
         baseToken: { address: mint, name: "GroupCase One", symbol: "GC1" },
       }),
     ]);
@@ -56,6 +60,8 @@ describe("searchDex", () => {
     // Market data = highest-liquidity pair
     expect(tokens[0].liquidityUsd).toBe(99_999);
     expect(tokens[0].priceUsd).toBe(0.5);
+    expect(tokens[0].dexMarketCapUsd).toBe(123_456);
+    expect(tokens[0].dexFdvUsd).toBe(222_222);
   });
 
   it("re-filters DexScreener fuzzy matches to require the full query", async () => {

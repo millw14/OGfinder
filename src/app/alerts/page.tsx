@@ -209,36 +209,60 @@ function AlertsPageInner() {
                     </p>
                   ) : (
                     <ul className="divide-y divide-gray-800/40">
-                      {alerts.map((a) => (
-                        <li key={a.id}>
-                          <Link
-                            href={a.mint ? `/?q=${encodeURIComponent(a.mint)}` : "#"}
-                            className="flex items-baseline justify-between gap-2 px-4 py-2.5 transition-colors hover:bg-gray-800/40 sm:px-5"
-                          >
-                            <span className="min-w-0">
-                              <span className="block truncate text-xs font-semibold text-gray-200">
-                                {a.name ?? "Unnamed token"}
-                                {a.symbol && (
-                                  <span className="ml-1 font-medium text-gray-500">
-                                    ${a.symbol}
-                                  </span>
+                      {alerts.map((a) => {
+                        const query = server?.displayQuery ?? w.query;
+                        const isFlip = a.kind === "flip";
+                        const href = isFlip
+                          ? `/?q=${encodeURIComponent(query)}`
+                          : a.mint
+                            ? `/?q=${encodeURIComponent(a.mint)}`
+                            : "#";
+                        return (
+                          <li key={a.id}>
+                            <Link
+                              href={href}
+                              className="flex items-baseline justify-between gap-2 px-4 py-2.5 transition-colors hover:bg-gray-800/40 sm:px-5"
+                            >
+                              <span className="min-w-0">
+                                {isFlip ? (
+                                  <>
+                                    <span className="block truncate text-xs font-semibold text-amber-300/90">
+                                      ⚡ {query}: copycat flipped the OG
+                                    </span>
+                                    {a.name && (
+                                      <span className="text-[10px] text-gray-600">
+                                        {a.name} now leads
+                                      </span>
+                                    )}
+                                  </>
+                                ) : (
+                                  <>
+                                    <span className="block truncate text-xs font-semibold text-gray-200">
+                                      {a.name ?? "Unnamed token"}
+                                      {a.symbol && (
+                                        <span className="ml-1 font-medium text-gray-500">
+                                          ${a.symbol}
+                                        </span>
+                                      )}
+                                    </span>
+                                    <span className="text-[10px] text-gray-600">
+                                      {a.source ? `via ${a.source}` : ""}
+                                      {a.mint && (
+                                        <span className="ml-1 font-mono text-cyan-300/70">
+                                          {a.mint.slice(0, 4)}…{a.mint.slice(-4)}
+                                        </span>
+                                      )}
+                                    </span>
+                                  </>
                                 )}
                               </span>
-                              <span className="text-[10px] text-gray-600">
-                                {a.source ? `via ${a.source}` : ""}
-                                {a.mint && (
-                                  <span className="ml-1 font-mono text-cyan-300/70">
-                                    {a.mint.slice(0, 4)}…{a.mint.slice(-4)}
-                                  </span>
-                                )}
+                              <span className="flex-shrink-0 text-[10px] tabular-nums text-gray-600">
+                                {timeAgo(new Date(a.matchedAt).toISOString())}
                               </span>
-                            </span>
-                            <span className="flex-shrink-0 text-[10px] tabular-nums text-gray-600">
-                              {timeAgo(new Date(a.matchedAt).toISOString())}
-                            </span>
-                          </Link>
-                        </li>
-                      ))}
+                            </Link>
+                          </li>
+                        );
+                      })}
                     </ul>
                   )}
                 </section>

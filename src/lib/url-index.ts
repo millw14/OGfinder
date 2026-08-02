@@ -78,6 +78,14 @@ export function getDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_alerts_watch ON alerts(watch_id, matched_at DESC);
     CREATE INDEX IF NOT EXISTS idx_alerts_undelivered ON alerts(delivered_telegram) WHERE delivered_telegram = 0;
+    CREATE TABLE IF NOT EXISTS query_snapshots (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      query_norm TEXT    NOT NULL,
+      taken_at   INTEGER NOT NULL,
+      rank1_mint TEXT    NOT NULL,
+      top_json   TEXT    NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_snapshots_query ON query_snapshots(query_norm, taken_at DESC);
   `);
   // Migration: token_links freshness columns (ALTER TABLE has no IF NOT EXISTS).
   // Runs before any statement is prepared — all stmt singletons lazily call

@@ -19,6 +19,8 @@ interface AlertItem {
   symbol: string | null;
   source: string | null;
   matchedAt: number;
+  /** Added client-side when flattening: the owning watch's display query. */
+  watchQuery?: string;
 }
 
 interface WatchAlerts {
@@ -71,7 +73,9 @@ export function AlertsBell() {
       if (!res.ok) return;
       const data = (await res.json()) as { watches?: WatchAlerts[] };
       const flat = (data.watches ?? [])
-        .flatMap((w) => w.alerts ?? [])
+        .flatMap((w) =>
+          (w.alerts ?? []).map((a) => ({ ...a, watchQuery: w.displayQuery }))
+        )
         .sort((a, b) => b.matchedAt - a.matchedAt);
       setAlerts(flat);
       setTgLinkedIds(
@@ -172,35 +176,55 @@ export function AlertsBell() {
             </p>
           ) : (
             <ul className="max-h-72 overflow-y-auto">
-              {alerts.slice(0, MAX_DROPDOWN_ROWS).map((a) => (
-                <li key={a.id}>
-                  <button
-                    type="button"
-                    onClick={() => a.mint && goTo(a.mint)}
-                    disabled={!a.mint}
-                    className="flex w-full items-baseline justify-between gap-2 px-3.5 py-2.5 text-left transition-colors hover:bg-gray-800/50 disabled:cursor-default"
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate text-xs font-semibold text-gray-200">
-                        {a.name ?? "Unnamed token"}
-                        {a.symbol && (
-                          <span className="ml-1 font-medium text-gray-500">
-                            ${a.symbol}
-                          </span>
+              {alerts.slice(0, MAX_DROPDOWN_ROWS).map((a) => {
+                const isFlip = a.kind === "flip";
+                const target = isFlip ? a.watchQuery : a.mint;
+                return (
+                  <li key={a.id}>
+                    <button
+                      type="button"
+                      onClick={() => target && goTo(target)}
+                      disabled={!target}
+                      className="flex w-full items-baseline justify-between gap-2 px-3.5 py-2.5 text-left transition-colors hover:bg-gray-800/50 disabled:cursor-default"
+                    >
+                      <span className="min-w-0">
+                        {isFlip ? (
+                          <>
+                            <span className="block truncate text-xs font-semibold text-amber-300/90">
+                              ⚡ {a.watchQuery ?? "Watched name"}: copycat
+                              flipped the OG
+                            </span>
+                            {a.name && (
+                              <span className="text-[10px] text-gray-600">
+                                {a.name} now leads
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <span className="block truncate text-xs font-semibold text-gray-200">
+                              {a.name ?? "Unnamed token"}
+                              {a.symbol && (
+                                <span className="ml-1 font-medium text-gray-500">
+                                  ${a.symbol}
+                                </span>
+                              )}
+                            </span>
+                            {a.source && (
+                              <span className="text-[10px] text-gray-600">
+                                via {a.source}
+                              </span>
+                            )}
+                          </>
                         )}
                       </span>
-                      {a.source && (
-                        <span className="text-[10px] text-gray-600">
-                          via {a.source}
-                        </span>
-                      )}
-                    </span>
-                    <span className="flex-shrink-0 text-[10px] tabular-nums text-gray-600">
-                      {timeAgo(new Date(a.matchedAt).toISOString())}
-                    </span>
-                  </button>
-                </li>
-              ))}
+                      <span className="flex-shrink-0 text-[10px] tabular-nums text-gray-600">
+                        {timeAgo(new Date(a.matchedAt).toISOString())}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
           {tgLinked ? (

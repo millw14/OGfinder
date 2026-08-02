@@ -22,6 +22,7 @@ import {
 } from "./discovery";
 import { dexPairCreatedMs } from "./normalize";
 import { matchDiscoveriesAgainstWatches } from "./watches";
+import { pruneSnapshots } from "./snapshots";
 import {
   processTelegramUpdates,
   sendPendingTelegramAlerts,
@@ -366,6 +367,11 @@ async function tick(): Promise<void> {
       /* prune is best-effort */
     }
     maintenanceTick();
+    try {
+      pruneSnapshots();
+    } catch {
+      /* prune is best-effort */
+    }
     processDiscoveries(discoveries);
     // Telegram link/unlink commands + pending alert delivery — both no-op
     // without TELEGRAM_BOT_TOKEN and swallow their own failures.

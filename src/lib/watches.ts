@@ -283,6 +283,55 @@ export function getAlertsForWatches(
   return out;
 }
 
+/**
+ * Insert a kind='flip' alert for every watch whose query_skeleton equals
+ * querySkeleton exactly, honoring the same daily cap as clone alerts. mint is
+ * NULL so UNIQUE(watch_id, mint) never dedupes — each flip event is a fresh
+ * row. `name` labels the row (challenger name); `payload` is stored as JSON.
+ * Never throws — flip alerting is best-effort.
+ */
+export function recordFlipAlert(
+  querySkeleton: string,
+  info: { name: string | null; payload: unknown }
+): void {
+  try {
+    const db = getDb();
+    const watches = db
+      .prepare("SELECT id FROM watched_queries WHERE query_skeleton = ?")
+      .all(querySkeleton) as { id: number }[];
+    if (watches.length === 0) return;
+    const now = Date.now();
+    const today = utcDay(now);
+    const payloadJson = JSON.stringify(info.payload);
+    const capStmt = db.prepare(
+      "SELECT alert_day, alert_count_day FROM watched_queries WHERE id = ?"
+    );
+    const insertStmt = db.prepare(
+      `INSERT INTO alerts
+         (watch_id, kind, mint, name, symbol, source, payload, matched_at)
+       VALUES (?, 'flip', NULL, ?, NULL, 'snapshots', ?, ?)`
+    );
+    const bumpStmt = db.prepare(
+      "UPDATE watched_queries SET alert_day = ?, alert_count_day = ? WHERE id = ?"
+    );
+    const tx = db.transaction(() => {
+      for (const w of watches) {
+        const row = capStmt.get(w.id) as
+          | { alert_day: string | null; alert_count_day: number }
+          | undefined;
+        if (!row) continue;
+        const count = row.alert_day === today ? row.alert_count_day : 0;
+        if (count >= DAILY_ALERT_CAP) continue;
+        insertStmt.run(w.id, info.name, payloadJson, now);
+        bumpStmt.run(today, count + 1, w.id);
+      }
+    });
+    tx();
+  } catch {
+    /* alerting is best-effort */
+  }
+}
+
 interface CachedWatch {
   id: number;
   querySkeleton: string;

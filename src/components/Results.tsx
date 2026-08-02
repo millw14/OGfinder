@@ -2,7 +2,8 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { TokenResult, ScanSummary } from "@/lib/types";
+import { TokenResult, ScanSummary, SearchHistory } from "@/lib/types";
+import { formatDate } from "@/lib/format";
 import { bucketForToken, LAUNCHPAD_BUCKETS } from "@/lib/launchpads";
 import {
   sortByCreationTime,
@@ -119,6 +120,8 @@ interface ResultsProps {
   scan?: ScanSummary | null;
   /** Providers that failed during the request — results may be incomplete. */
   degraded?: string[] | null;
+  /** Text mode: leaderboard snapshot history + OG-flip verdict. */
+  history?: SearchHistory | null;
 }
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -141,6 +144,7 @@ export function Results({
   error,
   scan,
   degraded = null,
+  history = null,
 }: ResultsProps) {
   const [selectedBucketIds, setSelectedBucketIds] = useState<Set<string>>(
     () => new Set()
@@ -377,6 +381,27 @@ export function Results({
           )}
         </span>
       </div>
+
+      {searchMode === "search" && history && (
+        history.flip?.flipped ? (
+          <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-300/90">
+            ⚡ Copycat flipped the OG on{" "}
+            {formatDate(new Date(history.flip.at).toISOString())} —{" "}
+            <span className="font-semibold">{history.flip.challenger.name}</span>{" "}
+            overtook by{" "}
+            {history.flip.metric === "marketcap" ? "market cap" : "liquidity"}
+          </div>
+        ) : history.snapshotCount >= 2 ? (
+          <p className="mb-3 px-1 text-[11px] text-gray-600">
+            Tracking since{" "}
+            {formatDate(new Date(history.firstSnapshotAt).toISOString())}
+            <span className="text-gray-700"> · </span>
+            {history.snapshotCount} snapshots
+            <span className="text-gray-700"> · </span>
+            OG still leads
+          </p>
+        ) : null
+      )}
 
       {filtersActive && shownCount === 0 ? (
         <div className="rounded-2xl border border-gray-800/60 bg-gray-900/30 px-5 py-10 text-center">

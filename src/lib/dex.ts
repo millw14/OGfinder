@@ -11,6 +11,8 @@ interface DexPair {
   pairCreatedAt?: number;
   priceUsd?: string;
   liquidity?: { usd?: number };
+  marketCap?: number;
+  fdv?: number;
   priceChange?: { h24?: number };
   info?: { imageUrl?: string };
   baseToken: {
@@ -113,6 +115,12 @@ export async function searchDex(query: string): Promise<RawToken[]> {
         ...(Number.isFinite(price) && price > 0 ? { priceUsd: price } : {}),
         ...(typeof marketPair.liquidity?.usd === "number"
           ? { liquidityUsd: marketPair.liquidity.usd }
+          : {}),
+        ...(typeof marketPair.marketCap === "number"
+          ? { dexMarketCapUsd: marketPair.marketCap }
+          : {}),
+        ...(typeof marketPair.fdv === "number"
+          ? { dexFdvUsd: marketPair.fdv }
           : {}),
         ...(typeof marketPair.priceChange?.h24 === "number"
           ? { priceChange24h: marketPair.priceChange.h24 }

@@ -3,7 +3,12 @@
 import { Suspense, useState, useCallback, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
-import { TokenResult, SearchResponse, ScanSummary } from "@/lib/types";
+import {
+  TokenResult,
+  SearchResponse,
+  ScanSummary,
+  SearchHistory,
+} from "@/lib/types";
 import {
   parseCompareInput,
   emptyCompareSide,
@@ -97,6 +102,7 @@ function HomeInner() {
     "search" | "scan" | "social" | "compare" | null
   >(null);
   const [degraded, setDegraded] = useState<string[] | null>(null);
+  const [history, setHistory] = useState<SearchHistory | null>(null);
   const [compare, setCompare] = useState<CompareState | null>(null);
 
   useEffect(() => {
@@ -121,6 +127,7 @@ function HomeInner() {
       setScan(null);
       setSearchMode(null);
       setDegraded(null);
+      setHistory(null);
       setCompare(null);
 
       const isAbort = (err: unknown) =>
@@ -134,6 +141,7 @@ function HomeInner() {
         setSearchMode(data.mode ?? "search");
         setIsEnriching(preliminary);
         setDegraded(data.degraded && data.degraded.length ? data.degraded : null);
+        setHistory(data.history ?? null);
         if (data.mode === "scan" && data.scannedMint) {
           setScan({
             mode: "scan",
@@ -357,6 +365,7 @@ function HomeInner() {
               error={searchError}
               scan={scan}
               degraded={degraded}
+              history={history}
             />
           )}
         </div>
