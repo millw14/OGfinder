@@ -296,6 +296,15 @@ export function ScanHero({
           <span className="font-mono text-[11px] text-cyan-300/90">
             {truncateMint(scannedMint)}
           </span>
+          {scanned?.homoglyphSuspect && (
+            <span
+              className="basis-full text-xs font-semibold text-red-400"
+              title="Lookalike (Cyrillic/Greek) or invisible characters in the name — a common impersonation trick"
+            >
+              This token&rsquo;s name uses lookalike characters — likely
+              impersonation
+            </span>
+          )}
         </div>
       </div>
 

@@ -76,6 +76,9 @@ export interface TokenResult {
   pendingAge?: true;
   /** Name+symbol exactly match the search query (informational — no OG implication) */
   exactMatch?: true;
+  /** Name/symbol matches the query only via lookalike folding (Cyrillic/Greek
+   *  homoglyphs, invisible chars) — likely impersonation. Omitted when clean. */
+  homoglyphSuspect?: true;
   /** True = mint authority active (supply inflatable); false = revoked; absent = unknown */
   mintAuthorityActive?: boolean;
   /** True = freeze authority active (accounts freezable); false = revoked; absent = unknown */

@@ -5,7 +5,12 @@ import {
   HeliusSlotData,
 } from "./types";
 import { getAssetBatch, getCreationSlot } from "./helius";
-import { dexPairCreatedMs } from "./normalize";
+import {
+  dexPairCreatedMs,
+  hasLookalikeChars,
+  normalize,
+  skeleton,
+} from "./normalize";
 import {
   sortByCreationTime,
   sortByVolumeUsd,
@@ -97,6 +102,10 @@ export async function buildTokenResults(
     });
   }
 
+  // Homoglyph detection: normalized + skeleton forms of the query, computed once.
+  const nq = normalize(queryForScore);
+  const sq = skeleton(queryForScore);
+
   const sigResults: Awaited<ReturnType<typeof getCreationSlot>>[] = [];
   if (!skipSignatureScan) {
     for (let i = 0; i < candidates.length; i += CREATION_SLOT_CONCURRENCY) {
@@ -126,18 +135,38 @@ export async function buildTokenResults(
       }
     }
 
+    const displayName = resolveDisplayName(
+      c.raw.dexName,
+      c.raw.jupName,
+      c.h?.heliusName
+    );
+    const displaySymbol = resolveDisplaySymbol(
+      c.raw.dexSymbol,
+      c.raw.jupSymbol,
+      c.h?.heliusSymbol
+    );
+
+    // Homoglyph impersonation: the name carries lookalike/invisible chars AND
+    // matches the query only after skeleton folding — never on exact
+    // codepoints. The scanned mint derives the query from its own name (so it
+    // always plain-matches itself); for it, carrying lookalike chars at all is
+    // the suspicious signal.
+    const lookalikeChars =
+      hasLookalikeChars(displayName) || hasLookalikeChars(displaySymbol);
+    const plainMatch =
+      normalize(displayName).includes(nq) ||
+      normalize(displaySymbol).includes(nq);
+    const skelMatch =
+      sq.length > 0 &&
+      (skeleton(displayName).includes(sq) ||
+        skeleton(displaySymbol).includes(sq));
+    const homoglyphSuspect =
+      lookalikeChars && (c.isScannedMint || (skelMatch && !plainMatch));
+
     enriched.push({
       mint: c.raw.mint,
-      displayName: resolveDisplayName(
-        c.raw.dexName,
-        c.raw.jupName,
-        c.h?.heliusName
-      ),
-      displaySymbol: resolveDisplaySymbol(
-        c.raw.dexSymbol,
-        c.raw.jupSymbol,
-        c.h?.heliusSymbol
-      ),
+      displayName,
+      displaySymbol,
       slot,
       createdAtMs,
       createdAt: createdAtMs ? new Date(createdAtMs).toISOString() : null,
@@ -171,6 +200,7 @@ export async function buildTokenResults(
             : "creation",
       ...(c.isScannedMint ? { isScanned: true } : {}),
       ...(c.supplyZero ? { supplyZero: true } : {}),
+      ...(homoglyphSuspect ? { homoglyphSuspect: true as const } : {}),
       ...(createdAtIsLowerBound ? { createdAtIsLowerBound: true } : {}),
       // Rug-risk signals from DAS — omitted when unknown (old cache entries / no DAS record)
       ...(c.h?.mintAuthorityActive !== undefined

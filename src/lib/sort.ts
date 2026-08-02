@@ -150,7 +150,11 @@ export function scoreConfidence(
         token.createdAtIsLowerBound === true ||
         token.pendingAge === true ||
         token.createdAtMs == null;
-      if (uncertainAge) confidenceLabel = "Oldest found";
+      // A lookalike-character name never earns an OG endorsement, even at
+      // rank 1 — homoglyphSuspect is set server-side (enrich-results) and
+      // rides through client re-scores untouched.
+      if (uncertainAge || token.homoglyphSuspect === true)
+        confidenceLabel = "Oldest found";
       else if ((exactName || exactSymbol) && significantGap && stars >= 4)
         confidenceLabel = "OG";
       else confidenceLabel = "Likely OG";

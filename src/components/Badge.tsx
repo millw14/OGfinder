@@ -184,6 +184,18 @@ export function RiskChips({
   );
 }
 
+/** Red warning chip: name matches the search only via lookalike folding. */
+export function HomoglyphBadge() {
+  return (
+    <span
+      className="inline-flex items-center rounded-full bg-red-950/60 px-2 py-0.5 text-[10px] font-semibold text-red-400 ring-1 ring-red-800/50"
+      title="Name uses lookalike/invisible characters — likely impersonation"
+    >
+      lookalike chars
+    </span>
+  );
+}
+
 export function BurnedBadge() {
   return (
     <span
