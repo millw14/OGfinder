@@ -23,10 +23,7 @@ import {
 import { dexPairCreatedMs } from "./normalize";
 import { matchDiscoveriesAgainstWatches } from "./watches";
 import { pruneSnapshots } from "./snapshots";
-import {
-  processTelegramUpdates,
-  sendPendingTelegramAlerts,
-} from "./telegram";
+import { sendPendingTelegramAlerts } from "./telegram";
 
 const POLL_INTERVAL_MS = 30_000;
 const GECKO_TIMEOUT = 10_000;
@@ -373,13 +370,10 @@ async function tick(): Promise<void> {
       /* prune is best-effort */
     }
     processDiscoveries(discoveries);
-    // Telegram link/unlink commands + pending alert delivery — both no-op
-    // without TELEGRAM_BOT_TOKEN and swallow their own failures.
-    try {
-      await processTelegramUpdates();
-    } catch {
-      /* telegram is best-effort */
-    }
+    // Pending watch-alert delivery — no-op without TELEGRAM_BOT_TOKEN and
+    // swallows its own failures. Bot updates (commands, group messages) are
+    // NOT handled here anymore: they arrive via the dedicated long-poll loop
+    // (ensureTelegramLoopStarted in telegram.ts).
     try {
       await sendPendingTelegramAlerts();
     } catch {

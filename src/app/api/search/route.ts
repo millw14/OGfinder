@@ -25,6 +25,7 @@ import {
   getSearchHistory,
 } from "@/lib/snapshots";
 import { ensurePollerStarted } from "@/lib/poller";
+import { ensureTelegramLoopStarted } from "@/lib/telegram";
 import {
   rateLimitRequest,
   clientIpFromHeaders,
@@ -81,6 +82,8 @@ export async function GET(request: NextRequest) {
 
 async function handleSearch(request: NextRequest) {
   ensurePollerStarted();
+  // Route fallback for the Telegram loop too (self-gated; see telegram.ts).
+  ensureTelegramLoopStarted();
   const start = Date.now();
 
   const q = request.nextUrl.searchParams.get("q")?.trim() ?? "";

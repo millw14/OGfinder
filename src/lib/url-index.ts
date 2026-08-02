@@ -78,6 +78,13 @@ export function getDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_alerts_watch ON alerts(watch_id, matched_at DESC);
     CREATE INDEX IF NOT EXISTS idx_alerts_undelivered ON alerts(delivered_telegram) WHERE delivered_telegram = 0;
+    CREATE TABLE IF NOT EXISTS telegram_groups (
+      chat_id      TEXT PRIMARY KEY,
+      title        TEXT,
+      added_at     INTEGER NOT NULL,
+      welcome_sent INTEGER NOT NULL DEFAULT 0,
+      active       INTEGER NOT NULL DEFAULT 1
+    );
     CREATE TABLE IF NOT EXISTS query_snapshots (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
       query_norm TEXT    NOT NULL,
