@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { TokenResult, ScanSummary } from "@/lib/types";
 import { bucketForToken, LAUNCHPAD_BUCKETS } from "@/lib/launchpads";
 import {
@@ -19,6 +19,20 @@ const TokenCard = dynamic(
     loading: () => (
       <div className="animate-pulse rounded-2xl border border-gray-800/60 bg-gray-900/40 p-5">
         <div className="h-24 rounded-lg bg-gray-800/50" />
+      </div>
+    ),
+  }
+);
+
+/** Client-only like TokenCard: pulls in Lottie (crown) via LottieHover. */
+const ScanHero = dynamic(
+  () =>
+    import("./ScanHero").then((m) => ({ default: m.ScanHero })),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="mb-4 animate-pulse rounded-2xl border border-gray-800/60 bg-gray-900/40 p-5">
+        <div className="h-28 rounded-lg bg-gray-800/50" />
       </div>
     ),
   }
@@ -42,62 +56,49 @@ function SkeletonCard() {
   );
 }
 
-function ScanBanner({
-  scan,
-  hiddenByFilter,
-  effectiveRank,
-  effectiveIsOG,
-}: {
-  scan: ScanSummary;
-  hiddenByFilter: boolean;
-  effectiveRank: number | null;
-  effectiveIsOG: boolean;
-}) {
-  if (scan.mode !== "scan" || !scan.scannedMint) return null;
+/** Copies a shareable /?q= link for the current search (plain text mode). */
+function CopyLinkButton({ query }: { query: string }) {
+  const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const name =
-    scan.scanName && scan.scanSymbol
-      ? `${scan.scanName} ($${scan.scanSymbol})`
-      : scan.scanName ?? scan.scanSymbol ?? "Token";
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  const copy = async () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    try {
+      await navigator.clipboard.writeText(
+        `${window.location.origin}/?q=${encodeURIComponent(query)}`
+      );
+      setFailed(false);
+      setCopied(true);
+      timerRef.current = setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+      setFailed(true);
+      timerRef.current = setTimeout(() => setFailed(false), 1500);
+    }
+  };
 
   return (
-    <div className="mb-4 rounded-2xl border border-cyan-900/40 bg-gradient-to-br from-cyan-950/30 to-gray-900/50 p-4 sm:p-5">
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-cyan-500/90">
-        Contract scan
-      </p>
-      <p className="mt-1.5 text-sm leading-relaxed text-gray-300 sm:text-base">
-        Resolved <span className="font-medium text-gray-100">{name}</span>
-        {hiddenByFilter ? (
-          <span className="text-gray-500">
-            {" "}
-            — your mint doesn’t match the selected launchpad filters. Clear
-            filters to see it in the full list.
-          </span>
-        ) : effectiveRank != null ? (
-          <>
-            {" "}
-            — your mint is{" "}
-            <span className="font-semibold text-cyan-200">
-              #{effectiveRank} oldest
-            </span>
-            {effectiveIsOG ? (
-              <span className="text-yellow-400"> — this is the OG.</span>
-            ) : (
-              <span className="text-gray-500">
-                {" "}
-                (#1 in the list is the oldest match we found).
-              </span>
-            )}
-          </>
-        ) : (
-          <span className="text-gray-500">
-            {" "}
-            — this mint didn’t appear in the ranked results (try searching by
-            name).
-          </span>
-        )}
-      </p>
-    </div>
+    <button
+      type="button"
+      onClick={copy}
+      title="Copy a shareable link to this search"
+      className={`rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors ${
+        copied
+          ? "border-emerald-700/60 bg-emerald-950/40 text-emerald-400"
+          : failed
+            ? "border-red-700/60 bg-red-950/40 text-red-400"
+            : "border-gray-700/60 bg-gray-900/50 text-gray-500 hover:border-gray-600 hover:text-gray-300"
+      }`}
+    >
+      {copied ? "Copied" : failed ? "Copy failed" : "Copy link"}
+    </button>
   );
 }
 
@@ -174,10 +175,6 @@ export function Results({
       !scannedVisible
   );
 
-  // The server's scan verdict is authoritative — never recomputed client-side.
-  const effectiveRank = scan?.scannedRank ?? null;
-  const effectiveIsOG = scan?.isScannedOG === true;
-
   function toggleBucket(id: string) {
     setSelectedBucketIds((prev) => {
       const next = new Set(prev);
@@ -229,12 +226,12 @@ export function Results({
 
   return (
     <div>
-      {scan && (
-        <ScanBanner
+      {scan && scan.mode === "scan" && scan.scannedMint && (
+        <ScanHero
           scan={scan}
+          ranked={ranked}
+          totalCount={totalCount}
           hiddenByFilter={hiddenByFilter}
-          effectiveRank={hiddenByFilter ? null : effectiveRank}
-          effectiveIsOG={hiddenByFilter ? false : effectiveIsOG}
         />
       )}
 
@@ -325,9 +322,14 @@ export function Results({
             </>
           )}
         </span>
-        {timing != null && (
-          <span className="tabular-nums text-gray-600">{timing}ms</span>
-        )}
+        <span className="flex items-center gap-2">
+          {searchMode === "search" && lastQuery && (
+            <CopyLinkButton query={lastQuery} />
+          )}
+          {timing != null && (
+            <span className="tabular-nums text-gray-600">{timing}ms</span>
+          )}
+        </span>
       </div>
 
       {filtersActive && shownCount === 0 ? (
