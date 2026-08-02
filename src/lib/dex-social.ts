@@ -24,7 +24,7 @@ const SEARCH_CONCURRENCY = 4;
 /** SQLite hits verified within this window bypass the live link re-check. */
 const TRUST_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-interface DexPairSocial {
+export interface DexPairSocial {
   chainId: string;
   dexId: string;
   pairAddress?: string;
@@ -84,7 +84,7 @@ async function fetchDexSearch(q: string): Promise<DexPairSocial[]> {
   }
 }
 
-async function fetchTokenPairsBatched(
+export async function fetchTokenPairsBatched(
   mints: string[]
 ): Promise<DexPairSocial[]> {
   const out: DexPairSocial[] = [];
@@ -166,7 +166,7 @@ function pairMcUsd(p: DexPairSocial): number {
   return p.marketCap ?? p.fdv ?? 0;
 }
 
-function pairBeats(
+export function pairBeats(
   candidate: DexPairSocial,
   existing: DexPairSocial
 ): boolean {

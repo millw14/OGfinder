@@ -7,6 +7,7 @@ import { AlertsBell } from "@/components/AlertsBell";
 
 const tabs = [
   { href: "/", label: "OGfinder" },
+  { href: "/trending", label: "Trending" },
   { href: "/wallet", label: "Wallet" },
 ] as const;
 
