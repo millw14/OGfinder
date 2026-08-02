@@ -21,6 +21,19 @@ function formatSol(v: number): string {
   return v.toFixed(4);
 }
 
+/** Per-token SOL price — meme-coin costs are often far below 0.0001. */
+function formatPerToken(v: number): string {
+  if (v === 0) return "0";
+  if (v >= 1) return v.toFixed(2);
+  if (v >= 0.001) return v.toFixed(4);
+  return v.toExponential(1);
+}
+
+const compactQty = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
 function truncAddr(addr: string): string {
   if (addr.length <= 12) return addr;
   return `${addr.slice(0, 4)}...${addr.slice(-4)}`;
@@ -82,7 +95,19 @@ function CheckOGLink({ mint }: { mint: string }) {
   );
 }
 
-export function WalletView({ data }: { data: WalletAnalysis }) {
+export function WalletView({
+  data,
+  onDeepen,
+  isDeepening,
+}: {
+  data: WalletAnalysis;
+  onDeepen?: () => void;
+  isDeepening?: boolean;
+}) {
+  const winTotal = data.winRate
+    ? data.winRate.wins + data.winRate.losses
+    : 0;
+
   return (
     <div className="space-y-6">
       {/* Data honesty banners */}
@@ -98,11 +123,21 @@ export function WalletView({ data }: { data: WalletAnalysis }) {
             ? ` since ${new Date(data.oldestTxMs).toLocaleDateString()}`
             : ""}{" "}
           — older history not included; P&L may be incomplete.
+          {data.canDeepen && onDeepen && (
+            <button
+              type="button"
+              onClick={onDeepen}
+              disabled={isDeepening}
+              className="ml-2 mt-1 inline-block rounded-lg border border-amber-600/40 bg-amber-900/40 px-2.5 py-1 text-xs font-semibold text-amber-300 transition-colors hover:border-amber-500/60 hover:bg-amber-900/60 hover:text-amber-200 disabled:opacity-50"
+            >
+              {isDeepening ? "Scanning..." : "Scan more history"}
+            </button>
+          )}
         </div>
       )}
 
       {/* Summary cards */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="rounded-xl border border-gray-800/60 bg-gray-900/50 p-4">
           <p className="text-xs font-medium uppercase tracking-wider text-gray-500">
             Total P&L
@@ -151,6 +186,24 @@ export function WalletView({ data }: { data: WalletAnalysis }) {
             {data.txCount} txs analyzed
           </p>
         </div>
+
+        <div className="rounded-xl border border-gray-800/60 bg-gray-900/50 p-4">
+          <p className="text-xs font-medium uppercase tracking-wider text-gray-500">
+            Win Rate
+          </p>
+          {data.winRate && winTotal > 0 ? (
+            <>
+              <p className="mt-1 text-2xl font-bold text-gray-100">
+                {data.winRate.pct}%
+              </p>
+              <p className="mt-0.5 text-xs text-gray-500">
+                {data.winRate.wins}W / {data.winRate.losses}L
+              </p>
+            </>
+          ) : (
+            <p className="mt-1 text-2xl font-bold text-gray-500">—</p>
+          )}
+        </div>
       </div>
 
       {/* Token P&L table */}
@@ -166,6 +219,12 @@ export function WalletView({ data }: { data: WalletAnalysis }) {
                   <th className="px-3 py-2">Token</th>
                   <th className="px-3 py-2 text-right">Bought</th>
                   <th className="px-3 py-2 text-right">Sold</th>
+                  <th className="hidden px-3 py-2 text-right sm:table-cell">
+                    Avg Cost
+                  </th>
+                  <th className="hidden px-3 py-2 text-right md:table-cell">
+                    Remaining
+                  </th>
                   <th className="px-3 py-2 text-right">P&L</th>
                   <th className="hidden px-3 py-2 text-right sm:table-cell">
                     Hold Time
@@ -184,6 +243,22 @@ export function WalletView({ data }: { data: WalletAnalysis }) {
                         <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
                           <span className="font-medium text-gray-200">
                             {t.symbol}
+                            {t.approxUsd && (
+                              <sup
+                                title="Includes USDC/USDT-quoted swaps valued at the current SOL price — approximate"
+                                className="ml-0.5 cursor-help text-xs text-sky-400"
+                              >
+                                ≈
+                              </sup>
+                            )}
+                            {t.basisIncomplete && (
+                              <sup
+                                title="Sold more than bought in the analyzed window — cost basis incomplete"
+                                className="ml-0.5 cursor-help text-xs text-amber-500"
+                              >
+                                †
+                              </sup>
+                            )}
                           </span>
                           <span className="text-xs text-gray-500">
                             {t.name !== t.symbol ? t.name : ""}
@@ -197,6 +272,16 @@ export function WalletView({ data }: { data: WalletAnalysis }) {
                       </td>
                       <td className="px-3 py-2 text-right text-gray-400">
                         {formatSol(t.totalSoldSol)}
+                      </td>
+                      <td className="hidden px-3 py-2 text-right text-gray-500 sm:table-cell">
+                        {t.avgCostSol != null
+                          ? formatPerToken(t.avgCostSol)
+                          : "—"}
+                      </td>
+                      <td className="hidden px-3 py-2 text-right text-gray-500 md:table-cell">
+                        {t.remainingQty != null
+                          ? compactQty.format(t.remainingQty)
+                          : "—"}
                       </td>
                       <td className="px-3 py-2 text-right font-medium">
                         <PnlColor value={totalPnl} />

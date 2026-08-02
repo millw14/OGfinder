@@ -6,6 +6,7 @@ import {
   CACHE_WALLET,
   HeliusSlotData,
 } from "./types";
+import type { EnhancedTx } from "./wallet-analysis";
 import {
   getCreationSlotPersisted,
   setCreationSlotPersisted,
@@ -87,4 +88,36 @@ export function getWalletCache<T>(key: string): T | undefined {
 
 export function setWalletCache<T>(key: string, value: T): void {
   walletCache.set(key, value);
+}
+
+/** Deep-scan cap: stop offering "scan more" once this many txs are analyzed. */
+export const MAX_DEEP_TXS = 2000;
+
+/** Raw enhanced-tx window per wallet + cursor for the deep-scan resume. */
+export interface WalletTxCacheEntry {
+  /** Fetched txs, newest-first (merged across deepen rounds). */
+  txs: EnhancedTx[];
+  /** Cursor (oldest fetched signature) to resume older history; null = exhausted. */
+  nextBefore: string | null;
+}
+
+// useClones: false — entries are large (up to MAX_DEEP_TXS tx objects) and
+// treated as immutable by every reader; cloning them on get/set is pure cost.
+const walletTxCache = new NodeCache({
+  stdTTL: 900,
+  checkperiod: 120,
+  useClones: false,
+});
+
+export function getWalletTxCache(
+  address: string
+): WalletTxCacheEntry | undefined {
+  return walletTxCache.get(address);
+}
+
+export function setWalletTxCache(
+  address: string,
+  entry: WalletTxCacheEntry
+): void {
+  walletTxCache.set(address, entry);
 }

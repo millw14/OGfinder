@@ -65,6 +65,7 @@ function WalletPageInner() {
   const [address, setAddress] = useState("");
   const [data, setData] = useState<WalletAnalysis | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isDeepening, setIsDeepening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recentWallets, setRecentWallets] = useState<string[]>([]);
   const requestIdRef = useRef(0);
@@ -125,6 +126,43 @@ function WalletPageInner() {
       if (reqId === requestIdRef.current) setIsLoading(false);
     }
   }, [router]);
+
+  // Deep scan: fetch older history server-side and replace data wholesale.
+  // Existing results stay on screen while the merged window loads.
+  const deepenScan = useCallback(async () => {
+    const addr = lastScannedRef.current;
+    if (!addr) return;
+
+    const reqId = ++requestIdRef.current;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    setIsDeepening(true);
+    setError(null);
+
+    try {
+      const res = await fetch(
+        `/api/wallet?address=${encodeURIComponent(addr)}&deepen=1`,
+        { signal: controller.signal }
+      );
+      const json: WalletResponse = await res.json();
+
+      if (reqId !== requestIdRef.current) return; // stale response
+
+      if (!res.ok || json.error) {
+        setError(json.error ?? "Request failed");
+        return;
+      }
+
+      if (json.data) setData(json.data);
+    } catch {
+      if (reqId !== requestIdRef.current) return; // aborted by a newer scan
+      setError("Network error — try again");
+    } finally {
+      if (reqId === requestIdRef.current) setIsDeepening(false);
+    }
+  }, []);
 
   // Auto-scan from ?address= deep links (and side-wallet Scan navigations),
   // but never re-scan the address we just scanned ourselves.
@@ -215,7 +253,11 @@ function WalletPageInner() {
 
         {data && (
           <div className="mt-6">
-            <WalletView data={data} />
+            <WalletView
+              data={data}
+              onDeepen={deepenScan}
+              isDeepening={isDeepening}
+            />
           </div>
         )}
       </main>

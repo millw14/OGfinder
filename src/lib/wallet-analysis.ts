@@ -16,6 +16,12 @@ const SOL_MINT = "So11111111111111111111111111111111111111112";
 const MIN_NATIVE_CHANGE_SOL = 0.005;
 const MIN_NATIVE_CHANGE_LAM = MIN_NATIVE_CHANGE_SOL * LAMPORTS;
 
+/** USDC / USDT — swaps quoted in these carry cost/proceeds in USD, not SOL. */
+const STABLE_MINTS = new Set([
+  "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+]);
+
 function heliusApiKey(): string | null {
   return process.env.HELIUS_API_KEY?.trim() || null;
 }
@@ -171,17 +177,21 @@ interface TxFetchResult {
   txs: EnhancedTx[];
   failed: boolean;
   truncated: boolean;
+  /** Cursor for even older history: oldest fetched signature when truncated */
+  nextBefore: string | null;
 }
 
 async function fetchEnhancedTransactions(
-  address: string
+  address: string,
+  before?: string
 ): Promise<TxFetchResult> {
   const base = heliusRestBase();
   const key = heliusApiKey();
-  if (!base || !key) return { txs: [], failed: true, truncated: false };
+  if (!base || !key)
+    return { txs: [], failed: true, truncated: false, nextBefore: null };
 
   const all: EnhancedTx[] = [];
-  let beforeSig: string | undefined;
+  let beforeSig: string | undefined = before;
   let failed = false;
   let truncated = false;
 
@@ -208,7 +218,12 @@ async function fetchEnhancedTransactions(
     }
   }
 
-  return { txs: all, failed, truncated };
+  return {
+    txs: all,
+    failed,
+    truncated,
+    nextBefore: truncated && beforeSig ? beforeSig : null,
+  };
 }
 
 // ── Swap P&L computation ───────────────────────────────────────────
@@ -218,8 +233,72 @@ interface MintAccum {
   symbol: string;
   totalBoughtSol: number;
   totalSoldSol: number;
+  /** Token quantity in UI (decimal-adjusted) units; 0 when unknown. */
+  qtyBought: number;
+  qtySold: number;
+  /** USD legs from USDC/USDT-quoted swaps — converted to SOL post-parse. */
+  costUsdStable: number;
+  proceedsUsdStable: number;
+  /** True once any stable-quoted leg contributed (valued at current SOL px). */
+  approxUsd: boolean;
   firstBuyMs: number;
   lastActivityMs: number;
+}
+
+/** Weighted-average-cost P&L inputs — accumulator totals plus current value. */
+export interface PnlInput {
+  totalBoughtSol: number;
+  totalSoldSol: number;
+  qtyBought: number;
+  qtySold: number;
+  currentValueSol: number;
+}
+
+export interface PnlResult {
+  avgCostSol: number | null;
+  realizedPnlSol: number;
+  unrealizedPnlSol: number;
+  remainingQty: number;
+  remainingBasisSol: number;
+  basisIncomplete: boolean;
+}
+
+/**
+ * Weighted-average-cost P&L. Exported for tests — pure math, no I/O.
+ * When buy quantities are unknown (qtyBought = 0) falls back to crude
+ * net-flow math: realized = sold - bought, unrealized = current value.
+ * Invariant (qtySold <= qtyBought): realized + unrealized ===
+ * totalSoldSol - totalBoughtSol + currentValueSol.
+ */
+export function computePnl(i: PnlInput): PnlResult {
+  const { totalBoughtSol, totalSoldSol, qtyBought, qtySold, currentValueSol } =
+    i;
+
+  if (qtyBought <= 0) {
+    return {
+      avgCostSol: null,
+      realizedPnlSol: totalSoldSol - totalBoughtSol,
+      unrealizedPnlSol: currentValueSol,
+      remainingQty: 0,
+      remainingBasisSol: 0,
+      basisIncomplete: qtySold > 0,
+    };
+  }
+
+  const avgCostSol = totalBoughtSol / qtyBought;
+  const basisOfSold = Math.min(qtySold, qtyBought) * avgCostSol;
+  const remainingQty = Math.max(0, qtyBought - qtySold);
+  const remainingBasisSol = remainingQty * avgCostSol;
+  return {
+    avgCostSol,
+    realizedPnlSol: totalSoldSol - basisOfSold,
+    unrealizedPnlSol: currentValueSol - remainingBasisSol,
+    remainingQty,
+    remainingBasisSol,
+    // Absolute + relative epsilon: quantities can be 1e9+ where FP
+    // accumulation error exceeds any fixed absolute threshold.
+    basisIncomplete: qtySold > qtyBought * (1 + 1e-9) + 1e-6,
+  };
 }
 
 /** Exported for tests — pure function over parsed Helius transactions. */
@@ -244,6 +323,11 @@ export function parseSwaps(
         symbol: meta?.symbol ?? "???",
         totalBoughtSol: 0,
         totalSoldSol: 0,
+        qtyBought: 0,
+        qtySold: 0,
+        costUsdStable: 0,
+        proceedsUsdStable: 0,
+        approxUsd: false,
         firstBuyMs: 0,
         lastActivityMs: 0,
       };
@@ -255,22 +339,60 @@ export function parseSwaps(
   let buyCount = 0;
   let sellCount = 0;
 
-  function recordBuy(mint: string, solAmount: number, tsMs: number) {
-    if (mint === SOL_MINT || solAmount <= 0) return;
+  // qty is the token quantity in UI units — 0 when unknown.
+  function recordBuy(mint: string, solAmount: number, qty: number, tsMs: number) {
+    if (mint === SOL_MINT || STABLE_MINTS.has(mint) || solAmount <= 0) return;
     const acc = getOrCreate(mint);
     acc.totalBoughtSol += solAmount;
+    if (Number.isFinite(qty) && qty > 0) acc.qtyBought += qty;
     if (acc.firstBuyMs === 0 || tsMs < acc.firstBuyMs) acc.firstBuyMs = tsMs;
     if (tsMs > acc.lastActivityMs) acc.lastActivityMs = tsMs;
     buyCount++;
   }
 
-  function recordSell(mint: string, solAmount: number, tsMs: number) {
-    if (mint === SOL_MINT || solAmount <= 0) return;
+  function recordSell(mint: string, solAmount: number, qty: number, tsMs: number) {
+    if (mint === SOL_MINT || STABLE_MINTS.has(mint) || solAmount <= 0) return;
     const acc = getOrCreate(mint);
     acc.totalSoldSol += solAmount;
+    if (Number.isFinite(qty) && qty > 0) acc.qtySold += qty;
     if (tsMs > acc.lastActivityMs) acc.lastActivityMs = tsMs;
     if (acc.firstBuyMs === 0) acc.firstBuyMs = tsMs;
     sellCount++;
+  }
+
+  // Stable-quoted legs: cost/proceeds land in USD accumulators and are
+  // converted to SOL once the current SOL price is known (post-parse).
+  function recordStableBuy(mint: string, usd: number, qty: number, tsMs: number) {
+    if (mint === SOL_MINT || STABLE_MINTS.has(mint) || usd <= 0) return;
+    const acc = getOrCreate(mint);
+    acc.costUsdStable += usd;
+    acc.approxUsd = true;
+    if (Number.isFinite(qty) && qty > 0) acc.qtyBought += qty;
+    if (acc.firstBuyMs === 0 || tsMs < acc.firstBuyMs) acc.firstBuyMs = tsMs;
+    if (tsMs > acc.lastActivityMs) acc.lastActivityMs = tsMs;
+    buyCount++;
+  }
+
+  function recordStableSell(mint: string, usd: number, qty: number, tsMs: number) {
+    if (mint === SOL_MINT || STABLE_MINTS.has(mint) || usd <= 0) return;
+    const acc = getOrCreate(mint);
+    acc.proceedsUsdStable += usd;
+    acc.approxUsd = true;
+    if (Number.isFinite(qty) && qty > 0) acc.qtySold += qty;
+    if (tsMs > acc.lastActivityMs) acc.lastActivityMs = tsMs;
+    if (acc.firstBuyMs === 0) acc.firstBuyMs = tsMs;
+    sellCount++;
+  }
+
+  /** events.swap leg quantity: raw amount / 10^decimals → UI units.
+   *  Live Helius legs sometimes omit rawTokenAmount — treat as unknown (0). */
+  function rawQty(t: {
+    rawTokenAmount?: { tokenAmount?: string; decimals?: number };
+  }): number {
+    const raw = t?.rawTokenAmount;
+    if (!raw || raw.tokenAmount == null || raw.decimals == null) return 0;
+    const q = Number(raw.tokenAmount) / Math.pow(10, raw.decimals);
+    return Number.isFinite(q) && q > 0 ? q : 0;
   }
 
   for (const tx of txs) {
@@ -320,23 +442,29 @@ export function parseSwaps(
         const solSpent = nativeInLam / LAMPORTS;
         if (swap.tokenOutputs && swap.tokenOutputs.length > 0) {
           for (const tok of swap.tokenOutputs) {
-            recordBuy(tok.mint, solSpent / swap.tokenOutputs.length, tsMs);
+            recordBuy(
+              tok.mint,
+              solSpent / swap.tokenOutputs.length,
+              rawQty(tok),
+              tsMs
+            );
           }
           parsed = true;
         } else if (tx.tokenTransfers && tx.tokenTransfers.length > 0) {
-          const tIn: string[] = [];
+          // tokenTransfers.tokenAmount is ALREADY decimal-adjusted
+          const tIn: { mint: string; amount: number }[] = [];
           for (const tt of tx.tokenTransfers) {
             if (
               tt.toUserAccount === walletAddress &&
               tt.mint !== SOL_MINT &&
               tt.tokenAmount > 0
             ) {
-              tIn.push(tt.mint);
+              tIn.push({ mint: tt.mint, amount: tt.tokenAmount });
             }
           }
           if (tIn.length > 0) {
-            for (const mint of tIn) {
-              recordBuy(mint, solSpent / tIn.length, tsMs);
+            for (const t of tIn) {
+              recordBuy(t.mint, solSpent / tIn.length, t.amount, tsMs);
             }
             parsed = true;
           }
@@ -350,25 +478,64 @@ export function parseSwaps(
             recordSell(
               tok.mint,
               solReceived / swap.tokenInputs.length,
+              rawQty(tok),
               tsMs
             );
           }
           parsed = true;
         } else if (tx.tokenTransfers && tx.tokenTransfers.length > 0) {
           // events.swap missing tokenInputs — get tokens from tokenTransfers
-          const tOut: string[] = [];
+          const tOut: { mint: string; amount: number }[] = [];
           for (const tt of tx.tokenTransfers) {
             if (
               tt.fromUserAccount === walletAddress &&
               tt.mint !== SOL_MINT &&
               tt.tokenAmount > 0
             ) {
-              tOut.push(tt.mint);
+              tOut.push({ mint: tt.mint, amount: tt.tokenAmount });
             }
           }
           if (tOut.length > 0) {
-            for (const mint of tOut) {
-              recordSell(mint, solReceived / tOut.length, tsMs);
+            for (const t of tOut) {
+              recordSell(t.mint, solReceived / tOut.length, t.amount, tsMs);
+            }
+            parsed = true;
+          }
+        }
+      }
+
+      // Stable-quoted swap: no SOL leg cleared the noise floor, but a
+      // USDC/USDT leg carries the cost/proceeds in USD. rawQty on a stable
+      // leg (6 decimals) IS the USD amount.
+      if (!parsed) {
+        const sIns = swap.tokenInputs ?? [];
+        const sOuts = swap.tokenOutputs ?? [];
+        if (nativeInLam === 0) {
+          let usdIn = 0;
+          for (const t of sIns) {
+            if (STABLE_MINTS.has(t.mint)) usdIn += rawQty(t);
+          }
+          const outs = sOuts.filter(
+            (t) => !STABLE_MINTS.has(t.mint) && t.mint !== SOL_MINT
+          );
+          if (usdIn > 0 && outs.length > 0) {
+            for (const t of outs) {
+              recordStableBuy(t.mint, usdIn / outs.length, rawQty(t), tsMs);
+            }
+            parsed = true;
+          }
+        }
+        if (nativeOutLam === 0) {
+          let usdOut = 0;
+          for (const t of sOuts) {
+            if (STABLE_MINTS.has(t.mint)) usdOut += rawQty(t);
+          }
+          const ins = sIns.filter(
+            (t) => !STABLE_MINTS.has(t.mint) && t.mint !== SOL_MINT
+          );
+          if (usdOut > 0 && ins.length > 0) {
+            for (const t of ins) {
+              recordStableSell(t.mint, usdOut / ins.length, rawQty(t), tsMs);
             }
             parsed = true;
           }
@@ -423,14 +590,14 @@ export function parseSwaps(
       ) {
         const spent = Math.abs(solChangeSol);
         for (const t of tokensIn) {
-          recordBuy(t.mint, spent / tokensIn.length, tsMs);
+          recordBuy(t.mint, spent / tokensIn.length, t.amount, tsMs);
         }
       }
 
       // SELL: wallet gained SOL, sent tokens (any tx type)
       if (solChangeSol > MIN_NATIVE_CHANGE_SOL && tokensOut.length > 0) {
         for (const t of tokensOut) {
-          recordSell(t.mint, solChangeSol / tokensOut.length, tsMs);
+          recordSell(t.mint, solChangeSol / tokensOut.length, t.amount, tsMs);
         }
       }
     }
@@ -691,22 +858,54 @@ async function fetchTokenMetadata(
 
 // ── Main entry point ───────────────────────────────────────────────
 
+export interface AnalyzeWalletOptions {
+  /** Previously fetched txs (newest-first) to merge before this fetch. */
+  priorTxs?: EnhancedTx[];
+  /** Signature cursor — fetch history strictly older than this. */
+  before?: string;
+}
+
+export interface AnalyzeWalletResult {
+  analysis: WalletAnalysis;
+  /** Merged, deduped tx window (newest-first) — for the deep-scan cache. */
+  txs: EnhancedTx[];
+  /** Cursor to resume even older history, or null when exhausted. */
+  nextBefore: string | null;
+}
+
 export async function analyzeWallet(
-  address: string
-): Promise<WalletAnalysis> {
+  address: string,
+  opts?: AnalyzeWalletOptions
+): Promise<AnalyzeWalletResult> {
   const start = Date.now();
 
   const [holdingsRes, txRes] = await Promise.all([
     fetchHoldings(address),
-    fetchEnhancedTransactions(address),
+    fetchEnhancedTransactions(address, opts?.before),
   ]);
   const holdings = holdingsRes.holdings;
-  const txs = txRes.txs;
+
+  // Deep scan: prepend the previously fetched window, dedupe by signature.
+  let txs = txRes.txs;
+  if (opts?.priorTxs && opts.priorTxs.length > 0) {
+    const seen = new Set<string>();
+    const merged: EnhancedTx[] = [];
+    for (const t of [...opts.priorTxs, ...txRes.txs]) {
+      if (!t?.signature || seen.has(t.signature)) continue;
+      seen.add(t.signature);
+      merged.push(t);
+    }
+    txs = merged;
+  }
 
   let oldestTxMs: number | null = null;
+  let oldestSig: string | null = null;
   for (const tx of txs) {
     const tsMs = tx.timestamp * 1000;
-    if (oldestTxMs === null || tsMs < oldestTxMs) oldestTxMs = tsMs;
+    if (oldestTxMs === null || tsMs < oldestTxMs) {
+      oldestTxMs = tsMs;
+      oldestSig = tx.signature;
+    }
   }
 
   if (process.env.NODE_ENV === "development") {
@@ -790,16 +989,53 @@ export async function analyzeWallet(
 
   const holdingsByMint = new Map(holdings.map((h) => [h.mint, h]));
 
+  const solPrice = prices.get(SOL_MINT)?.priceUsd ?? null;
+
+  // Stable-quoted accumulators carry USD — convert to SOL at the CURRENT
+  // price (approximate by design; rows are flagged approxUsd). Without a
+  // SOL price the USD legs stay unconverted and contribute nothing.
+  if (solPrice && solPrice > 0) {
+    swapMap.forEach((acc) => {
+      if (acc.costUsdStable > 0) {
+        acc.totalBoughtSol += acc.costUsdStable / solPrice;
+        acc.costUsdStable = 0;
+      }
+      if (acc.proceedsUsdStable > 0) {
+        acc.totalSoldSol += acc.proceedsUsdStable / solPrice;
+        acc.proceedsUsdStable = 0;
+      }
+    });
+  }
+
   swapMap.forEach((acc, mint) => {
     const holding = holdingsByMint.get(mint);
     const price = prices.get(mint);
     const holdingAmount = holding?.amount ?? 0;
     const currentValueSol =
       holdingAmount > 0 && price ? holdingAmount * price.priceNative : 0;
-    // Net P&L = totalSoldSol + currentValueSol - totalBoughtSol
-    // realized already includes the full cost basis, so unrealized is just current value
-    const realizedPnl = acc.totalSoldSol - acc.totalBoughtSol;
-    const unrealizedPnlSol = currentValueSol;
+
+    // Weighted-average-cost P&L: sold basis = min(qtySold, qtyBought) * avg
+    const pnl = computePnl({
+      totalBoughtSol: acc.totalBoughtSol,
+      totalSoldSol: acc.totalSoldSol,
+      qtyBought: acc.qtyBought,
+      qtySold: acc.qtySold,
+      currentValueSol,
+    });
+
+    if (
+      process.env.NODE_ENV === "development" &&
+      acc.qtySold <= acc.qtyBought
+    ) {
+      const lhs = pnl.realizedPnlSol + pnl.unrealizedPnlSol;
+      const rhs = acc.totalSoldSol - acc.totalBoughtSol + currentValueSol;
+      if (Math.abs(lhs - rhs) > 1e-6 + Math.abs(rhs) * 1e-9) {
+        console.warn(
+          `[wallet] P&L invariant violated for ${mint}: realized+unrealized=${lhs} != netFlows=${rhs}`
+        );
+      }
+    }
+
     const holdTimeMs =
       acc.lastActivityMs > 0 && acc.firstBuyMs > 0
         ? (holdingAmount > 0 ? now : acc.lastActivityMs) - acc.firstBuyMs
@@ -811,9 +1047,16 @@ export async function analyzeWallet(
       symbol: acc.symbol,
       totalBoughtSol: Math.round(acc.totalBoughtSol * 10000) / 10000,
       totalSoldSol: Math.round(acc.totalSoldSol * 10000) / 10000,
-      realizedPnlSol: Math.round(realizedPnl * 10000) / 10000,
+      realizedPnlSol: Math.round(pnl.realizedPnlSol * 10000) / 10000,
       currentValueSol: Math.round(currentValueSol * 10000) / 10000,
-      unrealizedPnlSol: Math.round(unrealizedPnlSol * 10000) / 10000,
+      unrealizedPnlSol: Math.round(pnl.unrealizedPnlSol * 10000) / 10000,
+      qtyBought: acc.qtyBought,
+      qtySold: acc.qtySold,
+      avgCostSol: pnl.avgCostSol,
+      remainingQty: pnl.remainingQty,
+      remainingBasisSol: Math.round(pnl.remainingBasisSol * 10000) / 10000,
+      ...(acc.approxUsd ? { approxUsd: true as const } : {}),
+      ...(pnl.basisIncomplete ? { basisIncomplete: true as const } : {}),
       firstBuyMs: acc.firstBuyMs,
       lastActivityMs: acc.lastActivityMs,
       holdTimeMs: Math.max(0, holdTimeMs),
@@ -832,11 +1075,25 @@ export async function analyzeWallet(
     0
   );
 
-  const solPrice = prices.get(SOL_MINT)?.priceUsd ?? null;
   let totalPnlUsd: number | null = null;
   if (solPrice) {
     totalPnlUsd = Math.round(totalPnlSol * solPrice * 100) / 100;
   }
+
+  // Win rate over tokens with realized sells (win = realized P&L > 0)
+  let wins = 0;
+  let losses = 0;
+  for (const t of tokenPnl) {
+    if (t.qtySold <= 0) continue;
+    if (t.realizedPnlSol > 0) wins++;
+    else losses++;
+  }
+  const winTotal = wins + losses;
+  const winRate = {
+    wins,
+    losses,
+    pct: winTotal > 0 ? Math.round((wins / winTotal) * 100) : 0,
+  };
 
   const topCoin =
     tokenPnl.length > 0
@@ -862,19 +1119,25 @@ export async function analyzeWallet(
   const sideWallets = detectSideWallets(txs, address);
 
   return {
-    address,
-    totalPnlSol: Math.round(totalPnlSol * 10000) / 10000,
-    totalPnlUsd,
-    topCoin,
-    avgHoldTimeMs: Math.round(avgHoldTimeMs),
-    holdings,
-    tokenPnl: tokenPnl.slice(0, 50),
-    sideWallets,
-    txCount: txs.length,
-    solBalanceLamports: holdingsRes.nativeBalanceLamports ?? undefined,
-    partial: holdingsRes.failed || txRes.failed,
-    truncated: txRes.truncated,
-    oldestTxMs,
-    timing: Date.now() - start,
+    analysis: {
+      address,
+      totalPnlSol: Math.round(totalPnlSol * 10000) / 10000,
+      totalPnlUsd,
+      topCoin,
+      avgHoldTimeMs: Math.round(avgHoldTimeMs),
+      holdings,
+      tokenPnl: tokenPnl.slice(0, 50),
+      sideWallets,
+      txCount: txs.length,
+      solBalanceLamports: holdingsRes.nativeBalanceLamports ?? undefined,
+      partial: holdingsRes.failed || txRes.failed,
+      truncated: txRes.truncated,
+      oldestTxMs,
+      oldestSig,
+      winRate,
+      timing: Date.now() - start,
+    },
+    txs,
+    nextBefore: txRes.nextBefore,
   };
 }

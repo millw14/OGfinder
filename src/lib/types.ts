@@ -193,6 +193,12 @@ export interface WalletAnalysis {
   truncated?: boolean;
   /** Timestamp (ms) of the oldest analyzed transaction */
   oldestTxMs?: number | null;
+  /** Signature of the oldest analyzed transaction */
+  oldestSig?: string | null;
+  /** Win/loss record over tokens with sells; win = realizedPnlSol > 0 */
+  winRate?: { wins: number; losses: number; pct: number };
+  /** True when older history exists and a deep-scan cursor is available */
+  canDeepen?: boolean;
   timing: number;
 }
 
@@ -214,6 +220,19 @@ export interface TokenPnlEntry {
   realizedPnlSol: number;
   currentValueSol: number;
   unrealizedPnlSol: number;
+  /** Token quantity bought/sold in UI units (0 = quantity unknown) */
+  qtyBought: number;
+  qtySold: number;
+  /** Weighted-average cost in SOL per token; null when quantities unknown */
+  avgCostSol: number | null;
+  /** Quantity still held per the analyzed window (bought - sold, floored at 0) */
+  remainingQty: number;
+  /** Cost basis of the remaining quantity, in SOL */
+  remainingBasisSol: number;
+  /** Includes USDC/USDT-quoted swaps valued at the current SOL price */
+  approxUsd?: true;
+  /** Sold more than bought in the analyzed window — cost basis incomplete */
+  basisIncomplete?: true;
   firstBuyMs: number;
   lastActivityMs: number;
   holdTimeMs: number;
