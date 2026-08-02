@@ -14,6 +14,7 @@ import {
   ScannedMintBadge,
   BurnedBadge,
   ExactNameBadge,
+  RiskChips,
 } from "./Badge";
 
 /** Hover copy for the rank-gated OG labels (creation ranking, rank 1 only). */
@@ -139,6 +140,11 @@ export function TokenCard({ token }: { token: TokenResult }) {
             {token.exactMatch && token.rank !== 1 && <ExactNameBadge />}
             {token.supplyZero && <BurnedBadge />}
             <PlatformBadge dexId={token.dexId} mint={token.mint} />
+            <RiskChips
+              mintAuthorityActive={token.mintAuthorityActive}
+              freezeAuthorityActive={token.freezeAuthorityActive}
+              metadataMutable={token.metadataMutable}
+            />
           </div>
 
           {/* Row 2: Date + mint */}

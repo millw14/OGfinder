@@ -29,6 +29,12 @@ export interface HeliusSlotData {
   heliusSymbol: string | null;
   tokenInterface: string | null;
   supply: number | null;
+  /** DAS token_info.mint_authority present — supply can be inflated. Absent = unknown. */
+  mintAuthorityActive?: boolean;
+  /** DAS token_info.freeze_authority present — accounts can be frozen. Absent = unknown. */
+  freezeAuthorityActive?: boolean;
+  /** DAS top-level `mutable` — metadata (name/image) can still change. Absent = unknown. */
+  metadataMutable?: boolean;
 }
 
 export interface TokenResult {
@@ -70,6 +76,12 @@ export interface TokenResult {
   pendingAge?: true;
   /** Name+symbol exactly match the search query (informational — no OG implication) */
   exactMatch?: true;
+  /** True = mint authority active (supply inflatable); false = revoked; absent = unknown */
+  mintAuthorityActive?: boolean;
+  /** True = freeze authority active (accounts freezable); false = revoked; absent = unknown */
+  freezeAuthorityActive?: boolean;
+  /** True = metadata mutable (name/image can change); false = immutable; absent = unknown */
+  metadataMutable?: boolean;
 }
 
 export interface SearchResponse {

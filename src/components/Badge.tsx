@@ -110,6 +110,80 @@ export function ScannedMintBadge() {
   );
 }
 
+/**
+ * Rug-risk chips from Helius DAS data. Chips render only when a risk is
+ * explicitly PRESENT (true); undefined = unknown renders nothing — never a
+ * false sense of safety. When all three are explicitly false, one emerald
+ * "renounced" chip renders instead.
+ */
+export function RiskChips({
+  mintAuthorityActive,
+  freezeAuthorityActive,
+  metadataMutable,
+  size = "sm",
+}: {
+  mintAuthorityActive?: boolean;
+  freezeAuthorityActive?: boolean;
+  metadataMutable?: boolean;
+  size?: "sm" | "md";
+}) {
+  const base =
+    size === "md"
+      ? "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium ring-1"
+      : "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1";
+
+  const renounced =
+    mintAuthorityActive === false &&
+    freezeAuthorityActive === false &&
+    metadataMutable === false;
+
+  if (renounced) {
+    return (
+      <span
+        className={`${base} bg-emerald-950/60 text-emerald-400 ring-emerald-800/50`}
+        title="Mint & freeze revoked, metadata immutable"
+      >
+        renounced
+      </span>
+    );
+  }
+
+  const hasRisk =
+    mintAuthorityActive === true ||
+    freezeAuthorityActive === true ||
+    metadataMutable === true;
+  if (!hasRisk) return null;
+
+  return (
+    <>
+      {mintAuthorityActive === true && (
+        <span
+          className={`${base} bg-red-950/60 text-red-400 ring-red-800/50`}
+          title="Mint authority active — supply can be inflated"
+        >
+          mint auth
+        </span>
+      )}
+      {freezeAuthorityActive === true && (
+        <span
+          className={`${base} bg-red-950/60 text-red-400 ring-red-800/50`}
+          title="Freeze authority active — accounts can be frozen"
+        >
+          freeze
+        </span>
+      )}
+      {metadataMutable === true && (
+        <span
+          className={`${base} bg-amber-950/60 text-amber-400 ring-amber-800/50`}
+          title="Metadata is mutable — name/image can change"
+        >
+          mutable
+        </span>
+      )}
+    </>
+  );
+}
+
 export function BurnedBadge() {
   return (
     <span

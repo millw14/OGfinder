@@ -5,6 +5,7 @@ import { TokenResult, ScanSummary } from "@/lib/types";
 import { formatDate, timeAgo } from "@/lib/format";
 import { encodeSharePayload, SharePayload } from "@/lib/share";
 import { LottieHover } from "./LottieHover";
+import { RiskChips } from "./Badge";
 import crownOg from "@/assets/lottie/crown-og.json";
 
 function truncateMint(mint: string): string {
@@ -258,6 +259,14 @@ export function ScanHero({
             <span className="text-xs font-semibold text-gray-500">
               ${symbol}
             </span>
+          )}
+          {scanned && (
+            <RiskChips
+              mintAuthorityActive={scanned.mintAuthorityActive}
+              freezeAuthorityActive={scanned.freezeAuthorityActive}
+              metadataMutable={scanned.metadataMutable}
+              size="md"
+            />
           )}
           <span className="text-gray-700">·</span>
           <span className="text-xs text-gray-400">

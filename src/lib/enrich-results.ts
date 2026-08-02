@@ -172,6 +172,16 @@ export async function buildTokenResults(
       ...(c.isScannedMint ? { isScanned: true } : {}),
       ...(c.supplyZero ? { supplyZero: true } : {}),
       ...(createdAtIsLowerBound ? { createdAtIsLowerBound: true } : {}),
+      // Rug-risk signals from DAS — omitted when unknown (old cache entries / no DAS record)
+      ...(c.h?.mintAuthorityActive !== undefined
+        ? { mintAuthorityActive: c.h.mintAuthorityActive }
+        : {}),
+      ...(c.h?.freezeAuthorityActive !== undefined
+        ? { freezeAuthorityActive: c.h.freezeAuthorityActive }
+        : {}),
+      ...(c.h?.metadataMutable !== undefined
+        ? { metadataMutable: c.h.metadataMutable }
+        : {}),
       // sortByCreationTime sends null createdAtMs to the bottom — no extra sort.
       ...(skipSignatureScan && createdAtMs == null
         ? { pendingAge: true as const }

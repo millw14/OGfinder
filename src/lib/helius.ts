@@ -53,12 +53,17 @@ interface HeliusAsset {
   };
   token_info?: {
     supply?: number;
+    /** Base58 authority when active; key omitted by DAS when revoked. */
+    mint_authority?: string | null;
+    freeze_authority?: string | null;
   };
   supply?: {
     print_current_supply?: number;
   };
   slot?: number;
   created_at?: string;
+  /** Metaplex metadata mutability — always a boolean on DAS assets. */
+  mutable?: boolean;
 }
 
 interface SignatureResult {
@@ -116,6 +121,16 @@ export async function getAssetBatch(
         heliusSymbol: asset.content?.metadata?.symbol ?? null,
         tokenInterface: asset.interface ?? null,
         supply,
+        // Rug-risk signals — only when DAS actually reported them (undefined = unknown)
+        ...(asset.token_info
+          ? {
+              mintAuthorityActive: asset.token_info.mint_authority != null,
+              freezeAuthorityActive: asset.token_info.freeze_authority != null,
+            }
+          : {}),
+        ...(typeof asset.mutable === "boolean"
+          ? { metadataMutable: asset.mutable }
+          : {}),
       };
 
       result.set(asset.id, data);
@@ -142,7 +157,15 @@ function parseMintFromGetAccountResponse(response: unknown): HeliusSlotData | nu
         owner?: string;
         data?: {
           program?: string;
-          parsed?: { type?: string; info?: { supply?: string } };
+          parsed?: {
+            type?: string;
+            info?: {
+              supply?: string;
+              /** Base58 when active; omitted/null when revoked (COption::None). */
+              mintAuthority?: string | null;
+              freezeAuthority?: string | null;
+            };
+          };
         };
       };
     };
@@ -172,6 +195,13 @@ function parseMintFromGetAccountResponse(response: unknown): HeliusSlotData | nu
     heliusSymbol: null,
     tokenInterface: "FungibleToken",
     supply: Number.isFinite(supply) ? supply : null,
+    // jsonParsed mint account carries authorities; metadata mutability stays unknown here
+    ...(parsed.info
+      ? {
+          mintAuthorityActive: parsed.info.mintAuthority != null,
+          freezeAuthorityActive: parsed.info.freezeAuthority != null,
+        }
+      : {}),
   };
 }
 
