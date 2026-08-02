@@ -1,5 +1,7 @@
 "use client";
 
+import { useState, useRef, useEffect } from "react";
+import Link from "next/link";
 import { WalletAnalysis } from "@/lib/types";
 
 function formatHoldTime(ms: number): string {
@@ -29,6 +31,55 @@ function PnlColor({ value }: { value: number }) {
     value > 0 ? "text-emerald-400" : value < 0 ? "text-red-400" : "text-gray-400";
   const sign = value > 0 ? "+" : "";
   return <span className={cls}>{sign}{formatSol(value)} SOL</span>;
+}
+
+/** Compact per-row copy-mint button (same timer-in-ref pattern as TokenCard). */
+function CopyMintButton({ mint }: { mint: string }) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  const copy = async () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    try {
+      await navigator.clipboard.writeText(mint);
+      setCopied(true);
+      timerRef.current = setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard blocked — nothing to show */
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      title={copied ? "Copied" : `Copy ${mint}`}
+      className={`rounded-md border border-gray-700/50 bg-gray-800/50 px-1.5 py-0.5 font-mono text-[10px] transition-colors hover:border-gray-600 hover:bg-gray-800/80 ${
+        copied ? "text-emerald-400" : "text-gray-500 hover:text-gray-300"
+      }`}
+    >
+      {copied ? "Copied" : "CA"}
+    </button>
+  );
+}
+
+/** Links a wallet-row token to the OG finder scan for its mint. */
+function CheckOGLink({ mint }: { mint: string }) {
+  return (
+    <Link
+      href={`/?q=${encodeURIComponent(mint)}`}
+      title="Is this the original token?"
+      className="whitespace-nowrap rounded-md border border-amber-700/30 bg-amber-950/30 px-1.5 py-0.5 text-[10px] font-semibold text-amber-500/90 transition-colors hover:border-amber-600/50 hover:bg-amber-950/50 hover:text-amber-400"
+    >
+      Check OG
+    </Link>
+  );
 }
 
 export function WalletView({ data }: { data: WalletAnalysis }) {
@@ -130,12 +181,16 @@ export function WalletView({ data }: { data: WalletAnalysis }) {
                       className="border-b border-gray-800/20 hover:bg-gray-800/20"
                     >
                       <td className="px-3 py-2">
-                        <span className="font-medium text-gray-200">
-                          {t.symbol}
-                        </span>
-                        <span className="ml-1.5 text-xs text-gray-500">
-                          {t.name !== t.symbol ? t.name : ""}
-                        </span>
+                        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                          <span className="font-medium text-gray-200">
+                            {t.symbol}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            {t.name !== t.symbol ? t.name : ""}
+                          </span>
+                          <CheckOGLink mint={t.mint} />
+                          <CopyMintButton mint={t.mint} />
+                        </div>
                       </td>
                       <td className="px-3 py-2 text-right text-gray-400">
                         {formatSol(t.totalBoughtSol)}
@@ -180,12 +235,16 @@ export function WalletView({ data }: { data: WalletAnalysis }) {
                     className="border-b border-gray-800/20 hover:bg-gray-800/20"
                   >
                     <td className="px-3 py-2">
-                      <span className="font-medium text-gray-200">
-                        {h.symbol}
-                      </span>
-                      <span className="ml-1.5 text-xs text-gray-500">
-                        {h.name !== h.symbol ? h.name : ""}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                        <span className="font-medium text-gray-200">
+                          {h.symbol}
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          {h.name !== h.symbol ? h.name : ""}
+                        </span>
+                        <CheckOGLink mint={h.mint} />
+                        <CopyMintButton mint={h.mint} />
+                      </div>
                     </td>
                     <td className="px-3 py-2 text-right text-gray-400">
                       {h.amount >= 1
@@ -219,17 +278,12 @@ export function WalletView({ data }: { data: WalletAnalysis }) {
             {data.sideWallets.map((sw) => (
               <div
                 key={sw.address}
-                className="flex items-center justify-between rounded-lg border border-gray-800/40 bg-gray-900/30 px-3 py-2"
+                className="flex items-center justify-between gap-3 rounded-lg border border-gray-800/40 bg-gray-900/30 px-3 py-2"
               >
                 <div className="min-w-0 flex-1">
-                  <a
-                    href={`https://solscan.io/account/${sw.address}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-mono text-sm text-cyan-400 hover:text-cyan-300"
-                  >
+                  <p className="font-mono text-sm text-gray-300">
                     {truncAddr(sw.address)}
-                  </a>
+                  </p>
                   <p className="text-xs text-gray-500">
                     {sw.interactionCount} interactions
                     {sw.direction === "both"
@@ -239,8 +293,25 @@ export function WalletView({ data }: { data: WalletAnalysis }) {
                         : " (received)"}
                   </p>
                 </div>
-                <div className="text-right text-sm text-gray-400">
-                  {formatSol(sw.totalSolTransferred)} SOL
+                <div className="flex flex-shrink-0 items-center gap-2">
+                  <span className="text-sm text-gray-400">
+                    {formatSol(sw.totalSolTransferred)} SOL
+                  </span>
+                  <Link
+                    href={`/wallet?address=${encodeURIComponent(sw.address)}`}
+                    title="Scan this wallet"
+                    className="rounded-lg bg-cyan-600/20 px-2.5 py-1 text-[11px] font-semibold text-cyan-400 ring-1 ring-cyan-600/30 transition-colors hover:bg-cyan-600/30 hover:text-cyan-300"
+                  >
+                    Scan
+                  </Link>
+                  <a
+                    href={`https://solscan.io/account/${sw.address}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded-lg bg-gray-800/70 px-2.5 py-1 text-[11px] font-medium text-gray-400 transition-colors hover:bg-gray-700 hover:text-gray-100"
+                  >
+                    Solscan
+                  </a>
                 </div>
               </div>
             ))}

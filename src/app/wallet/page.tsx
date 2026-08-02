@@ -12,7 +12,7 @@ import { WalletAnalysis, WalletResponse } from "@/lib/types";
 import { NavTabs } from "@/components/NavTabs";
 import { WalletView } from "@/components/WalletView";
 import { isLikelyMintAddress } from "@/lib/solana";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 const RECENT_KEY = "ogfinder_wallets";
 const MAX_RECENT = 6;
@@ -60,6 +60,7 @@ export default function WalletPage() {
 }
 
 function WalletPageInner() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [address, setAddress] = useState("");
   const [data, setData] = useState<WalletAnalysis | null>(null);
@@ -68,11 +69,15 @@ function WalletPageInner() {
   const [recentWallets, setRecentWallets] = useState<string[]>([]);
   const requestIdRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
+  // Last address handed to scanWallet — lets the ?address= effect skip the
+  // re-fire caused by our own router.replace after a successful scan.
+  const lastScannedRef = useRef<string | null>(null);
 
   const scanWallet = useCallback(async (addr: string) => {
     const trimmed = addr.trim();
     if (!trimmed) return;
     setAddress(trimmed);
+    lastScannedRef.current = trimmed;
 
     if (!isLikelyMintAddress(trimmed)) {
       setError("Invalid Solana wallet address");
@@ -108,6 +113,10 @@ function WalletPageInner() {
         setData(json.data);
         addRecentWallet(trimmed);
         setRecentWallets(getRecentWallets());
+        // Keep the URL shareable: it always reflects the scanned wallet.
+        router.replace(`/wallet?address=${encodeURIComponent(trimmed)}`, {
+          scroll: false,
+        });
       }
     } catch {
       if (reqId !== requestIdRef.current) return; // aborted by a newer scan
@@ -115,12 +124,14 @@ function WalletPageInner() {
     } finally {
       if (reqId === requestIdRef.current) setIsLoading(false);
     }
-  }, []);
+  }, [router]);
 
+  // Auto-scan from ?address= deep links (and side-wallet Scan navigations),
+  // but never re-scan the address we just scanned ourselves.
   useEffect(() => {
     setRecentWallets(getRecentWallets());
-    const addrParam = searchParams.get("address");
-    if (addrParam) {
+    const addrParam = searchParams.get("address")?.trim();
+    if (addrParam && addrParam !== lastScannedRef.current) {
       setAddress(addrParam);
       scanWallet(addrParam);
     }
