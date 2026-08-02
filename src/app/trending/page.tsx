@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { NavTabs } from "@/components/NavTabs";
+import { SiteFooter } from "@/components/SiteFooter";
 import { TrendingClusters } from "@/components/TrendingClusters";
 import { getTrendingClusters } from "@/lib/trending";
 
@@ -17,19 +18,16 @@ export default async function TrendingPage() {
 
   return (
     <div className="relative flex min-h-screen flex-col">
-      <div
-        className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_90%_60%_at_50%_-15%,rgba(251,191,36,0.09),transparent_55%)]"
-        aria-hidden
-      />
+      <div className="page-ambient pointer-events-none fixed inset-0" aria-hidden />
 
       <NavTabs />
 
-      <main className="relative mx-auto w-full max-w-2xl flex-1 px-4 pb-12 pt-4 sm:pt-8">
+      <main className="relative mx-auto w-full max-w-3xl flex-1 px-4 pb-12 pt-8 sm:pt-12">
         <div className="mb-6 text-center">
-          <h1 className="text-3xl font-black tracking-tight text-gray-100 sm:text-4xl">
+          <h1 className="font-display text-3xl font-bold tracking-tight text-fg sm:text-4xl">
             Trending Clusters
           </h1>
-          <p className="mt-2 text-sm text-gray-500">
+          <p className="mt-2 text-sm text-fg-3">
             Names being launched over and over right now — clustered from the
             discovery firehose by lookalike-folded name
           </p>
@@ -37,6 +35,8 @@ export default async function TrendingPage() {
 
         <TrendingClusters initial={initial} />
       </main>
+
+      <SiteFooter />
     </div>
   );
 }

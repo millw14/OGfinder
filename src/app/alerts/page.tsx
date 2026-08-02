@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { NavTabs } from "@/components/NavTabs";
+import { SiteFooter } from "@/components/SiteFooter";
 import { timeAgo, formatDate } from "@/lib/format";
 import {
   StoredWatch,
@@ -35,7 +36,7 @@ export default function AlertsPage() {
     <Suspense
       fallback={
         <div className="flex min-h-screen items-center justify-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-700 border-t-amber-500" />
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-line-str border-t-og" />
         </div>
       }
     >
@@ -107,19 +108,16 @@ function AlertsPageInner() {
 
   return (
     <div className="relative flex min-h-screen flex-col">
-      <div
-        className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_90%_60%_at_50%_-15%,rgba(251,191,36,0.09),transparent_55%)]"
-        aria-hidden
-      />
+      <div className="page-ambient pointer-events-none fixed inset-0" aria-hidden />
 
       <NavTabs />
 
-      <main className="relative mx-auto w-full max-w-2xl flex-1 px-4 pb-12 pt-4 sm:pt-8">
+      <main className="relative mx-auto w-full max-w-3xl flex-1 px-4 pb-12 pt-8 sm:pt-12">
         <div className="mb-8 text-center">
-          <h1 className="text-3xl font-black tracking-tight text-gray-100 sm:text-4xl">
+          <h1 className="font-display text-3xl font-bold tracking-tight text-fg sm:text-4xl">
             Watches &amp; Alerts
           </h1>
-          <p className="mt-2 text-sm text-gray-500">
+          <p className="mt-2 text-sm text-fg-3">
             New tokens launching with a name you watch show up here — stored in
             this browser only, no account needed
           </p>
@@ -271,6 +269,8 @@ function AlertsPageInner() {
           </div>
         )}
       </main>
+
+      <SiteFooter />
     </div>
   );
 }

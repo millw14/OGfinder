@@ -12,15 +12,24 @@ const REPEAT_MS = 4000;
 
 type Props = {
   className?: string;
+  /** Rendered size of each letter in px. Defaults to the hero size. */
+  size?: number;
+  /** Loop the draw-on every {@link REPEAT_MS}. Off for the header lockup —
+   *  it draws once on mount and then only replays on hover. */
+  autoReplay?: boolean;
 };
 
 /**
- * Wired-style animated “O” + “G” for the hero wordmark.
+ * Wired-style animated “O” + “G” for the OGfinder wordmark.
  * Replays in sync every {@link REPEAT_MS}; hover also replays.
  * With prefers-reduced-motion the letters park fully drawn instead
  * (frame 0 of a draw-on Lottie is blank — the wordmark must stay visible).
  */
-export function OGLogo({ className }: Props) {
+export function OGLogo({
+  className,
+  size = LETTER_SIZE,
+  autoReplay = true,
+}: Props) {
   const refO = useRef<LottieRefCurrentProps>(null);
   const refG = useRef<LottieRefCurrentProps>(null);
   const reduced = usePrefersReducedMotion();
@@ -50,9 +59,10 @@ export function OGLogo({ className }: Props) {
       return;
     }
     playBoth();
+    if (!autoReplay) return;
     const id = setInterval(playBoth, REPEAT_MS);
     return () => clearInterval(id);
-  }, [playBoth, parkAtEnd, reduced]);
+  }, [playBoth, parkAtEnd, reduced, autoReplay]);
 
   return (
     <span
@@ -68,11 +78,18 @@ export function OGLogo({ className }: Props) {
           animationData={letterO}
           loop={false}
           autoplay={false}
-          style={{ width: LETTER_SIZE, height: LETTER_SIZE }}
+          style={{ width: size, height: size }}
         />
       </span>
       <span
-        className="og-logo-lottie -ml-1 inline-flex cursor-default items-center justify-center sm:-ml-1.5"
+        className={`og-logo-lottie inline-flex cursor-default items-center justify-center ${
+          size === LETTER_SIZE ? "-ml-1 sm:-ml-1.5" : ""
+        }`}
+        style={
+          size === LETTER_SIZE
+            ? undefined
+            : { marginLeft: -Math.round(size * 0.0625) }
+        }
         onMouseEnter={playBoth}
         aria-hidden
       >
@@ -81,7 +98,7 @@ export function OGLogo({ className }: Props) {
           animationData={letterG}
           loop={false}
           autoplay={false}
-          style={{ width: LETTER_SIZE, height: LETTER_SIZE }}
+          style={{ width: size, height: size }}
         />
       </span>
     </span>

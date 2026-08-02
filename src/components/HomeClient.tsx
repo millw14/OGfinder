@@ -19,6 +19,7 @@ import { SearchBar } from "@/components/SearchBar";
 import { Results } from "@/components/Results";
 import { ComparisonCard } from "@/components/ComparisonCard";
 import { NavTabs } from "@/components/NavTabs";
+import { SiteFooter } from "@/components/SiteFooter";
 
 /** Client-only: Lottie + canvas; avoids flaky dev SSR chunk splits (missing ./276.js). */
 const OGLogo = dynamic(
@@ -29,18 +30,10 @@ const OGLogo = dynamic(
     loading: () => (
       <span
         aria-hidden
-        className="inline-flex h-16 w-[8.75rem] shrink-0 items-center justify-center rounded-xl bg-gray-800/25 sm:h-[4.25rem] sm:w-[9.25rem]"
+        className="inline-flex h-16 w-[8.75rem] shrink-0 items-center justify-center rounded-xl bg-surface-2/60 sm:h-[4.25rem] sm:w-[9.25rem]"
       />
     ),
   }
-);
-
-const SocialXLink = dynamic(
-  () =>
-    import("@/components/SocialXLink").then((m) => ({
-      default: m.SocialXLink,
-    })),
-  { ssr: false }
 );
 
 const RECENT_KEY = "ogfinder_recent";
@@ -77,7 +70,7 @@ export function HomeClient() {
     <Suspense
       fallback={
         <div className="flex min-h-screen items-center justify-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-700 border-t-amber-500" />
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-line-str border-t-og" />
         </div>
       }
     >
@@ -296,17 +289,10 @@ function HomeInner() {
 
   return (
     <div className="relative flex min-h-screen flex-col">
-      <div
-        className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_90%_60%_at_50%_-15%,rgba(251,191,36,0.09),transparent_55%)]"
-        aria-hidden
-      />
-      <div
-        className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_60%_40%_at_100%_50%,rgba(6,182,212,0.05),transparent_50%)]"
-        aria-hidden
-      />
+      <div className="page-ambient pointer-events-none fixed inset-0" aria-hidden />
 
       <NavTabs />
-      <main className="relative mx-auto w-full max-w-2xl flex-1 px-4 pb-12 pt-4 sm:pt-8">
+      <main className="relative mx-auto w-full max-w-3xl flex-1 px-4 pb-12 pt-8 sm:pt-12">
         <div className="mb-10 text-center sm:mb-12">
           <h1 className="flex flex-wrap items-center justify-center gap-0 text-5xl font-black tracking-tight sm:text-6xl">
             <span className="sr-only">OGfinder</span>
@@ -315,18 +301,19 @@ function HomeInner() {
               className="flex flex-wrap items-center justify-center gap-0"
             >
               <OGLogo className="sm:scale-105" />
-              <span className="text-gray-100">finder</span>
+              <span className="font-display text-fg">finder</span>
             </span>
           </h1>
-          <p className="mt-3 max-w-md mx-auto text-sm text-gray-500 sm:text-base">
+          <p className="mt-3 max-w-md mx-auto text-sm text-fg-3 sm:text-base">
             Find the original Solana token by name — or paste a mint to see if
             yours is the oldest.
           </p>
         </div>
 
-        {/* Mobile: search stays reachable while scrolling results (bg matches
-            the #0a0a0f body so content scrolls under it cleanly). */}
-        <div className="sticky top-0 z-30 -mx-4 bg-[#0a0a0f]/85 px-4 py-2 backdrop-blur-md sm:static sm:z-auto sm:m-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-0">
+        {/* Mobile: search stays reachable while scrolling results — it parks
+            just below the 56px app header (bg matches the body so content
+            scrolls under it cleanly). */}
+        <div className="sticky top-14 z-30 -mx-4 bg-bg/85 px-4 py-2 backdrop-blur-md sm:static sm:z-auto sm:m-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-0">
           <SearchBar onSearch={handleSearch} isLoading={isLoading} />
         </div>
 
@@ -371,40 +358,7 @@ function HomeInner() {
         </div>
       </main>
 
-      <footer className="relative border-t border-gray-800/40 py-6">
-        <div className="mx-auto flex max-w-2xl flex-col items-center gap-4 px-4">
-          <SocialXLink />
-          <p className="text-center text-[11px] leading-relaxed text-gray-600">
-            OGfinder — powered by{" "}
-            <a
-              href="https://helius.dev"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-gray-500 transition-colors hover:text-gray-300"
-            >
-              Helius
-            </a>
-            {" · "}
-            <a
-              href="https://dexscreener.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-gray-500 transition-colors hover:text-gray-300"
-            >
-              DexScreener
-            </a>
-            {" · "}
-            <a
-              href="https://jup.ag"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-gray-500 transition-colors hover:text-gray-300"
-            >
-              Jupiter
-            </a>
-          </p>
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }

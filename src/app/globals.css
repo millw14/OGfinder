@@ -2,22 +2,49 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ==========================================================================
+   OGfinder — "Obsidian & Gold"
+   Tokens live in tailwind.config.ts. This file owns base resets, the ambient
+   page background, and the few signature treatments that mean something:
+   .og-glow (OG / rank-1 only) and .scan-ring (the user's own scanned token).
+   ========================================================================== */
+
 @layer base {
   * {
     box-sizing: border-box;
   }
 
+  html {
+    color-scheme: dark;
+  }
+
   body {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Numbers read as data everywhere they appear. */
+  .font-mono,
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
   }
 
   ::selection {
-    background-color: rgba(234, 179, 8, 0.3);
+    background-color: rgba(240, 180, 41, 0.28);
+    color: #fff8e6;
+  }
+
+  /* Site-wide focus ring. :where() keeps specificity at 0 so any component
+     can override it with its own focus-visible styling. */
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 2px solid rgba(240, 180, 41, 0.4);
+    outline-offset: 2px;
   }
 
   ::-webkit-scrollbar {
-    width: 6px;
+    width: 8px;
+    height: 8px;
   }
 
   ::-webkit-scrollbar-track {
@@ -25,25 +52,72 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: rgb(55, 65, 81);
-    border-radius: 3px;
+    background: #1c1c26;
+    border-radius: 999px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: rgb(75, 85, 99);
+    background: rgba(255, 255, 255, 0.13);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #1c1c26 transparent;
   }
 }
 
 @layer components {
-  .og-glow {
-    box-shadow: 0 0 20px rgba(234, 179, 8, 0.08), 0 0 60px rgba(234, 179, 8, 0.04);
+  /* Explicit focus ring for elements that suppress the base outline. */
+  .focus-ring:focus-visible {
+    outline: 2px solid rgba(240, 180, 41, 0.4);
+    outline-offset: 2px;
   }
 
-  /* Hero OG Lottie: force amber stroke (JSON defaults to dark blue) */
+  /* Ambient page wash: ONE gold radial at the top plus a faint grid, both
+     kept far behind the content. Applied to a fixed inset-0 aria-hidden div. */
+  .page-ambient {
+    background-image: radial-gradient(
+      ellipse 90% 55% at 50% -12%,
+      rgba(240, 180, 41, 0.07),
+      transparent 60%
+    );
+  }
+
+  .page-ambient::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(to right, rgba(255, 255, 255, 0.022) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.022) 1px, transparent 1px);
+    background-size: 44px 44px;
+    -webkit-mask-image: radial-gradient(
+      ellipse 75% 45% at 50% 0%,
+      #000,
+      transparent 72%
+    );
+    mask-image: radial-gradient(ellipse 75% 45% at 50% 0%, #000, transparent 72%);
+  }
+
+  /* SIGNATURE — rank-1 / OG surfaces only. */
+  .og-glow {
+    border-color: rgba(240, 180, 41, 0.45);
+    box-shadow:
+      0 0 22px rgba(240, 180, 41, 0.13),
+      0 0 68px rgba(240, 180, 41, 0.06);
+  }
+
+  /* SIGNATURE — the user's own scanned token only. */
+  .scan-ring {
+    border-color: rgba(34, 211, 238, 0.4);
+    box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.12);
+  }
+
+  /* Hero OG Lottie: force gold stroke (JSON defaults to dark blue) */
   .og-logo-lottie svg path,
   .og-logo-lottie svg polyline,
   .og-logo-lottie svg line {
-    stroke: rgb(251 191 36) !important;
+    stroke: #f0b429 !important;
   }
 
   /* OG result badge crown: light stroke + edge so it reads on dark gold */
@@ -58,10 +132,16 @@
   }
 }
 
-/* Outside @layer so it wins over the utilities layer at equal specificity.
-   (.og-glow is a static box-shadow — nothing animated to disable there.) */
+/* Outside @layer so it wins over the utilities layer at equal specificity. */
 @media (prefers-reduced-motion: reduce) {
   .animate-pulse {
     animation: none;
+  }
+
+  /* The rise entrance drives opacity too — park it visible, not at 0. */
+  .animate-rise {
+    animation: none;
+    opacity: 1;
+    transform: none;
   }
 }

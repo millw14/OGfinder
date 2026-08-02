@@ -1,8 +1,27 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"], weight: ["400", "500", "600", "700", "800", "900"] });
+/** Body copy. */
+const inter = Inter({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-sans",
+});
+
+/** Headings, verdicts, numbers-as-statement. */
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-display",
+});
+
+/** Mint addresses, prices, counts. */
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-mono",
+});
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3400";
 
@@ -30,7 +49,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0a0a0f",
+  themeColor: "#07070b",
 };
 
 export default function RootLayout({
@@ -39,10 +58,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body
-        className={`${inter.className} min-h-screen bg-[#0a0a0f] text-gray-100 antialiased`}
-      >
+    <html
+      lang="en"
+      className={`${inter.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable}`}
+    >
+      <body className="min-h-screen bg-bg font-sans text-fg antialiased">
         {children}
       </body>
     </html>
