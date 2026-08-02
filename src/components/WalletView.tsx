@@ -77,6 +77,9 @@ function CopyMintButton({ mint }: { mint: string }) {
         copied ? "text-emerald-400" : "text-gray-500 hover:text-gray-300"
       }`}
     >
+      <span className="sr-only" role="status">
+        {copied ? "Copied" : ""}
+      </span>
       {copied ? "Copied" : "CA"}
     </button>
   );

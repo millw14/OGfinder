@@ -2,6 +2,7 @@
 
 import { useRef, useEffect, useCallback } from "react";
 import Lottie, { LottieRefCurrentProps } from "lottie-react";
+import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 import letterO from "@/assets/lottie/letter-o.json";
 import letterG from "@/assets/lottie/letter-g.json";
 
@@ -16,25 +17,42 @@ type Props = {
 /**
  * Wired-style animated “O” + “G” for the hero wordmark.
  * Replays in sync every {@link REPEAT_MS}; hover also replays.
+ * With prefers-reduced-motion the letters park fully drawn instead
+ * (frame 0 of a draw-on Lottie is blank — the wordmark must stay visible).
  */
 export function OGLogo({ className }: Props) {
   const refO = useRef<LottieRefCurrentProps>(null);
   const refG = useRef<LottieRefCurrentProps>(null);
+  const reduced = usePrefersReducedMotion();
 
   const playBoth = useCallback(() => {
+    if (reduced) return;
     refO.current?.stop();
     refG.current?.stop();
     refO.current?.goToAndStop(0, true);
     refG.current?.goToAndStop(0, true);
     refO.current?.play();
     refG.current?.play();
+  }, [reduced]);
+
+  const parkAtEnd = useCallback(() => {
+    for (const ref of [refO, refG]) {
+      const inst = ref.current;
+      if (!inst) continue;
+      const frames = inst.getDuration(true);
+      inst.goToAndStop(frames != null && frames > 0 ? frames - 1 : 0, true);
+    }
   }, []);
 
   useEffect(() => {
+    if (reduced) {
+      parkAtEnd();
+      return;
+    }
     playBoth();
     const id = setInterval(playBoth, REPEAT_MS);
     return () => clearInterval(id);
-  }, [playBoth]);
+  }, [playBoth, parkAtEnd, reduced]);
 
   return (
     <span

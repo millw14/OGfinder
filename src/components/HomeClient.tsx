@@ -316,7 +316,11 @@ function HomeInner() {
           </p>
         </div>
 
-        <SearchBar onSearch={handleSearch} isLoading={isLoading} />
+        {/* Mobile: search stays reachable while scrolling results (bg matches
+            the #0a0a0f body so content scrolls under it cleanly). */}
+        <div className="sticky top-0 z-30 -mx-4 bg-[#0a0a0f]/85 px-4 py-2 backdrop-blur-md sm:static sm:z-auto sm:m-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-0">
+          <SearchBar onSearch={handleSearch} isLoading={isLoading} />
+        </div>
 
         {!hasSearched && recentSearches.length > 0 && (
           <div className="mt-8 text-center">

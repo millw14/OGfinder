@@ -65,14 +65,35 @@ export function TokenCard({ token }: { token: TokenResult }) {
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const [logoFailed, setLogoFailed] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const copyLottieRef = useRef<LottieRefCurrentProps>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     return () => {
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
     };
   }, []);
+
+  // Mobile overflow menu: close on Escape and on any press outside it.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [menuOpen]);
 
   const copyMint = async () => {
     if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
@@ -234,6 +255,9 @@ export function TokenCard({ token }: { token: TokenResult }) {
                     : `Copy ${token.mint}`
               }
             >
+              <span className="sr-only" role="status">
+                {copied ? "Copied" : copyFailed ? "Copy failed" : ""}
+              </span>
               <span>{truncateMint(token.mint)}</span>
               {copied ? (
                 <span className="text-[10px] font-medium text-emerald-400">
@@ -302,7 +326,7 @@ export function TokenCard({ token }: { token: TokenResult }) {
               )}
             </div>
 
-            <div className="flex flex-wrap items-center gap-1.5 sm:ml-auto">
+            <div className="hidden flex-wrap items-center gap-1.5 sm:ml-auto sm:flex">
               <a
                 href={`https://trade.padre.gg/trade/solana/${token.mint}`}
                 target="_blank"
@@ -346,6 +370,77 @@ export function TokenCard({ token }: { token: TokenResult }) {
               >
                 DEX
               </a>
+            </div>
+
+            {/* Mobile: primary Trade link + "•••" overflow menu (44px targets). */}
+            <div ref={menuRef} className="relative flex items-center gap-1.5 sm:hidden">
+              <a
+                href={`https://trade.padre.gg/trade/solana/${token.mint}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Trade on Padre Terminal"
+                className="group inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-emerald-400/25 bg-emerald-950/35 px-3 shadow-sm shadow-emerald-950/20 transition-all hover:border-emerald-400/45 hover:bg-emerald-950/55 hover:shadow-emerald-900/30"
+              >
+                <Image
+                  src="/padre.png"
+                  alt=""
+                  width={88}
+                  height={18}
+                  className="h-[18px] w-auto max-w-[5.75rem] object-contain object-left opacity-[0.92] transition-opacity group-hover:opacity-100"
+                />
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-400/90">
+                  Trade
+                </span>
+                <span className="sr-only">Open Padre Terminal for this token</span>
+              </a>
+              <button
+                type="button"
+                onClick={() => setMenuOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                aria-label="More explorer links"
+                className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-gray-800/70 text-sm font-bold text-gray-400 transition-colors hover:bg-gray-700 hover:text-gray-100"
+              >
+                •••
+              </button>
+              {menuOpen && (
+                <div
+                  role="menu"
+                  aria-label="Explorer links"
+                  className="absolute right-0 top-full z-20 mt-1.5 w-44 overflow-hidden rounded-xl border border-gray-700/80 bg-gray-900 shadow-xl shadow-black/50"
+                >
+                  <a
+                    role="menuitem"
+                    href={`https://solscan.io/token/${token.mint}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => setMenuOpen(false)}
+                    className="flex min-h-[44px] items-center px-4 text-sm font-medium text-gray-300 transition-colors hover:bg-gray-800 hover:text-gray-100"
+                  >
+                    Solscan
+                  </a>
+                  <a
+                    role="menuitem"
+                    href={`https://birdeye.so/token/${token.mint}?chain=solana`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => setMenuOpen(false)}
+                    className="flex min-h-[44px] items-center px-4 text-sm font-medium text-gray-300 transition-colors hover:bg-gray-800 hover:text-gray-100"
+                  >
+                    Birdeye
+                  </a>
+                  <a
+                    role="menuitem"
+                    href={`https://dexscreener.com/solana/${token.mint}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => setMenuOpen(false)}
+                    className="flex min-h-[44px] items-center px-4 text-sm font-medium text-gray-300 transition-colors hover:bg-gray-800 hover:text-gray-100"
+                  >
+                    DEX
+                  </a>
+                </div>
+              )}
             </div>
           </div>
         </div>

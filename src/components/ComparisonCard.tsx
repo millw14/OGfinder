@@ -298,6 +298,9 @@ export function ComparisonCard({ state }: { state: CompareState }) {
                   : "border-gray-700/80 bg-gray-900/60 text-gray-300 hover:border-gray-600 hover:bg-gray-800/70"
             }`}
           >
+            <span className="sr-only" role="status">
+              {copied ? "Link copied" : copyFailed ? "Copy failed" : ""}
+            </span>
             {copied
               ? "Link copied"
               : copyFailed

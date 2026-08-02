@@ -97,6 +97,9 @@ function CopyLinkButton({ query }: { query: string }) {
             : "border-gray-700/60 bg-gray-900/50 text-gray-500 hover:border-gray-600 hover:text-gray-300"
       }`}
     >
+      <span className="sr-only" role="status">
+        {copied ? "Copied" : failed ? "Copy failed" : ""}
+      </span>
       {copied ? "Copied" : failed ? "Copy failed" : "Copy link"}
     </button>
   );
@@ -276,6 +279,7 @@ export function Results({
                 key={id}
                 type="button"
                 disabled={empty}
+                aria-pressed={on}
                 onClick={() => toggleBucket(id)}
                 className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
                   empty
@@ -311,7 +315,10 @@ export function Results({
       </div>
 
       {degraded && degraded.length > 0 && (
-        <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-400/90">
+        <div
+          role="status"
+          className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-400/90"
+        >
           {degraded
             .map((p) => PROVIDER_LABELS[p] ?? p)
             .join(", ")}{" "}
@@ -320,7 +327,11 @@ export function Results({
         </div>
       )}
 
-      <div className="mb-3 flex items-center justify-between px-1 text-xs text-gray-500">
+      <div
+        role="status"
+        aria-live="polite"
+        className="mb-3 flex items-center justify-between px-1 text-xs text-gray-500"
+      >
         <span>
           {filtersActive ? (
             <>

@@ -57,3 +57,11 @@
     stroke: rgb(254 249 195) !important;
   }
 }
+
+/* Outside @layer so it wins over the utilities layer at equal specificity.
+   (.og-glow is a static box-shadow — nothing animated to disable there.) */
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse {
+    animation: none;
+  }
+}
