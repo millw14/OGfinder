@@ -75,6 +75,7 @@ export function WatchButton({ query, kind, originMint }: WatchButtonProps) {
       const data = (await res.json().catch(() => null)) as {
         id?: number;
         secret?: string;
+        telegramLinkUrl?: string | null;
         error?: string;
       } | null;
       if (!res.ok || typeof data?.id !== "number" || !data?.secret) {
@@ -95,6 +96,9 @@ export function WatchButton({ query, kind, originMint }: WatchButtonProps) {
         query,
         kind,
         createdAt: Date.now(),
+        ...(typeof data.telegramLinkUrl === "string"
+          ? { telegramLinkUrl: data.telegramLinkUrl }
+          : {}),
       };
       addStoredWatch(stored);
       setWatching(stored);

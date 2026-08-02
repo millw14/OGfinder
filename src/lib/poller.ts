@@ -22,6 +22,10 @@ import {
 } from "./discovery";
 import { dexPairCreatedMs } from "./normalize";
 import { matchDiscoveriesAgainstWatches } from "./watches";
+import {
+  processTelegramUpdates,
+  sendPendingTelegramAlerts,
+} from "./telegram";
 
 const POLL_INTERVAL_MS = 30_000;
 const GECKO_TIMEOUT = 10_000;
@@ -363,6 +367,18 @@ async function tick(): Promise<void> {
     }
     maintenanceTick();
     processDiscoveries(discoveries);
+    // Telegram link/unlink commands + pending alert delivery — both no-op
+    // without TELEGRAM_BOT_TOKEN and swallow their own failures.
+    try {
+      await processTelegramUpdates();
+    } catch {
+      /* telegram is best-effort */
+    }
+    try {
+      await sendPendingTelegramAlerts();
+    } catch {
+      /* telegram is best-effort */
+    }
     if (isDev) {
       const count = (i: number): number => {
         const r = results[i];

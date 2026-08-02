@@ -14,6 +14,8 @@ export interface StoredWatch {
   query: string;
   kind: WatchKindClient;
   createdAt: number;
+  /** Telegram deep-link from the POST response; absent when TG is disabled. */
+  telegramLinkUrl?: string | null;
 }
 
 const WATCHES_KEY = "ogfinder_watches";
@@ -34,7 +36,10 @@ function isStoredWatch(v: unknown): v is StoredWatch {
     o.secret.length > 0 &&
     typeof o.query === "string" &&
     (o.kind === "name" || o.kind === "mint-cluster") &&
-    typeof o.createdAt === "number"
+    typeof o.createdAt === "number" &&
+    (o.telegramLinkUrl === undefined ||
+      o.telegramLinkUrl === null ||
+      typeof o.telegramLinkUrl === "string")
   );
 }
 

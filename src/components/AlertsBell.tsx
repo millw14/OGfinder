@@ -46,6 +46,7 @@ export function AlertsBell() {
   const router = useRouter();
   const [watches, setWatches] = useState<StoredWatch[]>([]);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [tgLinkedIds, setTgLinkedIds] = useState<Set<number>>(() => new Set());
   const [open, setOpen] = useState(false);
   const [hasUnseen, setHasUnseen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -73,6 +74,13 @@ export function AlertsBell() {
         .flatMap((w) => w.alerts ?? [])
         .sort((a, b) => b.matchedAt - a.matchedAt);
       setAlerts(flat);
+      setTgLinkedIds(
+        new Set(
+          (data.watches ?? [])
+            .filter((w) => w.telegramLinked)
+            .map((w) => w.id)
+        )
+      );
       const seen = getAlertsSeen();
       setHasUnseen(flat.some((a) => a.matchedAt > seen));
     } catch {
@@ -113,6 +121,13 @@ export function AlertsBell() {
     setOpen(false);
     router.push(`/?q=${encodeURIComponent(mint)}`);
   };
+
+  // Telegram footer row: a "TG ✓" chip once any watch is linked, else a
+  // link-out for the first watch that carries a stored deep link.
+  const tgLinked = watches.some((w) => tgLinkedIds.has(w.id));
+  const tgLinkTarget = tgLinked
+    ? null
+    : (watches.find((w) => w.telegramLinkUrl)?.telegramLinkUrl ?? null);
 
   return (
     <div ref={wrapRef} className="relative">
@@ -188,6 +203,20 @@ export function AlertsBell() {
               ))}
             </ul>
           )}
+          {tgLinked ? (
+            <p className="border-t border-gray-800/70 px-3.5 py-2 text-center text-[11px] font-medium text-cyan-300/90">
+              TG ✓ Telegram alerts on
+            </p>
+          ) : tgLinkTarget ? (
+            <a
+              href={tgLinkTarget}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block border-t border-gray-800/70 px-3.5 py-2 text-center text-[11px] font-medium text-cyan-300/90 transition-colors hover:bg-gray-800/40 hover:text-cyan-200"
+            >
+              Get Telegram alerts
+            </a>
+          ) : null}
           <a
             href="/alerts"
             className="block border-t border-gray-800/70 px-3.5 py-2.5 text-center text-[11px] font-medium text-amber-500/90 transition-colors hover:bg-gray-800/40 hover:text-amber-400"

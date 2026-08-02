@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { rateLimitRequest, clientIpFromHeaders } from "@/lib/rate-limit";
 import { createWatch, deleteWatch, WatchKind } from "@/lib/watches";
+import { telegramLinkUrl } from "@/lib/telegram";
 
 /**
  * Accountless watch management. POST returns the one-time {id, secret} pair
@@ -64,6 +65,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Null unless TELEGRAM_BOT_TOKEN is set and the bot username resolves.
+    const tgLink = await telegramLinkUrl(
+      result.watch.id,
+      result.watch.secret
+    );
+
     return NextResponse.json({
       id: result.watch.id,
       secret: result.watch.secret,
@@ -71,7 +78,7 @@ export async function POST(request: NextRequest) {
       displayQuery: result.watch.displayQuery,
       querySkeleton: result.watch.querySkeleton,
       matchMode: result.watch.matchMode,
-      telegramLinkUrl: null,
+      telegramLinkUrl: tgLink,
     });
   } catch (err) {
     if (process.env.NODE_ENV === "development") {

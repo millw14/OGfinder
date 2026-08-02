@@ -171,14 +171,34 @@ function AlertsPageInner() {
                         )}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => deleteWatch(w)}
-                      disabled={deletingId === w.id}
-                      className="rounded-md border border-gray-700/60 bg-gray-900/50 px-2.5 py-1 text-[11px] font-medium text-gray-500 transition-colors hover:border-red-800/60 hover:bg-red-950/30 hover:text-red-400 disabled:opacity-50"
-                    >
-                      {deletingId === w.id ? "Removing…" : "Delete watch"}
-                    </button>
+                    <div className="flex flex-shrink-0 items-center gap-2">
+                      {server?.telegramLinked ? (
+                        <span
+                          title="Telegram alerts are linked for this watch"
+                          className="rounded-md border border-cyan-800/60 bg-cyan-950/30 px-2 py-1 text-[11px] font-medium text-cyan-300/90"
+                        >
+                          TG ✓
+                        </span>
+                      ) : w.telegramLinkUrl ? (
+                        <a
+                          href={w.telegramLinkUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="Open Telegram to link clone alerts for this watch"
+                          className="rounded-md border border-cyan-800/60 bg-gray-900/50 px-2.5 py-1 text-[11px] font-medium text-cyan-300/90 transition-colors hover:border-cyan-600/70 hover:bg-cyan-950/30"
+                        >
+                          Get Telegram alerts
+                        </a>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => deleteWatch(w)}
+                        disabled={deletingId === w.id}
+                        className="rounded-md border border-gray-700/60 bg-gray-900/50 px-2.5 py-1 text-[11px] font-medium text-gray-500 transition-colors hover:border-red-800/60 hover:bg-red-950/30 hover:text-red-400 disabled:opacity-50"
+                      >
+                        {deletingId === w.id ? "Removing…" : "Delete watch"}
+                      </button>
+                    </div>
                   </div>
 
                   {alerts.length === 0 ? (
