@@ -113,7 +113,18 @@ interface ResultsProps {
   timing?: number;
   error?: string | null;
   scan?: ScanSummary | null;
+  /** Providers that failed during the request — results may be incomplete. */
+  degraded?: string[] | null;
 }
+
+const PROVIDER_LABELS: Record<string, string> = {
+  dexscreener: "DexScreener",
+  jupiter: "Jupiter",
+  helius: "Helius",
+  birdeye: "Birdeye",
+  geckoterminal: "GeckoTerminal",
+  "solana-rpc": "Solana RPC",
+};
 
 export function Results({
   results,
@@ -125,6 +136,7 @@ export function Results({
   timing,
   error,
   scan,
+  degraded = null,
 }: ResultsProps) {
   const [selectedBucketIds, setSelectedBucketIds] = useState<Set<string>>(
     () => new Set()
@@ -297,6 +309,16 @@ export function Results({
           )}
         </div>
       </div>
+
+      {degraded && degraded.length > 0 && (
+        <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-400/90">
+          {degraded
+            .map((p) => PROVIDER_LABELS[p] ?? p)
+            .join(", ")}{" "}
+          {degraded.length === 1 ? "was" : "were"} rate-limited or unavailable
+          — results may be incomplete.
+        </div>
+      )}
 
       <div className="mb-3 flex items-center justify-between px-1 text-xs text-gray-500">
         <span>

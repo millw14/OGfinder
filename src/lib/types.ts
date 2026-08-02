@@ -106,6 +106,8 @@ export interface SearchResponse {
   enriching?: boolean;
   /** Scan fast phase: verdict computed without signature scans — not final */
   verdictPreliminary?: boolean;
+  /** Providers that failed during this request — results may be incomplete */
+  degraded?: string[];
   error?: string;
 }
 

@@ -89,6 +89,7 @@ function HomeInner() {
   const [searchMode, setSearchMode] = useState<
     "search" | "scan" | "social" | null
   >(null);
+  const [degraded, setDegraded] = useState<string[] | null>(null);
 
   useEffect(() => {
     setRecentSearches(getRecent());
@@ -111,6 +112,7 @@ function HomeInner() {
       setSearchError(null);
       setScan(null);
       setSearchMode(null);
+      setDegraded(null);
 
       const isAbort = (err: unknown) =>
         controller.signal.aborted ||
@@ -122,6 +124,7 @@ function HomeInner() {
         setTiming(data.timing);
         setSearchMode(data.mode ?? "search");
         setIsEnriching(preliminary);
+        setDegraded(data.degraded && data.degraded.length ? data.degraded : null);
         if (data.mode === "scan" && data.scannedMint) {
           setScan({
             mode: "scan",
@@ -287,6 +290,7 @@ function HomeInner() {
             timing={timing}
             error={searchError}
             scan={scan}
+            degraded={degraded}
           />
         </div>
       </main>

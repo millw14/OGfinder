@@ -17,6 +17,10 @@ import { isLikelySocialUrl, normalizeForSocialMatch } from "@/lib/social-url";
 import { searchDexBySocialUrl } from "@/lib/dex-social";
 import { ensurePollerStarted } from "@/lib/poller";
 import { rateLimitRequest } from "@/lib/rate-limit";
+import {
+  runWithFailureCollection,
+  currentFailures,
+} from "@/lib/provider-health";
 
 interface MintScanPayload {
   results: TokenResult[];
@@ -42,6 +46,12 @@ function coalesce<T>(key: string, fn: () => Promise<T>): Promise<T> {
   });
   inflight.set(key, p);
   return p;
+}
+
+/** Optional degraded-provider list for the active request's responses. */
+function degradedFields(): { degraded?: string[] } {
+  const failures = currentFailures();
+  return failures.length ? { degraded: failures } : {};
 }
 
 function logSearch(
@@ -74,7 +84,12 @@ export async function GET(request: NextRequest) {
         }
       );
     }
-    return await handleSearch(request);
+    // Collect provider failures for this request so responses can carry a
+    // degraded list. Coalesce joiners and cache hits omit it (documented).
+    const { value } = await runWithFailureCollection(() =>
+      handleSearch(request)
+    );
+    return value;
   } catch (err) {
     if (process.env.NODE_ENV === "development") {
       console.error("[OGfinder] search route error:", err);
@@ -142,6 +157,7 @@ async function handleSearch(request: NextRequest) {
       totalFound: final.length,
       timing: Date.now() - start,
       mode: "social" as const,
+      ...degradedFields(),
     });
   }
 
@@ -240,6 +256,7 @@ async function handleSearch(request: NextRequest) {
       mode: "search" as const,
       phase: "fast" as const,
       enriching: true,
+      ...degradedFields(),
     });
   }
 
@@ -267,6 +284,7 @@ async function handleSearch(request: NextRequest) {
     totalFound: final.length,
     timing: Date.now() - start,
     mode: "search" as const,
+    ...degradedFields(),
   });
 }
 
@@ -290,6 +308,7 @@ function scanResponseBody(
     isScannedOG: scanned?.rank === 1,
     scannedRank: scanned?.rank ?? null,
     originalInput: q,
+    ...degradedFields(),
     ...(fast
       ? {
           phase: "fast" as const,
