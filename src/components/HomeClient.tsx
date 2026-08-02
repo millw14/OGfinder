@@ -7,6 +7,10 @@ import { TokenResult, SearchResponse, ScanSummary } from "@/lib/types";
 import { SearchBar } from "@/components/SearchBar";
 import { Results } from "@/components/Results";
 import { NavTabs } from "@/components/NavTabs";
+import {
+  SocialTelegramLink,
+  TelegramHeroPill,
+} from "@/components/SocialTelegramLink";
 
 /** Client-only: Lottie + canvas; avoids flaky dev SSR chunk splits (missing ./276.js). */
 const OGLogo = dynamic(
@@ -206,6 +210,7 @@ function HomeInner() {
             Find the original Solana token by name — or paste a mint to see if
             yours is the oldest.
           </p>
+          <TelegramHeroPill />
         </div>
 
         <SearchBar onSearch={handleSearch} isLoading={isLoading} />
@@ -246,7 +251,10 @@ function HomeInner() {
 
       <footer className="relative border-t border-gray-800/40 py-6">
         <div className="mx-auto flex max-w-2xl flex-col items-center gap-4 px-4">
-          <SocialXLink />
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <SocialXLink />
+            <SocialTelegramLink />
+          </div>
           <p className="text-center text-[11px] leading-relaxed text-gray-600">
             OGfinder — powered by{" "}
             <a
