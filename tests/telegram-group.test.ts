@@ -2,9 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   extractMintCandidates,
   formatMintVerdict,
+  formatNameSearchReply,
+  parseBotCommand,
   verdictShareUrl,
   VerdictCooldown,
 } from "@/lib/telegram";
+import { telegramWatchIpKey } from "@/lib/watches";
 import type { MintScanPayload } from "@/lib/scan";
 import type { TokenResult } from "@/lib/types";
 import { decodeSharePayload } from "@/lib/share";
@@ -60,6 +63,81 @@ describe("extractMintCandidates", () => {
     expect(extractMintCandidates(`https://pump.fun/coin/${BONK}`)).toEqual([
       BONK,
     ]);
+  });
+});
+
+// ————————————————————————— parseBotCommand —————————————————————————
+
+describe("parseBotCommand", () => {
+  it("parses every command, with and without args", () => {
+    expect(parseBotCommand(`/og ${USDC}`)).toEqual({
+      command: "og",
+      mention: null,
+      arg: USDC,
+    });
+    expect(parseBotCommand("/watches")).toEqual({
+      command: "watches",
+      mention: null,
+      arg: null,
+    });
+    expect(parseBotCommand("/watch")).toEqual({
+      command: "watch",
+      mention: null,
+      arg: null,
+    });
+    expect(parseBotCommand("/unwatch 12")).toEqual({
+      command: "unwatch",
+      mention: null,
+      arg: "12",
+    });
+    expect(parseBotCommand("/help")).toEqual({
+      command: "help",
+      mention: null,
+      arg: null,
+    });
+  });
+
+  it("keeps multi-word args intact and trims whitespace", () => {
+    expect(parseBotCommand("  /watch two word name  ")).toEqual({
+      command: "watch",
+      mention: null,
+      arg: "two word name",
+    });
+    expect(parseBotCommand("/og bonk inu")).toEqual({
+      command: "og",
+      mention: null,
+      arg: "bonk inu",
+    });
+  });
+
+  it("captures the @BotName mention", () => {
+    expect(parseBotCommand(`/og@OGFindertekbot ${BONK}`)).toEqual({
+      command: "og",
+      mention: "OGFindertekbot",
+      arg: BONK,
+    });
+    expect(parseBotCommand("/watches@OGFindertekbot")).toEqual({
+      command: "watches",
+      mention: "OGFindertekbot",
+      arg: null,
+    });
+  });
+
+  it("is case-insensitive on the command", () => {
+    expect(parseBotCommand("/OG bonk")).toEqual({
+      command: "og",
+      mention: null,
+      arg: "bonk",
+    });
+  });
+
+  it("rejects non-commands, unknown commands, and legacy commands", () => {
+    expect(parseBotCommand("gm")).toBeNull();
+    expect(parseBotCommand("/ogx bonk")).toBeNull();
+    expect(parseBotCommand("/og@")).toBeNull();
+    expect(parseBotCommand("/start")).toBeNull(); // legacy parser's job
+    expect(parseBotCommand("/stop")).toBeNull();
+    expect(parseBotCommand("")).toBeNull();
   });
 });
 
@@ -276,6 +354,72 @@ describe("verdictShareUrl", () => {
   });
 });
 
+// ————————————————————————— formatNameSearchReply —————————————————————————
+
+describe("formatNameSearchReply", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-02T00:00:00.000Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("renders top pick, two runners-up, count, and the search link", () => {
+    const results = [
+      tok({
+        mint: BONK,
+        displayName: "Bonk",
+        displaySymbol: "BONK",
+        rank: 1,
+        createdAt: OG_CREATED,
+        createdAtMs: Date.parse(OG_CREATED),
+      }),
+      tok({
+        mint: USDC,
+        displayName: "Bonk 2.0",
+        displaySymbol: "BONK2",
+        rank: 2,
+        createdAt: CLONE_CREATED,
+        createdAtMs: Date.parse(CLONE_CREATED),
+      }),
+      tok({ mint: WSOL, displayName: "Bonk Inu", displaySymbol: "BINU", rank: 3 }),
+      tok({ mint: "Mint4", displayName: "Bonk 4", rank: 4 }),
+    ];
+    expect(formatNameSearchReply("bonk", results, SITE)).toBe(
+      [
+        `👑 Likely OG: <b>Bonk</b> ($BONK) — minted Dec 20, 2022 (${timeAgo(OG_CREATED)})`,
+        `<code>${BONK}</code>`,
+        `#2 Bonk 2.0 ($BONK2) — minted May 1, 2023 (${timeAgo(CLONE_CREATED)})`,
+        "#3 Bonk Inu ($BINU) — age unknown",
+        `4 tokens ranked by best-known age — <a href="${SITE}/?q=bonk">open the link for on-chain verification</a>`,
+      ].join("\n")
+    );
+  });
+
+  it("handles a single result and no results", () => {
+    const one = [
+      tok({ mint: WSOL, displayName: "Sol", displaySymbol: "SOL", rank: 1 }),
+    ];
+    const single = formatNameSearchReply("sol", one, SITE);
+    expect(single.split("\n")).toHaveLength(3); // top, mint, label — no runners
+    expect(single).toContain("1 token ranked by best-known age");
+    expect(formatNameSearchReply("nope coin", [], SITE)).toBe(
+      `No tokens found named "nope coin" — <a href="${SITE}/?q=nope%20coin">search on OGfinder</a>`
+    );
+  });
+
+  it("escapes HTML in the query and token fields", () => {
+    const msg = formatNameSearchReply(
+      "a<b>",
+      [tok({ mint: WSOL, displayName: "<X> & Co", displaySymbol: "A&B", rank: 1 })],
+      SITE
+    );
+    expect(msg).toContain("<b>&lt;X&gt; &amp; Co</b> ($A&amp;B)");
+    expect(msg).toContain(`${SITE}/?q=a%3Cb%3E`);
+  });
+});
+
 // ————————————————————————— update router (fixtures) —————————————————————————
 
 /**
@@ -289,7 +433,8 @@ async function freshTelegram() {
   delete process.env.TELEGRAM_BOT_TOKEN;
   const telegram = await import("@/lib/telegram");
   const urlIndex = await import("@/lib/url-index");
-  return { ...telegram, ...urlIndex };
+  const watches = await import("@/lib/watches");
+  return { ...telegram, ...urlIndex, ...watches };
 }
 
 beforeEach(() => {
@@ -395,5 +540,131 @@ describe("handleTelegramUpdate (fixture updates)", () => {
       },
     });
     expect(groupRow(lib, "-999")).toBeUndefined();
+  });
+});
+
+// ————————————————————— /watch, /unwatch, mention gating —————————————————————
+
+type Lib = Awaited<ReturnType<typeof freshTelegram>>;
+
+function groupMsg(chatId: number, text: string, messageId = 1) {
+  return {
+    update_id: 1,
+    message: {
+      message_id: messageId,
+      chat: { id: chatId, type: "supergroup" as const, title: "Bonk Army" },
+      text,
+    },
+  };
+}
+
+function watchRows(lib: Lib) {
+  return lib
+    .getDb()
+    .prepare(
+      "SELECT id, display_query, created_by_ip, telegram_chat_id FROM watched_queries ORDER BY id"
+    )
+    .all() as {
+    id: number;
+    display_query: string;
+    created_by_ip: string;
+    telegram_chat_id: string | null;
+  }[];
+}
+
+describe("telegramWatchIpKey", () => {
+  it("keys the per-IP cap per chat", () => {
+    expect(telegramWatchIpKey("-100123")).toBe("tg:-100123");
+    expect(telegramWatchIpKey("555")).toBe("tg:555");
+  });
+});
+
+describe("/watch and /unwatch via the update router", () => {
+  it("/watch creates a chat-keyed watch, links delivery, self-registers the group", async () => {
+    const lib = await freshTelegram();
+    await lib.handleTelegramUpdate(groupMsg(-100123, "/watch bonk inu"));
+    expect(watchRows(lib)).toEqual([
+      {
+        id: 1,
+        display_query: "bonk inu",
+        created_by_ip: "tg:-100123",
+        telegram_chat_id: "-100123",
+      },
+    ]);
+    // Command from an unregistered group registers it without a welcome.
+    expect(groupRow(lib, "-100123")).toEqual({
+      chat_id: "-100123",
+      title: "Bonk Army",
+      welcome_sent: 1,
+      active: 1,
+    });
+  });
+
+  it("caps at 10 watches per chat, independently across chats", async () => {
+    const lib = await freshTelegram();
+    for (let i = 0; i < 10; i++) {
+      const res = lib.createWatch({
+        query: `clone name ${i}`,
+        ip: lib.telegramWatchIpKey("-1"),
+        telegramChatId: "-1",
+      });
+      expect(res.ok).toBe(true);
+    }
+    await lib.handleTelegramUpdate(groupMsg(-1, "/watch eleventh name"));
+    expect(watchRows(lib).filter((w) => w.created_by_ip === "tg:-1")).toHaveLength(10);
+    // A different chat has its own cap of 10.
+    await lib.handleTelegramUpdate(groupMsg(-2, "/watch eleventh name"));
+    const other = watchRows(lib).filter((w) => w.created_by_ip === "tg:-2");
+    expect(other).toHaveLength(1);
+    expect(other[0].telegram_chat_id).toBe("-2");
+  });
+
+  it("repeat /watch of the same name is idempotent and re-links the chat", async () => {
+    const lib = await freshTelegram();
+    await lib.handleTelegramUpdate(groupMsg(-9, "/watch bonk"));
+    // Simulate /stop-style unlink, then re-watch.
+    lib
+      .getDb()
+      .prepare("UPDATE watched_queries SET telegram_chat_id = NULL")
+      .run();
+    await lib.handleTelegramUpdate(groupMsg(-9, "/watch bonk"));
+    const rows = watchRows(lib);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].telegram_chat_id).toBe("-9");
+  });
+
+  it("/unwatch by id only removes watches owned by the asking chat", async () => {
+    const lib = await freshTelegram();
+    await lib.handleTelegramUpdate(groupMsg(-1, "/watch bonk"));
+    const id = watchRows(lib)[0].id;
+    await lib.handleTelegramUpdate(groupMsg(-2, `/unwatch ${id}`));
+    expect(watchRows(lib)).toHaveLength(1); // foreign chat can't remove it
+    await lib.handleTelegramUpdate(groupMsg(-1, `/unwatch ${id}`));
+    expect(watchRows(lib)).toHaveLength(0);
+  });
+
+  it("/unwatch by name matches via skeleton", async () => {
+    const lib = await freshTelegram();
+    await lib.handleTelegramUpdate(groupMsg(-1, "/watch Bonk Inu"));
+    await lib.handleTelegramUpdate(groupMsg(-1, "/unwatch bonk inu"));
+    expect(watchRows(lib)).toHaveLength(0);
+  });
+
+  it("ignores commands addressed to another bot when the username is known", async () => {
+    const lib = await freshTelegram();
+    process.env.TELEGRAM_BOT_USERNAME = "OGFindertekbot";
+    try {
+      await lib.handleTelegramUpdate(
+        groupMsg(-7, "/watch@SomeOtherBot bonk")
+      );
+      expect(watchRows(lib)).toHaveLength(0);
+      // Mention matching is case-insensitive.
+      await lib.handleTelegramUpdate(
+        groupMsg(-7, "/watch@ogfindertekbot bonk")
+      );
+      expect(watchRows(lib)).toHaveLength(1);
+    } finally {
+      delete process.env.TELEGRAM_BOT_USERNAME;
+    }
   });
 });

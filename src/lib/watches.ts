@@ -38,6 +38,21 @@ export interface CreateWatchInput {
   kind?: WatchKind;
   originMint?: string | null;
   ip: string;
+  /**
+   * Link Telegram delivery at creation (bot-created watches). On the
+   * idempotent existing-watch path this RE-links the chat — a repeat /watch
+   * after /stop restores delivery.
+   */
+  telegramChatId?: string | null;
+}
+
+/**
+ * created_by_ip key for Telegram-created watches: per chat, so every group or
+ * DM gets its own MAX_WATCHES_PER_IP allowance. A single shared key (e.g.
+ * 'telegram') would cap ALL Telegram watches at 10 globally.
+ */
+export function telegramWatchIpKey(chatId: string): string {
+  return `tg:${chatId}`;
 }
 
 export interface CreatedWatch {
@@ -124,6 +139,11 @@ export function createWatch(input: CreateWatchInput): CreateWatchResult {
         }
       | undefined;
     if (existing) {
+      if (input.telegramChatId) {
+        db.prepare(
+          "UPDATE watched_queries SET telegram_chat_id = ? WHERE id = ?"
+        ).run(input.telegramChatId, existing.id);
+      }
       result = {
         ok: true,
         watch: {
@@ -163,10 +183,20 @@ export function createWatch(input: CreateWatchInput): CreateWatchResult {
     const info = db
       .prepare(
         `INSERT INTO watched_queries
-           (kind, query_skeleton, display_query, origin_mint, match_mode, secret, created_by_ip, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+           (kind, query_skeleton, display_query, origin_mint, match_mode, secret, created_by_ip, created_at, telegram_chat_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(kind, querySkeleton, query, originMint, matchMode, secret, ip, Date.now());
+      .run(
+        kind,
+        querySkeleton,
+        query,
+        originMint,
+        matchMode,
+        secret,
+        ip,
+        Date.now(),
+        input.telegramChatId ?? null
+      );
     markWatchCacheDirty();
     result = {
       ok: true,
@@ -200,6 +230,67 @@ export function deleteWatch(id: number, secret: string): boolean {
   db.prepare("DELETE FROM watched_queries WHERE id = ?").run(id);
   markWatchCacheDirty();
   return true;
+}
+
+/**
+ * Watches whose alerts deliver to this Telegram chat — both bot-created
+ * (/watch) and site-created watches later linked via /start. May throw on DB
+ * failure; callers catch.
+ */
+export function listWatchesForTelegramChat(
+  chatId: string
+): { id: number; displayQuery: string; kind: WatchKind; createdAt: number }[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT id, display_query, kind, created_at FROM watched_queries
+       WHERE telegram_chat_id = ? ORDER BY id LIMIT 20`
+    )
+    .all(chatId) as {
+    id: number;
+    display_query: string;
+    kind: WatchKind;
+    created_at: number;
+  }[];
+  return rows.map((r) => ({
+    id: r.id,
+    displayQuery: r.display_query,
+    kind: r.kind,
+    createdAt: r.created_at,
+  }));
+}
+
+/**
+ * Remove watches delivering to a Telegram chat, by id or by name. NO secret
+ * required — deliberate trade-off: inside the owning chat, membership IS the
+ * credential. Anyone who can send /unwatch there could equally mute or remove
+ * the bot, so demanding the web secret would add friction without protection.
+ * The chat-id match means a watch can never be removed from any OTHER chat.
+ * Returns the number of watches removed; may throw on DB failure.
+ */
+export function unwatchForTelegramChat(chatId: string, ref: string): number {
+  const db = getDb();
+  const trimmed = ref.trim();
+  if (/^[1-9]\d{0,9}$/.test(trimmed)) {
+    const info = db
+      .prepare(
+        "DELETE FROM watched_queries WHERE id = ? AND telegram_chat_id = ?"
+      )
+      .run(Number(trimmed), chatId);
+    if (info.changes > 0) {
+      markWatchCacheDirty();
+      return info.changes;
+    }
+    // No id match — fall through: the ref may be a numeric token name.
+  }
+  const sk = skeleton(trimmed);
+  if (sk.length < 2) return 0;
+  const info = db
+    .prepare(
+      "DELETE FROM watched_queries WHERE telegram_chat_id = ? AND query_skeleton = ?"
+    )
+    .run(chatId, sk);
+  if (info.changes > 0) markWatchCacheDirty();
+  return info.changes;
 }
 
 /**
