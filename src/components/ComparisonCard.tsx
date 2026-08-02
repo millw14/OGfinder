@@ -5,6 +5,7 @@ import { CompareState, CompareSideState } from "@/lib/compare";
 import { formatDate, timeAgo, formatAgeGap } from "@/lib/format";
 import { encodeComparePayload, ComparePayload } from "@/lib/share";
 import {
+  Chip,
   ConfidenceStars,
   PlatformBadge,
   RiskChips,
@@ -46,6 +47,18 @@ function formatPct(n: number): string {
 const RANK_TOOLTIP =
   "Rank within this token's OWN name search — the two sides run different searches, so ranks are not comparable across them";
 
+const EYEBROW = "text-micro font-semibold uppercase tracking-[0.18em]";
+
+/** Sweep used by the loading state; parked by the reduced-motion block. */
+function Shimmer() {
+  return (
+    <span
+      aria-hidden
+      className="pointer-events-none absolute inset-0 animate-shimmer bg-gradient-to-r from-transparent via-white/[0.045] to-transparent"
+    />
+  );
+}
+
 function SideCard({
   side,
   older,
@@ -59,13 +72,13 @@ function SideCard({
   // Per-side error / no-data slot: keeps the other side rendering normally.
   if (side.error || !t) {
     return (
-      <div className="flex flex-col justify-center rounded-xl border border-gray-800/70 bg-gray-900/40 px-3.5 py-3">
-        <p className="font-mono text-[11px] text-cyan-300/90">
+      <div className="flex flex-col justify-center rounded-xl border bg-surface-1 px-3.5 py-3">
+        <p className="font-mono text-micro text-scan">
           {truncateMint(side.mint)}
         </p>
         <p
-          className={`mt-1.5 text-xs ${
-            side.error ? "text-red-300" : "text-gray-500"
+          className={`mt-1.5 text-meta ${
+            side.error ? "text-down" : "text-fg-3"
           }`}
         >
           {side.error ??
@@ -84,13 +97,11 @@ function SideCard({
   return (
     <div
       className={`rounded-xl border px-3.5 py-3 ${
-        older
-          ? "border-amber-500/60 bg-amber-950/15 ring-1 ring-amber-400/40"
-          : "border-gray-800/70 bg-gray-900/40"
+        older ? "og-glow bg-og/[0.06]" : "bg-surface-1"
       }`}
     >
       <div className="flex items-center gap-2.5">
-        {showLogo && (
+        {showLogo ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={t.imageUrl!}
@@ -99,31 +110,45 @@ function SideCard({
             height={32}
             loading="lazy"
             onError={() => setLogoFailed(true)}
-            className="h-8 w-8 rounded-lg object-cover ring-1 ring-gray-700/50"
+            className="h-8 w-8 shrink-0 rounded-lg border object-cover"
           />
+        ) : (
+          <span
+            aria-hidden
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border bg-surface-2 font-display text-micro font-bold text-fg-4"
+          >
+            {t.displaySymbol?.charAt(0)?.toUpperCase() || "?"}
+          </span>
         )}
-        <div className="min-w-0">
-          <p className="truncate text-sm font-bold text-gray-100">
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-display text-sm font-bold tracking-tight text-fg">
             {t.displayName}
-            <span className="ml-1.5 text-xs font-semibold text-gray-500">
+            <span className="ml-1.5 font-mono text-micro font-normal text-fg-3">
               ${t.displaySymbol}
             </span>
           </p>
-          <p className="truncate font-mono text-[10px] text-cyan-300/90">
+          <p className="truncate font-mono text-micro text-scan">
             {truncateMint(side.mint)}
           </p>
         </div>
+        {older && (
+          <Chip
+            tone="og"
+            className="font-semibold uppercase tracking-[0.14em]"
+            title="Older by verified on-chain creation time"
+          >
+            Older
+          </Chip>
+        )}
       </div>
 
-      <p className="mt-2 text-xs text-gray-400">
+      <p className="mt-2.5 text-meta text-fg-3">
         minted{" "}
-        <span className="font-medium text-gray-300">
-          {formatDate(t.createdAt)}
-        </span>
-        {ago && <span className="text-gray-600"> ({ago})</span>}
+        <span className="font-mono text-fg-2">{formatDate(t.createdAt)}</span>
+        {ago && <span className="font-mono text-fg-4"> · {ago}</span>}
         {t.createdAtIsLowerBound && (
           <span
-            className="ml-1.5 text-[10px] font-medium text-amber-500/80"
+            className="ml-1.5 text-micro font-medium text-warn"
             title="Active token — creation may be older than shown"
           >
             may be older
@@ -143,37 +168,35 @@ function SideCard({
       </div>
 
       {(hasPrice || hasLiquidity || hasChange) && (
-        <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs">
+        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-meta">
           {hasPrice && (
             <span
-              className="font-medium text-emerald-400/90"
+              className="text-fg-2"
               title="Price (USD, highest-liquidity pair)"
             >
               {formatPrice(t.priceUsd!)}
             </span>
           )}
           {hasLiquidity && (
-            <span className="text-gray-500" title="DexScreener liquidity">
-              {formatUsdVol(t.liquidityUsd!)} liq
+            <span className="text-fg-3" title="DexScreener liquidity">
+              {formatUsdVol(t.liquidityUsd!)}
+              <span className="text-fg-4"> liq</span>
             </span>
           )}
           {hasChange && (
-            <span
-              className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold ring-1 ${
-                t.priceChange24h! >= 0
-                  ? "bg-emerald-950/50 text-emerald-400 ring-emerald-800/50"
-                  : "bg-red-950/50 text-red-400 ring-red-800/50"
-              }`}
+            <Chip
+              tone={t.priceChange24h! >= 0 ? "up" : "down"}
+              className="font-mono"
               title="24h price change"
             >
               {formatPct(t.priceChange24h!)}
-            </span>
+            </Chip>
           )}
         </div>
       )}
 
       {side.scannedRank != null && side.totalFound != null && (
-        <p className="mt-2 text-[11px] text-gray-500" title={RANK_TOOLTIP}>
+        <p className="mt-2.5 text-micro text-fg-4" title={RANK_TOOLTIP}>
           {side.isScannedOG === true
             ? `OG of its own name search (#${side.scannedRank} of ${side.totalFound})`
             : `#${side.scannedRank} of ${side.totalFound} in its own name search`}
@@ -201,12 +224,16 @@ export function ComparisonCard({ state }: { state: CompareState }) {
 
   if (state.loading) {
     return (
-      <div className="animate-pulse rounded-2xl border border-gray-800/60 bg-gray-900/40 p-5">
-        <div className="mb-4 h-6 w-56 rounded-lg bg-gray-800/60" />
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="h-44 rounded-xl bg-gray-800/50" />
-          <div className="h-44 rounded-xl bg-gray-800/50" />
+      <div className="relative overflow-hidden rounded-2xl border bg-surface-1 p-5">
+        <div className="mb-4 space-y-3">
+          <div className="h-3 w-32 rounded-md bg-surface-3" />
+          <div className="h-7 w-64 rounded-lg bg-surface-2" />
         </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="h-44 rounded-xl bg-surface-2/80" />
+          <div className="h-44 rounded-xl bg-surface-2/80" />
+        </div>
+        <Shimmer />
       </div>
     );
   }
@@ -256,20 +283,17 @@ export function ComparisonCard({ state }: { state: CompareState }) {
   };
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-gray-700/50 bg-gradient-to-br from-gray-900/70 via-gray-900/60 to-gray-900/40">
+    <section className="overflow-hidden rounded-2xl border bg-surface-1">
+      {/* ── Verdict ─────────────────────────────────────────────────────── */}
       <div className="p-4 sm:p-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-cyan-500/90">
-              Head-to-head comparison
-            </p>
-            <h2 className="mt-1.5 text-xl font-black tracking-tight text-gray-100 sm:text-2xl">
+          <div className="min-w-0">
+            <p className={`${EYEBROW} text-scan`}>Head-to-head comparison</p>
+            <h2 className="mt-2 font-display text-[26px] font-bold leading-[1.1] tracking-tight text-fg sm:text-[32px]">
               {winnerToken && gapMs != null ? (
                 <>
-                  <span className="text-amber-400">
-                    {winnerToken.displayName}
-                  </span>{" "}
-                  is older by {formatAgeGap(gapMs)}
+                  <span className="text-og">{winnerToken.displayName}</span> is
+                  older by {formatAgeGap(gapMs)}
                 </>
               ) : state.a.error || state.b.error ? (
                 "Comparison incomplete"
@@ -290,12 +314,12 @@ export function ComparisonCard({ state }: { state: CompareState }) {
                 ? "Copy a shareable comparison link"
                 : "Both mints must resolve before sharing"
             }
-            className={`inline-flex flex-shrink-0 items-center gap-1.5 self-start rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+            className={`inline-flex flex-shrink-0 items-center gap-1.5 self-start rounded-xl border px-3 py-1.5 text-meta font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
               copied
-                ? "border-emerald-500/50 bg-emerald-950/40 text-emerald-300"
+                ? "border-up/40 bg-up/10 text-up"
                 : copyFailed
-                  ? "border-red-500/50 bg-red-950/40 text-red-300"
-                  : "border-gray-700/80 bg-gray-900/60 text-gray-300 hover:border-gray-600 hover:bg-gray-800/70"
+                  ? "border-down/40 bg-down/10 text-down"
+                  : "bg-surface-2 text-fg-2 hover:border-line-str hover:text-fg"
             }`}
           >
             <span className="sr-only" role="status">
@@ -308,22 +332,23 @@ export function ComparisonCard({ state }: { state: CompareState }) {
                 : "Share comparison"}
           </button>
         </div>
+      </div>
 
-        <div className="mt-4 grid gap-2.5 border-t border-gray-800/60 pt-4 sm:grid-cols-[1fr_auto_1fr] sm:items-stretch sm:gap-3">
+      {/* ── Sides ───────────────────────────────────────────────────────── */}
+      <div className="border-t bg-bg/50 px-4 py-4 sm:px-6">
+        <div className="grid gap-2.5 sm:grid-cols-[1fr_auto_1fr] sm:items-stretch sm:gap-3">
           <SideCard side={state.a} older={winner === "a"} />
 
           <div className="flex items-center justify-center px-1 text-center">
             {winner && gapMs != null ? (
               <div>
-                <p className="text-[10px] font-medium uppercase tracking-wider text-amber-500/80">
-                  older by
-                </p>
-                <p className="text-sm font-bold text-gray-200">
+                <p className={`${EYEBROW} text-og`}>older by</p>
+                <p className="mt-1 font-display text-lg font-bold tracking-tight text-fg sm:text-xl">
                   {formatAgeGap(gapMs)}
                 </p>
               </div>
             ) : (
-              <p className="text-sm font-black tracking-widest text-gray-600">
+              <p className="font-display text-sm font-bold tracking-[0.3em] text-fg-4">
                 VS
               </p>
             )}
@@ -332,7 +357,7 @@ export function ComparisonCard({ state }: { state: CompareState }) {
           <SideCard side={state.b} older={winner === "b"} />
         </div>
 
-        <p className="mt-3 text-[10px] leading-relaxed text-gray-600">
+        <p className="mt-3 text-micro leading-relaxed text-fg-4">
           Each side is ranked within its own name search — those ranks are not
           comparable across the two tokens. The verdict above compares verified
           on-chain creation times only.

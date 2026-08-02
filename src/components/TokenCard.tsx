@@ -17,6 +17,7 @@ import {
   HomoglyphBadge,
   ProvenanceBadge,
   RiskChips,
+  Chip,
 } from "./Badge";
 
 /** Hover copy for the rank-gated OG labels (creation ranking, rank 1 only). */
@@ -60,6 +61,18 @@ function formatPct(n: number): string {
   const fixed = Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(1);
   return `${n >= 0 ? "+" : ""}${fixed}%`;
 }
+
+/** Hairline dot separator between meta values. */
+function Dot() {
+  return (
+    <span aria-hidden className="text-fg-4">
+      ·
+    </span>
+  );
+}
+
+const EXPLORER_LINK =
+  "rounded-lg border bg-surface-2 px-2.5 py-1 text-micro font-medium text-fg-3 transition-colors hover:border-line-str hover:bg-surface-3 hover:text-fg";
 
 export function TokenCard({ token }: { token: TokenResult }) {
   const [copied, setCopied] = useState(false);
@@ -118,22 +131,38 @@ export function TokenCard({ token }: { token: TokenResult }) {
   const hasPrice = token.priceUsd != null && token.priceUsd > 0;
   const hasLiquidity = token.liquidityUsd != null && token.liquidityUsd > 0;
   const hasChange = token.priceChange24h != null;
-  const hasMarketRow = hasPrice || hasLiquidity || hasChange;
+  // MC / volume are ranking-mode gated, and they share the market row, so the
+  // row has to open for them too.
+  const mcValue = token.marketCapUsd ?? token.fdvUsd;
+  const showMarketCap =
+    token.rankingMode === "marketcap" && mcValue != null && mcValue > 0;
+  const showVolume =
+    (token.rankingMode === "marketcap" || token.rankingMode === "volume") &&
+    token.volumeUsd24h != null &&
+    token.volumeUsd24h > 0;
+  const hasMarketRow =
+    hasPrice || hasLiquidity || hasChange || showMarketCap || showVolume;
+
+  const tradeHref = `https://trade.padre.gg/trade/solana/${token.mint}`;
+  const solscanHref = `https://solscan.io/token/${token.mint}`;
+  const birdeyeHref = `https://birdeye.so/token/${token.mint}?chain=solana`;
+  const dexHref = `https://dexscreener.com/solana/${token.mint}`;
 
   return (
-    <div
-      className={`rounded-2xl border p-4 sm:p-5 transition-all ${
+    <article
+      className={`rounded-2xl border p-4 transition-colors sm:p-5 ${
         isOG
-          ? "border-yellow-600/40 bg-yellow-950/20 og-glow"
+          ? "og-glow bg-gradient-to-br from-og/[0.08] via-surface-1 to-surface-1"
           : isScanned
-            ? "border-cyan-600/35 bg-cyan-950/15 ring-1 ring-cyan-500/20"
-            : "border-gray-800/80 bg-gray-900/40 hover:border-gray-700/80"
+            ? "scan-ring bg-surface-1"
+            : "bg-surface-1 hover:border-line-str"
       }`}
     >
       <div className="flex gap-3 sm:gap-4">
-        <div className="flex flex-shrink-0 flex-col items-center gap-2">
+        {/* Rank rail */}
+        <div className="flex w-10 flex-shrink-0 flex-col items-center gap-2">
           <RankBadge rank={token.rank} />
-          {showLogo && (
+          {showLogo ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={token.imageUrl!}
@@ -142,18 +171,25 @@ export function TokenCard({ token }: { token: TokenResult }) {
               height={40}
               loading="lazy"
               onError={() => setLogoFailed(true)}
-              className="h-10 w-10 rounded-xl object-cover ring-1 ring-gray-700/50"
+              className="h-10 w-10 rounded-xl border object-cover"
             />
+          ) : (
+            <span
+              aria-hidden
+              className="flex h-10 w-10 items-center justify-center rounded-xl border bg-surface-2 font-display text-sm font-bold text-fg-4"
+            >
+              {token.displaySymbol?.charAt(0)?.toUpperCase() || "?"}
+            </span>
           )}
         </div>
 
-        <div className="min-w-0 flex-1 space-y-2.5">
-          {/* Row 1: Name + badges */}
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-base font-bold text-gray-100 sm:text-lg">
+        <div className="min-w-0 flex-1 space-y-2">
+          {/* Row 1: identity */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+            <h3 className="font-display text-[15px] font-bold tracking-tight text-fg sm:text-base">
               {token.displayName}
             </h3>
-            <span className="text-xs font-semibold text-gray-500 sm:text-sm">
+            <span className="font-mono text-meta text-fg-3">
               ${token.displaySymbol}
             </span>
             {isScanned && <ScannedMintBadge />}
@@ -161,76 +197,32 @@ export function TokenCard({ token }: { token: TokenResult }) {
               <OGBadge rank={token.rank} />
             )}
             {token.exactMatch && token.rank !== 1 && <ExactNameBadge />}
-            {token.linkProvenance && <ProvenanceBadge />}
-            {token.homoglyphSuspect && <HomoglyphBadge />}
-            {token.supplyZero && <BurnedBadge />}
-            <PlatformBadge dexId={token.dexId} mint={token.mint} />
-            <RiskChips
-              mintAuthorityActive={token.mintAuthorityActive}
-              freezeAuthorityActive={token.freezeAuthorityActive}
-              metadataMutable={token.metadataMutable}
-            />
           </div>
 
-          {/* Row 2: Date + mint */}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-400 sm:text-sm">
+          {/* Row 2: age + mint */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-meta text-fg-3">
             {token.pendingAge ? (
               <span
-                className="animate-pulse font-medium text-gray-600"
+                className="animate-pulse font-medium text-fg-4"
                 title="On-chain age check in progress"
               >
                 dating…
               </span>
             ) : (
-              <span className="font-medium text-gray-300">
+              <span className="font-mono text-fg-2">
                 {formatDate(token.createdAt)}
               </span>
             )}
+            {ago && <span className="font-mono text-fg-4">{ago}</span>}
             {token.createdAtIsLowerBound && (
               <span
-                className="text-[10px] font-medium text-amber-500/80"
+                className="text-micro font-medium text-warn"
                 title="Active token — creation may be older than shown"
               >
                 may be older
               </span>
             )}
-            {ago && (
-              <span className="text-gray-600">({ago})</span>
-            )}
-            {token.rankingMode === "marketcap" &&
-              (token.marketCapUsd ?? token.fdvUsd) != null &&
-              (token.marketCapUsd ?? token.fdvUsd)! > 0 && (
-                <>
-                  <span className="text-gray-700">·</span>
-                  <span
-                    className="text-emerald-500/90"
-                    title="DexScreener market cap or FDV"
-                  >
-                    MC {formatUsdVol((token.marketCapUsd ?? token.fdvUsd)!)}
-                  </span>
-                </>
-              )}
-            {token.rankingMode === "marketcap" &&
-              token.volumeUsd24h != null &&
-              token.volumeUsd24h > 0 && (
-                <>
-                  <span className="text-gray-700">·</span>
-                  <span className="text-amber-500/90" title="DexScreener 24h volume">
-                    Vol {formatUsdVol(token.volumeUsd24h)}
-                  </span>
-                </>
-              )}
-            {token.rankingMode === "volume" &&
-              token.volumeUsd24h != null &&
-              token.volumeUsd24h > 0 && (
-                <>
-                  <span className="text-gray-700">·</span>
-                  <span className="text-amber-500/90" title="DexScreener 24h volume">
-                    Vol {formatUsdVol(token.volumeUsd24h)}
-                  </span>
-                </>
-              )}
-            <span className="text-gray-700">·</span>
+            <Dot />
             <button
               type="button"
               onClick={copyMint}
@@ -246,7 +238,13 @@ export function TokenCard({ token }: { token: TokenResult }) {
                   copyLottieRef.current?.goToAndStop(0, true);
                 }
               }}
-              className="inline-flex items-center gap-1.5 rounded-md border border-gray-700/50 bg-gray-800/50 px-2 py-0.5 font-mono text-[11px] text-gray-400 transition-colors hover:border-gray-600 hover:bg-gray-800/80 hover:text-gray-200"
+              className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 font-mono text-micro transition-colors ${
+                copied
+                  ? "border-up/40 bg-up/10 text-up"
+                  : copyFailed
+                    ? "border-down/40 bg-down/10 text-down"
+                    : "bg-surface-2 text-fg-3 hover:border-line-str hover:bg-surface-3 hover:text-fg"
+              }`}
               title={
                 copied
                   ? "Copied"
@@ -260,65 +258,90 @@ export function TokenCard({ token }: { token: TokenResult }) {
               </span>
               <span>{truncateMint(token.mint)}</span>
               {copied ? (
-                <span className="text-[10px] font-medium text-emerald-400">
-                  Copied
-                </span>
+                <span className="text-micro font-medium">Copied</span>
               ) : copyFailed ? (
-                <span className="text-[10px] font-medium text-red-400">
-                  Copy failed
-                </span>
+                <span className="text-micro font-medium">Copy failed</span>
               ) : (
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center">
                   <Lottie
                     lottieRef={copyLottieRef}
                     animationData={copyHover}
                     loop={false}
                     autoplay={false}
-                    style={{ width: 28, height: 28 }}
+                    style={{ width: 22, height: 22 }}
                   />
                 </span>
               )}
             </button>
           </div>
 
-          {/* Row 2.5: Market data (price / liquidity / 24h change) */}
+          {/* Row 3: market data */}
           {hasMarketRow && (
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 font-mono text-meta">
+              {showMarketCap && (
+                <span className="text-fg-2" title="DexScreener market cap or FDV">
+                  <span className="text-fg-4">MC </span>
+                  {formatUsdVol(mcValue!)}
+                </span>
+              )}
               {hasPrice && (
                 <span
-                  className="font-medium text-emerald-400/90"
+                  className="text-fg-2"
                   title="Price (USD, highest-liquidity pair)"
                 >
                   {formatPrice(token.priceUsd!)}
                 </span>
               )}
               {hasLiquidity && (
-                <span className="text-gray-500" title="DexScreener liquidity">
-                  {formatUsdVol(token.liquidityUsd!)} liq
-                </span>
+                <>
+                  {(showMarketCap || hasPrice) && <Dot />}
+                  <span className="text-fg-3" title="DexScreener liquidity">
+                    {formatUsdVol(token.liquidityUsd!)}
+                    <span className="text-fg-4"> liq</span>
+                  </span>
+                </>
+              )}
+              {showVolume && (
+                <>
+                  {(showMarketCap || hasPrice || hasLiquidity) && <Dot />}
+                  <span className="text-fg-3" title="DexScreener 24h volume">
+                    {formatUsdVol(token.volumeUsd24h!)}
+                    <span className="text-fg-4"> vol</span>
+                  </span>
+                </>
               )}
               {hasChange && (
-                <span
-                  className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold ring-1 ${
-                    token.priceChange24h! >= 0
-                      ? "bg-emerald-950/50 text-emerald-400 ring-emerald-800/50"
-                      : "bg-red-950/50 text-red-400 ring-red-800/50"
-                  }`}
+                <Chip
+                  tone={token.priceChange24h! >= 0 ? "up" : "down"}
+                  className="font-mono"
                   title="24h price change"
                 >
                   {formatPct(token.priceChange24h!)}
-                </span>
+                </Chip>
               )}
             </div>
           )}
 
-          {/* Row 3: Confidence + links */}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          {/* Row 4: venue / risk badges — collapses when nothing renders */}
+          <div className="flex flex-wrap items-center gap-1.5 empty:hidden">
+            <PlatformBadge dexId={token.dexId} mint={token.mint} />
+            <RiskChips
+              mintAuthorityActive={token.mintAuthorityActive}
+              freezeAuthorityActive={token.freezeAuthorityActive}
+              metadataMutable={token.metadataMutable}
+            />
+            {token.linkProvenance && <ProvenanceBadge />}
+            {token.homoglyphSuspect && <HomoglyphBadge />}
+            {token.supplyZero && <BurnedBadge />}
+          </div>
+
+          {/* Row 5: confidence + actions */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pt-0.5">
             <div className="flex items-center gap-1.5">
               <ConfidenceStars score={token.confidence} />
               {token.confidenceLabel && (
                 <span
-                  className="text-[11px] text-gray-500"
+                  className="text-micro text-fg-3"
                   title={OG_LABEL_TITLES[token.confidenceLabel]}
                 >
                   {token.confidenceLabel}
@@ -328,67 +351,70 @@ export function TokenCard({ token }: { token: TokenResult }) {
 
             <div className="hidden flex-wrap items-center gap-1.5 sm:ml-auto sm:flex">
               <a
-                href={`https://trade.padre.gg/trade/solana/${token.mint}`}
+                href={tradeHref}
                 target="_blank"
                 rel="noopener noreferrer"
                 title="Trade on Padre Terminal"
-                className="group inline-flex items-center gap-2 rounded-lg border border-emerald-400/25 bg-emerald-950/35 px-2 py-1.5 shadow-sm shadow-emerald-950/20 transition-all hover:border-emerald-400/45 hover:bg-emerald-950/55 hover:shadow-emerald-900/30"
+                className="group inline-flex items-center gap-2 rounded-lg border border-og/30 bg-og/10 px-2.5 py-1 transition-colors hover:border-og/50 hover:bg-og/[0.16]"
               >
                 <Image
                   src="/padre.png"
                   alt=""
                   width={88}
                   height={18}
-                  className="h-[18px] w-auto max-w-[5.75rem] object-contain object-left opacity-[0.92] transition-opacity group-hover:opacity-100"
+                  className="h-[16px] w-auto max-w-[5.75rem] object-contain object-left opacity-80 transition-opacity group-hover:opacity-100"
                 />
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-400/90">
+                <span className="text-micro font-semibold uppercase tracking-[0.12em] text-og">
                   Trade
                 </span>
                 <span className="sr-only">Open Padre Terminal for this token</span>
               </a>
               <a
-                href={`https://solscan.io/token/${token.mint}`}
+                href={solscanHref}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="rounded-lg bg-gray-800/70 px-2.5 py-1 text-[11px] font-medium text-gray-400 transition-colors hover:bg-gray-700 hover:text-gray-100"
+                className={EXPLORER_LINK}
               >
                 Solscan
               </a>
               <a
-                href={`https://birdeye.so/token/${token.mint}?chain=solana`}
+                href={birdeyeHref}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="rounded-lg bg-gray-800/70 px-2.5 py-1 text-[11px] font-medium text-gray-400 transition-colors hover:bg-gray-700 hover:text-gray-100"
+                className={EXPLORER_LINK}
               >
                 Birdeye
               </a>
               <a
-                href={`https://dexscreener.com/solana/${token.mint}`}
+                href={dexHref}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="rounded-lg bg-gray-800/70 px-2.5 py-1 text-[11px] font-medium text-gray-400 transition-colors hover:bg-gray-700 hover:text-gray-100"
+                className={EXPLORER_LINK}
               >
                 DEX
               </a>
             </div>
 
             {/* Mobile: primary Trade link + "•••" overflow menu (44px targets). */}
-            <div ref={menuRef} className="relative flex items-center gap-1.5 sm:hidden">
+            <div
+              ref={menuRef}
+              className="relative ml-auto flex items-center gap-1.5 sm:hidden"
+            >
               <a
-                href={`https://trade.padre.gg/trade/solana/${token.mint}`}
+                href={tradeHref}
                 target="_blank"
                 rel="noopener noreferrer"
                 title="Trade on Padre Terminal"
-                className="group inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-emerald-400/25 bg-emerald-950/35 px-3 shadow-sm shadow-emerald-950/20 transition-all hover:border-emerald-400/45 hover:bg-emerald-950/55 hover:shadow-emerald-900/30"
+                className="group inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-og/30 bg-og/10 px-3 transition-colors hover:border-og/50 hover:bg-og/[0.16]"
               >
                 <Image
                   src="/padre.png"
                   alt=""
                   width={88}
                   height={18}
-                  className="h-[18px] w-auto max-w-[5.75rem] object-contain object-left opacity-[0.92] transition-opacity group-hover:opacity-100"
+                  className="h-[16px] w-auto max-w-[5.75rem] object-contain object-left opacity-80 transition-opacity group-hover:opacity-100"
                 />
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-400/90">
+                <span className="text-micro font-semibold uppercase tracking-[0.12em] text-og">
                   Trade
                 </span>
                 <span className="sr-only">Open Padre Terminal for this token</span>
@@ -399,7 +425,11 @@ export function TokenCard({ token }: { token: TokenResult }) {
                 aria-haspopup="menu"
                 aria-expanded={menuOpen}
                 aria-label="More explorer links"
-                className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-gray-800/70 text-sm font-bold text-gray-400 transition-colors hover:bg-gray-700 hover:text-gray-100"
+                className={`inline-flex h-11 w-11 items-center justify-center rounded-xl border text-sm font-bold transition-colors ${
+                  menuOpen
+                    ? "border-line-str bg-surface-3 text-fg"
+                    : "bg-surface-2 text-fg-3 hover:border-line-str hover:text-fg"
+                }`}
               >
                 •••
               </button>
@@ -407,35 +437,35 @@ export function TokenCard({ token }: { token: TokenResult }) {
                 <div
                   role="menu"
                   aria-label="Explorer links"
-                  className="absolute right-0 top-full z-20 mt-1.5 w-44 overflow-hidden rounded-xl border border-gray-700/80 bg-gray-900 shadow-xl shadow-black/50"
+                  className="absolute right-0 top-full z-20 mt-1.5 w-44 overflow-hidden rounded-xl border border-line-str bg-surface-2 shadow-2xl shadow-black/60"
                 >
                   <a
                     role="menuitem"
-                    href={`https://solscan.io/token/${token.mint}`}
+                    href={solscanHref}
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={() => setMenuOpen(false)}
-                    className="flex min-h-[44px] items-center px-4 text-sm font-medium text-gray-300 transition-colors hover:bg-gray-800 hover:text-gray-100"
+                    className="flex min-h-[44px] items-center px-4 text-sm font-medium text-fg-2 transition-colors hover:bg-surface-3 hover:text-fg"
                   >
                     Solscan
                   </a>
                   <a
                     role="menuitem"
-                    href={`https://birdeye.so/token/${token.mint}?chain=solana`}
+                    href={birdeyeHref}
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={() => setMenuOpen(false)}
-                    className="flex min-h-[44px] items-center px-4 text-sm font-medium text-gray-300 transition-colors hover:bg-gray-800 hover:text-gray-100"
+                    className="flex min-h-[44px] items-center border-t px-4 text-sm font-medium text-fg-2 transition-colors hover:bg-surface-3 hover:text-fg"
                   >
                     Birdeye
                   </a>
                   <a
                     role="menuitem"
-                    href={`https://dexscreener.com/solana/${token.mint}`}
+                    href={dexHref}
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={() => setMenuOpen(false)}
-                    className="flex min-h-[44px] items-center px-4 text-sm font-medium text-gray-300 transition-colors hover:bg-gray-800 hover:text-gray-100"
+                    className="flex min-h-[44px] items-center border-t px-4 text-sm font-medium text-fg-2 transition-colors hover:bg-surface-3 hover:text-fg"
                   >
                     DEX
                   </a>
@@ -445,6 +475,6 @@ export function TokenCard({ token }: { token: TokenResult }) {
           </div>
         </div>
       </div>
-    </div>
+    </article>
   );
 }

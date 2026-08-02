@@ -1,40 +1,103 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { LottieHover } from "./LottieHover";
 import { bucketForToken, labelForBucket } from "@/lib/launchpads";
 import crownOg from "@/assets/lottie/crown-og.json";
 
-export function OGBadge({ rank }: { rank: number }) {
-  if (rank !== 1) return null;
+/* ==========================================================================
+   Chip — the single primitive every pill in the app is built from.
+   11px, rounded-full, ~10% tinted fill of the semantic colour, full-strength
+   text and a matching hairline at ~25%. Tones map 1:1 to the design tokens.
+   ========================================================================== */
+
+export type ChipTone =
+  | "og"
+  | "scan"
+  | "up"
+  | "down"
+  | "risk"
+  | "warn"
+  | "neutral"
+  | "platform";
+
+const CHIP_TONES: Record<ChipTone, string> = {
+  og: "border-og/25 bg-og/10 text-og",
+  scan: "border-scan/25 bg-scan/10 text-scan",
+  up: "border-up/25 bg-up/10 text-up",
+  down: "border-down/25 bg-down/10 text-down",
+  risk: "border-risk/25 bg-risk/10 text-risk",
+  warn: "border-warn/25 bg-warn/10 text-warn",
+  neutral: "border-line bg-surface-3 text-fg-3",
+  platform: "border-line bg-surface-3 text-fg-2",
+};
+
+const CHIP_SIZES: Record<"sm" | "md", string> = {
+  sm: "gap-1 px-2 py-0.5 text-micro",
+  md: "gap-1.5 px-2.5 py-1 text-micro",
+};
+
+export function Chip({
+  tone = "neutral",
+  size = "sm",
+  className,
+  title,
+  children,
+}: {
+  tone?: ChipTone;
+  size?: "sm" | "md";
+  className?: string;
+  title?: string;
+  children: ReactNode;
+}) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-yellow-900/40 px-2.5 py-1 text-xs font-bold uppercase tracking-wide text-yellow-400 ring-1 ring-yellow-600/50">
-      <span className="og-badge-crown inline-flex shrink-0">
-        <LottieHover animationData={crownOg} size={20} className="shrink-0" />
-      </span>
-      <span>OG</span>
+    <span
+      title={title}
+      className={`inline-flex items-center whitespace-nowrap rounded-full border font-medium ${
+        CHIP_SIZES[size]
+      } ${CHIP_TONES[tone]} ${className ?? ""}`}
+    >
+      {children}
     </span>
   );
 }
 
-/** Stars = age-data quality (how reliable the creation time is), NOT OG-ness. */
+export function OGBadge({ rank }: { rank: number }) {
+  if (rank !== 1) return null;
+  return (
+    <Chip
+      tone="og"
+      size="md"
+      className="font-semibold uppercase tracking-[0.16em]"
+    >
+      <span className="og-badge-crown -ml-0.5 inline-flex shrink-0">
+        <LottieHover animationData={crownOg} size={18} className="shrink-0" />
+      </span>
+      <span>OG</span>
+    </Chip>
+  );
+}
+
+/**
+ * Stars = age-data quality (how reliable the creation time is), NOT OG-ness.
+ * Drawn as five signal bars so it never reads as a star *rating* of the token.
+ */
 export function ConfidenceStars({ score }: { score: number }) {
   const clamped = Math.max(0, Math.min(5, score));
   return (
     <span
-      className="inline-flex gap-px text-xs"
+      className="inline-flex items-center gap-[3px]"
       title={`Age data quality: ${clamped}/5 — how reliable this token's creation time is`}
     >
-      <span className="sr-only">
-        Age data quality {clamped} of 5
-      </span>
+      <span className="sr-only">Age data quality {clamped} of 5</span>
       {Array.from({ length: 5 }, (_, i) => (
         <span
           key={i}
           aria-hidden="true"
-          className={i < clamped ? "text-yellow-500" : "text-gray-700"}
-        >
-          ★
-        </span>
+          className={`h-2.5 w-[3px] rounded-full ${
+            i < clamped ? "bg-og" : "bg-surface-3"
+          }`}
+        />
       ))}
     </span>
   );
@@ -43,14 +106,32 @@ export function ConfidenceStars({ score }: { score: number }) {
 /** Neutral info chip for ranks 2+ whose name+symbol exactly match the query. */
 export function ExactNameBadge() {
   return (
-    <span
-      className="inline-flex items-center rounded-full bg-gray-800/60 px-2 py-0.5 text-[10px] font-medium text-gray-400 ring-1 ring-gray-700/50"
+    <Chip
+      tone="neutral"
       title="Name and symbol exactly match the search — says nothing about which token came first"
     >
       exact name
-    </span>
+    </Chip>
   );
 }
+
+/**
+ * Launchpad hues live on a 5px dot instead of the chip fill: the venue stays
+ * identifiable at a glance without six extra colours competing with the verdict.
+ */
+const PLATFORM_DOTS: Record<string, string> = {
+  pumpfun: "#f472b6",
+  pumpswap: "#f472b6",
+  raydium: "#a78bfa",
+  launchlab: "#a78bfa",
+  letsbonk: "#fb923c",
+  moonshot: "#818cf8",
+  boop: "#38bdf8",
+  believe: "#4ade80",
+  meteora: "#fb7185",
+  orca: "#38bdf8",
+  other: "#52525b",
+};
 
 export function PlatformBadge({
   dexId,
@@ -62,51 +143,34 @@ export function PlatformBadge({
   const bucket = bucketForToken(dexId, mint);
   if (bucket === "unknown") return null;
 
-  let label: string;
-  let colors: string;
-
-  if (bucket === "pumpfun") {
-    label = "Pump.fun";
-    colors = "bg-pink-950/60 text-pink-400 ring-pink-800/50";
-  } else if (bucket === "pumpswap") {
-    label = "PumpSwap";
-    colors = "bg-pink-950/60 text-pink-400 ring-pink-800/50";
-  } else if (bucket === "raydium") {
-    label = "Raydium";
-    colors = "bg-purple-950/60 text-purple-400 ring-purple-800/50";
-  } else if (bucket === "letsbonk") {
-    label = "LetsBonk";
-    colors = "bg-orange-950/60 text-orange-400 ring-orange-800/50";
-  } else if (bucket === "meteora") {
-    label = "Meteora";
-    colors = "bg-red-950/60 text-red-400 ring-red-800/50";
-  } else if (bucket === "orca") {
-    label = "Orca";
-    colors = "bg-sky-950/60 text-sky-400 ring-sky-800/50";
-  } else if (bucket === "other") {
-    label = dexId
-      ? dexId.charAt(0).toUpperCase() + dexId.slice(1)
-      : "Other";
-    colors = "bg-gray-800/60 text-gray-400 ring-gray-700/50";
-  } else {
-    label = labelForBucket(bucket);
-    colors = "bg-gray-800/60 text-gray-400 ring-gray-700/50";
-  }
+  const label =
+    bucket === "other"
+      ? dexId
+        ? dexId.charAt(0).toUpperCase() + dexId.slice(1)
+        : "Other"
+      : labelForBucket(bucket);
 
   return (
-    <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ${colors}`}
-    >
+    <Chip tone="platform">
+      <span
+        aria-hidden
+        className="h-[5px] w-[5px] shrink-0 rounded-full"
+        style={{ backgroundColor: PLATFORM_DOTS[bucket] ?? "#52525b" }}
+      />
       {label}
-    </span>
+    </Chip>
   );
 }
 
 export function ScannedMintBadge() {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-cyan-950/50 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cyan-300 ring-1 ring-cyan-600/40">
+    <Chip
+      tone="scan"
+      className="font-semibold uppercase tracking-[0.14em]"
+      title="The contract address you scanned"
+    >
       Your CA
-    </span>
+    </Chip>
   );
 }
 
@@ -127,11 +191,6 @@ export function RiskChips({
   metadataMutable?: boolean;
   size?: "sm" | "md";
 }) {
-  const base =
-    size === "md"
-      ? "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium ring-1"
-      : "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1";
-
   const renounced =
     mintAuthorityActive === false &&
     freezeAuthorityActive === false &&
@@ -139,12 +198,13 @@ export function RiskChips({
 
   if (renounced) {
     return (
-      <span
-        className={`${base} bg-emerald-950/60 text-emerald-400 ring-emerald-800/50`}
+      <Chip
+        tone="up"
+        size={size}
         title="Mint & freeze revoked, metadata immutable"
       >
         renounced
-      </span>
+      </Chip>
     );
   }
 
@@ -157,28 +217,31 @@ export function RiskChips({
   return (
     <>
       {mintAuthorityActive === true && (
-        <span
-          className={`${base} bg-red-950/60 text-red-400 ring-red-800/50`}
+        <Chip
+          tone="risk"
+          size={size}
           title="Mint authority active — supply can be inflated"
         >
           mint auth
-        </span>
+        </Chip>
       )}
       {freezeAuthorityActive === true && (
-        <span
-          className={`${base} bg-red-950/60 text-red-400 ring-red-800/50`}
+        <Chip
+          tone="risk"
+          size={size}
           title="Freeze authority active — accounts can be frozen"
         >
           freeze
-        </span>
+        </Chip>
       )}
       {metadataMutable === true && (
-        <span
-          className={`${base} bg-amber-950/60 text-amber-400 ring-amber-800/50`}
+        <Chip
+          tone="warn"
+          size={size}
           title="Metadata is mutable — name/image can change"
         >
           mutable
-        </span>
+        </Chip>
       )}
     </>
   );
@@ -195,28 +258,20 @@ export function HolderConcChip({
   pct: number;
   size?: "sm" | "md";
 }) {
-  const base =
-    size === "md"
-      ? "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium ring-1"
-      : "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1";
-
-  const colors =
-    pct > 50
-      ? "bg-red-950/60 text-red-400 ring-red-800/50"
-      : pct > 25
-        ? "bg-amber-950/60 text-amber-400 ring-amber-800/50"
-        : "bg-gray-800/60 text-gray-400 ring-gray-700/50";
+  const tone: ChipTone = pct > 50 ? "risk" : pct > 25 ? "warn" : "neutral";
 
   const label =
     pct >= 10 ? String(Math.round(pct)) : pct >= 0.1 ? pct.toFixed(1) : "<0.1";
 
   return (
-    <span
-      className={`${base} ${colors}`}
+    <Chip
+      tone={tone}
+      size={size}
       title="Share of supply in the 10 largest token accounts. Includes liquidity pools and burn addresses, so treat as an upper bound."
     >
-      top 10 accounts hold {label}%
-    </span>
+      top 10 accounts hold&nbsp;
+      <span className="font-mono">{label}%</span>
+    </Chip>
   );
 }
 
@@ -227,42 +282,52 @@ export function HolderConcChip({
  */
 export function ProvenanceBadge() {
   return (
-    <span
-      className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium text-emerald-400 ring-1 ring-emerald-600/50"
+    <Chip
+      tone="up"
       title="Based on when OGfinder's link index first observed each claim — not when the link was created. The index only covers recently listed tokens."
     >
       first link claim
-    </span>
+    </Chip>
   );
 }
 
 /** Red warning chip: name matches the search only via lookalike folding. */
 export function HomoglyphBadge() {
   return (
-    <span
-      className="inline-flex items-center rounded-full bg-red-950/60 px-2 py-0.5 text-[10px] font-semibold text-red-400 ring-1 ring-red-800/50"
+    <Chip
+      tone="risk"
+      className="font-semibold"
       title="Name uses lookalike/invisible characters — likely impersonation"
     >
       lookalike chars
-    </span>
+    </Chip>
   );
 }
 
 export function BurnedBadge() {
   return (
-    <span
-      className="inline-flex items-center rounded-full bg-gray-800/60 px-2 py-0.5 text-[10px] font-medium text-gray-400 ring-1 ring-gray-700/50"
+    <Chip
+      tone="neutral"
       title="On-chain supply is zero — this token has been fully burned"
     >
       Burned
-    </span>
+    </Chip>
   );
 }
 
+/**
+ * Rank rail marker above the token avatar. Rank 1 is the only gold surface in
+ * the list; 2-3 sit on surface-3 and everything below fades back.
+ */
 export function RankBadge({ rank }: { rank: number }) {
+  const base =
+    "flex h-6 w-10 flex-shrink-0 items-center justify-center rounded-lg font-display text-[13px] font-bold tabular-nums";
+
   if (rank === 1) {
     return (
-      <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-yellow-500 text-base font-black text-black">
+      <div
+        className={`${base} bg-gradient-to-b from-og-light to-og text-black shadow-[0_0_16px_rgba(240,180,41,0.3)]`}
+      >
         1
       </div>
     );
@@ -270,14 +335,12 @@ export function RankBadge({ rank }: { rank: number }) {
 
   if (rank <= 3) {
     return (
-      <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-gray-700 text-base font-bold text-gray-200">
-        {rank}
-      </div>
+      <div className={`${base} border bg-surface-3 text-fg-2`}>{rank}</div>
     );
   }
 
   return (
-    <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-gray-800/80 text-sm font-semibold text-gray-500">
+    <div className={`${base} border bg-surface-2 text-[12px] font-semibold text-fg-4`}>
       {rank}
     </div>
   );
