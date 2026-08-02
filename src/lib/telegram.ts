@@ -12,7 +12,13 @@ import { encodeSharePayload, formatShareDate, type SharePayload } from "./share"
 import { timeAgo, formatAgeGap } from "./format";
 import { isLikelyMintAddress } from "./solana";
 import { MIN_QUERY, MAX_QUERY, type TokenResult } from "./types";
-import { normalize } from "./normalize";
+import { normalize, skeleton } from "./normalize";
+import { getAssetBatch } from "./helius";
+import {
+  getRegisteredOg,
+  isRegistryFresh,
+  type OgRegistryEntry,
+} from "./og-registry";
 import { getSearchCache, setSearchCache } from "./cache";
 import { searchTokens } from "./search";
 import { buildTokenResults } from "./enrich-results";
@@ -570,6 +576,39 @@ export function formatMintVerdict(
   return lines.join("\n");
 }
 
+/**
+ * Instant verdict from the exact-name OG registry, shown while the definitive
+ * full scan runs. The final scan edit always lands after this one, so a
+ * contradiction is resolved by construction — the full verdict wins. Pure;
+ * exported for tests.
+ */
+export function formatRegistryVerdict(
+  mint: string,
+  entry: OgRegistryEntry
+): string {
+  const name = escapeHtml(entry.ogName);
+  const sym = entry.ogSymbol ? ` ($${escapeHtml(entry.ogSymbol)})` : "";
+  const lines: string[] = [];
+  if (mint === entry.ogMint) {
+    const ago = timeAgo(new Date(entry.verifiedAt).toISOString());
+    lines.push(
+      `👑 <b>THIS IS THE OG</b> — ${name}${sym} (verified ${ago || "recently"})`
+    );
+  } else {
+    const minted =
+      entry.ogCreatedAtMs != null
+        ? formatShareDate(new Date(entry.ogCreatedAtMs).toISOString())
+        : null;
+    lines.push(
+      `🚫 <b>NOT THE OG</b> — the OG of "${name}"${sym} is <code>${escapeHtml(
+        entry.ogMint
+      )}</code>${minted ? `, minted ${minted}` : ""}`
+    );
+  }
+  lines.push("(from OGfinder registry — full re-check running)");
+  return lines.join("\n");
+}
+
 /** sendMessage returning the new message_id (null on any failure). */
 async function sendChatMessage(
   chatId: string,
@@ -637,6 +676,39 @@ async function finishVerdict(
   }
 }
 
+/**
+ * Instant registry-backed answer: resolve the pasted mint's name cheaply
+ * (getAssetBatch is heliusMeta-cached — repeats are free), look up the EXACT
+ * name skeleton in the OG registry, and edit the placeholder immediately on a
+ * fresh hit. Deliberately awaited BEFORE the detached full scan starts so the
+ * definitive verdict edit always lands after (and wins over) this one.
+ * Registry miss, stale entry, or any failure → no edit, behavior unchanged.
+ */
+async function sendRegistryPreVerdict(
+  chatId: string,
+  messageId: number,
+  mint: string
+): Promise<void> {
+  try {
+    const meta = (await getAssetBatch([mint])).get(mint);
+    const name = meta?.heliusName?.trim();
+    if (!name) return;
+    const key = skeleton(name);
+    if (key.length < 2) return;
+    const entry = getRegisteredOg(key);
+    if (!entry || !isRegistryFresh(entry.verifiedAt)) return;
+    await tgCall("editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text: formatRegistryVerdict(mint, entry),
+      parse_mode: "HTML",
+      link_preview_options: { is_disabled: true },
+    });
+  } catch {
+    /* registry pre-answer is best-effort — the full scan still edits */
+  }
+}
+
 /** Busy-cap check + placeholder + detached scan for one mint. */
 async function startVerdictScan(
   chatId: string,
@@ -655,6 +727,9 @@ async function startVerdictScan(
     { replyToMessageId }
   );
   if (placeholderId == null) return;
+  // Instant answer for exact names we've already verified — awaited so the
+  // detached full scan's edit below always lands later and wins.
+  await sendRegistryPreVerdict(chatId, placeholderId, mint);
   // Detached on purpose: the long-poll loop stays responsive while the scan
   // runs; botScansInFlight bounds total concurrent pipeline work. scanMint
   // shares caches + in-flight coalescing with web scans, so warm mints are

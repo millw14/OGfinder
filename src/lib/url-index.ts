@@ -93,6 +93,15 @@ export function getDb(): Database.Database {
       top_json   TEXT    NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_snapshots_query ON query_snapshots(query_norm, taken_at DESC);
+    CREATE TABLE IF NOT EXISTS og_registry (
+      name_skeleton    TEXT    PRIMARY KEY,
+      og_mint          TEXT    NOT NULL,
+      og_name          TEXT    NOT NULL,
+      og_symbol        TEXT,
+      og_created_at_ms INTEGER,
+      verified_at      INTEGER NOT NULL,
+      scan_count       INTEGER NOT NULL DEFAULT 1
+    );
   `);
   // Migration: token_links freshness columns (ALTER TABLE has no IF NOT EXISTS).
   // Runs before any statement is prepared — all stmt singletons lazily call

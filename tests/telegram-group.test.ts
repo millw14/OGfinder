@@ -3,10 +3,12 @@ import {
   extractMintCandidates,
   formatMintVerdict,
   formatNameSearchReply,
+  formatRegistryVerdict,
   parseBotCommand,
   verdictShareUrl,
   VerdictCooldown,
 } from "@/lib/telegram";
+import type { OgRegistryEntry } from "@/lib/og-registry";
 import { telegramWatchIpKey } from "@/lib/watches";
 import type { MintScanPayload } from "@/lib/scan";
 import type { TokenResult } from "@/lib/types";
@@ -351,6 +353,63 @@ describe("verdictShareUrl", () => {
       o: true,
       m: BONK,
     });
+  });
+});
+
+// ————————————————————————— formatRegistryVerdict —————————————————————————
+
+describe("formatRegistryVerdict", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-02T00:00:00.000Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function entry(over?: Partial<OgRegistryEntry>): OgRegistryEntry {
+    return {
+      ogMint: BONK,
+      ogName: "Bonk",
+      ogSymbol: "BONK",
+      ogCreatedAtMs: Date.parse(OG_CREATED),
+      verifiedAt: Date.now(),
+      scanCount: 3,
+      ...over,
+    };
+  }
+
+  it("crowns the registered OG with the verification age and re-check note", () => {
+    expect(formatRegistryVerdict(BONK, entry())).toBe(
+      [
+        "👑 <b>THIS IS THE OG</b> — Bonk ($BONK) (verified today)",
+        "(from OGfinder registry — full re-check running)",
+      ].join("\n")
+    );
+  });
+
+  it("flags a non-OG with the registered OG's mint and mint date", () => {
+    expect(formatRegistryVerdict(USDC, entry())).toBe(
+      [
+        `🚫 <b>NOT THE OG</b> — the OG of "Bonk" ($BONK) is <code>${BONK}</code>, minted Dec 20, 2022`,
+        "(from OGfinder registry — full re-check running)",
+      ].join("\n")
+    );
+  });
+
+  it("omits the mint date when unknown and escapes HTML in name/symbol", () => {
+    const msg = formatRegistryVerdict(
+      USDC,
+      entry({ ogName: "Bonk <&> Co", ogSymbol: "B&NK", ogCreatedAtMs: null })
+    );
+    expect(msg).toContain('the OG of "Bonk &lt;&amp;&gt; Co" ($B&amp;NK)');
+    expect(msg).not.toContain("minted");
+    expect(msg).toContain(`<code>${BONK}</code>`);
+  });
+
+  it("omits the symbol suffix when null", () => {
+    const msg = formatRegistryVerdict(BONK, entry({ ogSymbol: null }));
+    expect(msg).toContain("— Bonk (verified today)");
   });
 });
 

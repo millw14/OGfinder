@@ -11,6 +11,7 @@ import {
 } from "./helius";
 import { getJupiterTokenByMint } from "./jupiter";
 import { annotateLinkProvenance } from "./provenance";
+import { recordOgFromScan } from "./og-registry";
 
 /**
  * Mint-scan pipeline, extracted from the /api/search route so non-HTTP
@@ -189,6 +190,10 @@ export async function runMintScan(
   if (options?.fast) {
     setSearchCache(cacheKey, payload, FAST_TTL);
   } else {
+    // Exact-name OG registry: remember this cohort's verified OG so repeat
+    // scans (e.g. Telegram CA pastes) answer instantly. Try/caught inside —
+    // full scans only, fast-phase ages are not trustworthy enough to record.
+    recordOgFromScan(payload, q);
     setSearchCache(cacheKey, payload);
   }
 
