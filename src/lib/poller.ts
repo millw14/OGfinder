@@ -1,4 +1,5 @@
 import {
+  getDb,
   upsertTokenLinks,
   countIndexedTokens,
   getPollState,
@@ -287,8 +288,22 @@ async function tick(): Promise<void> {
 export function ensurePollerStarted(): void {
   const state = getPollerState();
   if (state.started) return;
-  state.started = true;
   const isDev = process.env.NODE_ENV === "development";
+  // Refuse to claim the (globalThis-shared) started flag without a working DB.
+  // Turbo dev runs instrumentation.ts in a separate module graph where the
+  // native better-sqlite3 binding can fail to load — a poller started there
+  // would spin with every write silently failing AND block the route-fallback
+  // start in the working module graph. Probe first; the context that can
+  // actually reach the DB wins.
+  try {
+    getDb().prepare("SELECT 1").get();
+  } catch {
+    if (isDev) {
+      console.log("[poller] DB unavailable in this context — deferring start");
+    }
+    return;
+  }
+  state.started = true;
   if (isDev) console.log("[poller] starting background poller");
   // Self-scheduling loop (no setInterval): the next run is only armed after
   // the current tick fully settles, so a slow tick can never overlap.
