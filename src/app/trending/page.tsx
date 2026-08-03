@@ -23,13 +23,18 @@ export default async function TrendingPage() {
       <NavTabs />
 
       <main className="relative mx-auto w-full max-w-3xl flex-1 px-4 pb-12 pt-8 sm:pt-12">
-        <div className="mb-6 text-center">
-          <h1 className="font-display text-3xl font-bold tracking-tight text-fg sm:text-4xl">
+        <div className="mb-7 text-center">
+          <p className="text-micro font-semibold uppercase tracking-[0.18em] text-og">
+            Copycat firehose
+          </p>
+          <h1 className="mt-2 font-display text-[34px] font-bold leading-[1.05] tracking-tight text-fg sm:text-[40px]">
             Trending Clusters
           </h1>
-          <p className="mt-2 text-sm text-fg-3">
-            Names being launched over and over right now — clustered from the
-            discovery firehose by lookalike-folded name
+          <p className="mx-auto mt-3 max-w-lg text-balance text-sm leading-relaxed text-fg-2">
+            A cluster is one name being launched over and over. We fold every
+            new mint&rsquo;s name past lookalike characters, group the
+            collisions, and rank them by how hard they&rsquo;re being copied
+            right now.
           </p>
         </div>
 

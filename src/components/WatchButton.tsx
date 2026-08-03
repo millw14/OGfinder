@@ -17,9 +17,31 @@ interface WatchButtonProps {
   originMint?: string | null;
 }
 
+/** 12px bell — outline while idle, filled once the watch is armed. */
+function BellIcon({ active }: { active: boolean }) {
+  return (
+    <svg
+      aria-hidden
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill={active ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="shrink-0"
+    >
+      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+    </svg>
+  );
+}
+
 /**
- * Amber-outline watch pill: "Watch for new clones" ↔ "Watching" (click
- * unwatches). Persists {id, secret} in localStorage — no accounts.
+ * Gold watch control: hairline-outline "Watch for new clones" ↔ gold-tinted
+ * "Watching" (click unwatches). Shape matches the Share verdict button it sits
+ * beside. Persists {id, secret} in localStorage — no accounts.
  */
 export function WatchButton({ query, kind, originMint }: WatchButtonProps) {
   const [watching, setWatching] = useState<StoredWatch | null>(null);
@@ -108,7 +130,7 @@ export function WatchButton({ query, kind, originMint }: WatchButtonProps) {
   };
 
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <span className="inline-flex flex-wrap items-center gap-2">
       <button
         type="button"
         onClick={toggle}
@@ -119,16 +141,17 @@ export function WatchButton({ query, kind, originMint }: WatchButtonProps) {
             ? "Stop watching this name"
             : "Get alerted when new lookalike tokens launch with this name"
         }
-        className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+        className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-meta font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
           watching
-            ? "border-amber-500/60 bg-amber-950/40 text-amber-200 hover:border-amber-400/70"
-            : "border-amber-600/50 text-amber-400/90 hover:border-amber-500/70 hover:bg-amber-950/30 hover:text-amber-300"
+            ? "border-og/45 bg-og/[0.14] text-og hover:border-og/65 hover:bg-og/20"
+            : "border-og/30 text-og/90 hover:border-og/50 hover:bg-og/10 hover:text-og"
         }`}
       >
+        <BellIcon active={Boolean(watching)} />
         {watching ? "Watching" : "Watch for new clones"}
       </button>
       {notice && (
-        <span role="status" className="text-[11px] text-amber-500/90">
+        <span role="status" className="text-micro font-medium text-warn">
           {notice}
         </span>
       )}

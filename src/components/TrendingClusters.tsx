@@ -29,41 +29,52 @@ function truncateMint(mint: string): string {
   return `${mint.slice(0, 4)}…${mint.slice(-4)}`;
 }
 
+const EYEBROW = "text-micro font-semibold uppercase tracking-[0.18em]";
+
 function ClusterCard({ cluster }: { cluster: TrendingCluster }) {
   const displayName = cluster.representativeName || cluster.skeleton;
   const watchQuery = cluster.representativeName.trim();
   const canWatch = watchQuery.length >= 2 && watchQuery.length <= 30;
 
   return (
-    <section className="rounded-2xl border border-gray-800/60 bg-gray-900/40 p-4 sm:p-5">
-      <div className="flex items-start justify-between gap-3">
+    <section className="overflow-hidden rounded-2xl border bg-surface-1 transition-colors hover:border-line-str">
+      {/* ── Identity + the focal launch count ───────────────────────────── */}
+      <div className="flex items-start justify-between gap-4 p-4 sm:p-5">
         <div className="min-w-0">
-          <h2 className="truncate text-lg font-black tracking-tight text-gray-100">
+          <h2 className="truncate font-display text-lg font-bold tracking-tight text-fg sm:text-xl">
             {displayName}
             {cluster.representativeSymbol && (
-              <span className="ml-1.5 text-sm font-semibold text-gray-500">
+              <span className="ml-1.5 font-mono text-meta font-normal text-fg-3">
                 ${cluster.representativeSymbol}
               </span>
             )}
           </h2>
           <p
-            className="mt-0.5 cursor-help text-[11px] text-gray-500"
+            className="mt-1 cursor-help text-micro text-fg-4"
             title={OLDEST_KNOWN_TOOLTIP}
           >
             oldest known{" "}
-            <span className="text-gray-400">
+            <span className="font-mono text-fg-3">
               {formatDate(new Date(cluster.oldestKnownMs).toISOString())}
             </span>
-            <span className="text-gray-700"> · </span>
-            newest {timeAgo(new Date(cluster.newestSeenMs).toISOString())}
+            <span className="text-fg-4"> · </span>
+            newest{" "}
+            <span className="font-mono text-fg-3">
+              {timeAgo(new Date(cluster.newestSeenMs).toISOString())}
+            </span>
           </p>
           {cluster.marketCapUsd !== null && (
-            <p className="mt-1.5 text-xs font-semibold text-emerald-400/90">
-              MC {formatUsdVol(cluster.marketCapUsd)}
+            <p className="mt-2 text-meta font-semibold text-up">
+              MC <span className="font-mono">{formatUsdVol(cluster.marketCapUsd)}</span>
               {cluster.volumeUsd24h !== null && (
-                <> · Vol {formatUsdVol(cluster.volumeUsd24h)}</>
+                <>
+                  <span className="text-fg-4"> · </span>Vol{" "}
+                  <span className="font-mono">
+                    {formatUsdVol(cluster.volumeUsd24h)}
+                  </span>
+                </>
               )}
-              <span className="font-medium text-gray-600">
+              <span className="font-normal text-fg-4">
                 {" "}
                 across top {cluster.members.length}
               </span>
@@ -71,34 +82,37 @@ function ClusterCard({ cluster }: { cluster: TrendingCluster }) {
           )}
         </div>
         <div className="flex-shrink-0 text-right">
-          <span className="text-3xl font-black tabular-nums text-amber-400">
+          <span className="block font-mono text-[32px] font-medium leading-none tabular-nums text-og sm:text-[38px]">
             {cluster.launches}
           </span>
-          <span className="ml-1.5 text-[11px] font-semibold uppercase tracking-wider text-amber-500/70">
-            launches
-          </span>
+          <span className={`${EYEBROW} mt-1.5 block text-og/60`}>launches</span>
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+      {/* ── Members ─────────────────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-1.5 border-t bg-bg/50 px-4 py-3 sm:px-5">
         {cluster.members.map((m) => (
           <Link
             key={m.mint}
             href={`/?q=${encodeURIComponent(m.mint)}`}
             title={m.mint}
-            className="rounded-full border border-gray-700/60 bg-gray-900/50 px-2.5 py-1 text-[11px] text-gray-400 transition-colors hover:border-amber-600/50 hover:bg-amber-950/20 hover:text-amber-300"
+            className={`max-w-[14rem] truncate rounded-full border bg-surface-2 px-2.5 py-1 text-micro text-fg-2 transition-colors hover:border-og/40 hover:bg-og/10 hover:text-og ${
+              m.name ? "" : "font-mono"
+            }`}
           >
             {m.name ?? truncateMint(m.mint)}
           </Link>
         ))}
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-gray-800/60 pt-3">
+      {/* ── Actions ─────────────────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t px-4 py-3 sm:px-5">
         <Link
           href={`/?q=${encodeURIComponent(cluster.representativeName)}`}
-          className="text-xs font-semibold text-amber-400/90 transition-colors hover:text-amber-300"
+          className="inline-flex items-center gap-1 text-meta font-semibold text-fg-2 transition-colors hover:text-og"
         >
-          Run full OG search →
+          Run full OG search
+          <span aria-hidden>→</span>
         </Link>
         {canWatch && <WatchButton query={watchQuery} kind="name" />}
       </div>
@@ -142,44 +156,78 @@ export function TrendingClusters({ initial }: { initial: TrendingResult }) {
 
   return (
     <div>
-      <div className="mb-4 flex items-center gap-1">
-        {WINDOWS.map((w) => (
-          <button
-            key={w.value}
-            type="button"
-            onClick={() => void selectWindow(w.value)}
-            aria-pressed={activeWindow === w.value}
-            className={`rounded-full px-4 py-1.5 text-sm font-medium transition-all ${
-              activeWindow === w.value
-                ? "bg-amber-950/60 text-amber-300 ring-1 ring-amber-700/50"
-                : "text-gray-500 hover:bg-gray-800/40 hover:text-gray-300"
-            }`}
-          >
-            {w.label}
-          </button>
-        ))}
+      {/* Segmented control: one recessed track, gold pill on the active window. */}
+      <div className="mb-5 flex justify-center">
+        <div
+          role="group"
+          aria-label="Time window"
+          className="inline-flex items-center gap-1 rounded-full border bg-surface-2 p-1"
+        >
+          {WINDOWS.map((w) => (
+            <button
+              key={w.value}
+              type="button"
+              onClick={() => void selectWindow(w.value)}
+              aria-pressed={activeWindow === w.value}
+              className={`rounded-full px-4 py-1.5 text-meta font-semibold transition-colors ${
+                activeWindow === w.value
+                  ? "bg-og/[0.14] text-og ring-1 ring-inset ring-og/35"
+                  : "text-fg-3 hover:bg-surface-3 hover:text-fg-2"
+              }`}
+            >
+              {w.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {error ? (
-        <p className="py-10 text-center text-sm text-red-400/80">{error}</p>
+        <div className="rounded-2xl border border-down/30 border-l-2 border-l-down/70 bg-down/[0.06] px-5 py-8 text-center">
+          <p className="font-display text-[15px] font-medium tracking-tight text-down">
+            {error}
+          </p>
+        </div>
       ) : !current ? (
         <div className="flex justify-center py-16">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-700 border-t-amber-500" />
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-line-str border-t-og" />
         </div>
       ) : current.clusters.length === 0 ? (
-        <div className="py-16 text-center">
-          <div className="text-4xl opacity-90">📡</div>
-          <p className="mt-4 text-base text-gray-400">
+        <div className="rounded-2xl border bg-surface-1/60 px-5 py-14 text-center">
+          <span
+            aria-hidden
+            className="mx-auto flex h-11 w-11 items-center justify-center rounded-full border bg-surface-2 text-fg-3"
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M4.93 19.07a10 10 0 0 1 0-14.14M19.07 4.93a10 10 0 0 1 0 14.14M7.76 16.24a6 6 0 0 1 0-8.48M16.24 7.76a6 6 0 0 1 0 8.48" />
+              <circle cx="12" cy="12" r="2" />
+            </svg>
+          </span>
+          <p className="mt-4 font-display text-[15px] font-medium tracking-tight text-fg-2">
             No copycat clusters in this window yet
           </p>
-          <p className="mt-1 text-sm text-gray-600">
+          <p className="mx-auto mt-1.5 max-w-sm text-meta leading-relaxed text-fg-3">
             Clusters appear once the firehose sees a name launched 3+ times
           </p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {current.clusters.map((c) => (
-            <ClusterCard key={c.skeleton} cluster={c} />
+        <div className="space-y-3">
+          {current.clusters.map((c, i) => (
+            <div
+              key={c.skeleton}
+              className="animate-rise"
+              style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
+            >
+              <ClusterCard cluster={c} />
+            </div>
           ))}
         </div>
       )}

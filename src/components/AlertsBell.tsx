@@ -33,6 +33,38 @@ interface WatchAlerts {
 
 const MAX_DROPDOWN_ROWS = 20;
 
+/** Row glyph: a gold bolt for OG flips, a neutral spark for new clones. */
+function AlertGlyph({ isFlip }: { isFlip: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={`mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border ${
+        isFlip ? "border-og/30 bg-og/10 text-og" : "bg-surface-2 text-fg-3"
+      }`}
+    >
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        {isFlip ? (
+          <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" />
+        ) : (
+          <>
+            <circle cx="12" cy="12" r="8" />
+            <path d="M12 8v8M8 12h8" />
+          </>
+        )}
+      </svg>
+    </span>
+  );
+}
+
 function watchesQueryParam(watches: StoredWatch[]): string {
   return watches
     .slice(0, 10)
@@ -166,16 +198,16 @@ export function AlertsBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-2 w-72 overflow-hidden rounded-xl border border-gray-800 bg-gray-900/95 shadow-xl shadow-black/40 backdrop-blur-md sm:w-80">
-          <p className="border-b border-gray-800/70 px-3.5 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+        <div className="absolute right-0 top-full z-50 mt-2 w-72 overflow-hidden rounded-2xl border border-line-str bg-surface-1/95 shadow-[0_20px_60px_-15px_rgba(0,0,0,0.9)] backdrop-blur-md sm:w-80">
+          <p className="border-b px-3.5 py-2.5 text-micro font-semibold uppercase tracking-[0.18em] text-fg-4">
             Clone alerts
           </p>
           {alerts.length === 0 ? (
-            <p className="px-3.5 py-5 text-center text-xs text-gray-600">
+            <p className="px-3.5 py-6 text-center text-meta leading-relaxed text-fg-3">
               No new clones spotted for your watches yet
             </p>
           ) : (
-            <ul className="max-h-72 overflow-y-auto">
+            <ul className="max-h-72 divide-y overflow-y-auto">
               {alerts.slice(0, MAX_DROPDOWN_ROWS).map((a) => {
                 const isFlip = a.kind === "flip";
                 const target = isFlip ? a.watchQuery : a.mint;
@@ -185,40 +217,41 @@ export function AlertsBell() {
                       type="button"
                       onClick={() => target && goTo(target)}
                       disabled={!target}
-                      className="flex w-full items-baseline justify-between gap-2 px-3.5 py-2.5 text-left transition-colors hover:bg-gray-800/50 disabled:cursor-default"
+                      className="flex w-full items-start gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-surface-2 disabled:cursor-default"
                     >
-                      <span className="min-w-0">
+                      <AlertGlyph isFlip={isFlip} />
+                      <span className="min-w-0 flex-1">
                         {isFlip ? (
                           <>
-                            <span className="block truncate text-xs font-semibold text-amber-300/90">
-                              ⚡ {a.watchQuery ?? "Watched name"}: copycat
-                              flipped the OG
+                            <span className="block truncate text-meta font-semibold text-og">
+                              {a.watchQuery ?? "Watched name"}: copycat flipped
+                              the OG
                             </span>
                             {a.name && (
-                              <span className="text-[10px] text-gray-600">
+                              <span className="text-micro text-fg-4">
                                 {a.name} now leads
                               </span>
                             )}
                           </>
                         ) : (
                           <>
-                            <span className="block truncate text-xs font-semibold text-gray-200">
+                            <span className="block truncate text-meta font-semibold text-fg">
                               {a.name ?? "Unnamed token"}
                               {a.symbol && (
-                                <span className="ml-1 font-medium text-gray-500">
+                                <span className="ml-1 font-mono text-micro font-normal text-fg-3">
                                   ${a.symbol}
                                 </span>
                               )}
                             </span>
                             {a.source && (
-                              <span className="text-[10px] text-gray-600">
+                              <span className="text-micro text-fg-4">
                                 via {a.source}
                               </span>
                             )}
                           </>
                         )}
                       </span>
-                      <span className="flex-shrink-0 text-[10px] tabular-nums text-gray-600">
+                      <span className="mt-0.5 flex-shrink-0 font-mono text-micro text-fg-4">
                         {timeAgo(new Date(a.matchedAt).toISOString())}
                       </span>
                     </button>
@@ -228,7 +261,7 @@ export function AlertsBell() {
             </ul>
           )}
           {tgLinked ? (
-            <p className="border-t border-gray-800/70 px-3.5 py-2 text-center text-[11px] font-medium text-cyan-300/90">
+            <p className="border-t px-3.5 py-2 text-center text-micro font-medium text-scan">
               TG ✓ Telegram alerts on
             </p>
           ) : tgLinkTarget ? (
@@ -236,14 +269,14 @@ export function AlertsBell() {
               href={tgLinkTarget}
               target="_blank"
               rel="noopener noreferrer"
-              className="block border-t border-gray-800/70 px-3.5 py-2 text-center text-[11px] font-medium text-cyan-300/90 transition-colors hover:bg-gray-800/40 hover:text-cyan-200"
+              className="block border-t px-3.5 py-2 text-center text-micro font-medium text-scan transition-colors hover:bg-surface-2"
             >
               Get Telegram alerts
             </a>
           ) : null}
           <a
             href="/alerts"
-            className="block border-t border-gray-800/70 px-3.5 py-2.5 text-center text-[11px] font-medium text-amber-500/90 transition-colors hover:bg-gray-800/40 hover:text-amber-400"
+            className="block border-t px-3.5 py-2.5 text-center text-micro font-semibold text-og/90 transition-colors hover:bg-surface-2 hover:text-og"
           >
             Manage watches &amp; alerts
           </a>

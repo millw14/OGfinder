@@ -51,7 +51,7 @@ export default function WalletPage() {
     <Suspense
       fallback={
         <div className="flex min-h-screen items-center justify-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-line-str border-t-scan" />
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-line-str border-t-og" />
         </div>
       }
     >
@@ -188,44 +188,77 @@ function WalletPageInner() {
       <NavTabs />
 
       <main className="relative mx-auto w-full max-w-3xl flex-1 px-4 pb-12 pt-8 sm:pt-12">
-        <div className="mb-8 text-center">
-          <h1 className="font-display text-3xl font-bold tracking-tight text-fg sm:text-4xl">
-            Wallet Scanner
+        <div className="mb-7 text-center">
+          <p className="text-micro font-semibold uppercase tracking-[0.18em] text-scan">
+            Wallet scanner
+          </p>
+          <h1 className="mt-2 font-display text-[34px] font-bold leading-[1.05] tracking-tight text-fg sm:text-[40px]">
+            Read the wallet
           </h1>
-          <p className="mt-2 text-sm text-fg-3">
-            Paste a Solana wallet to see profits, hold times, and linked wallets
+          <p className="mx-auto mt-3 max-w-md text-balance text-sm leading-relaxed text-fg-2">
+            Paste a Solana address for realized P&amp;L, hold times, current
+            holdings and the side wallets it trades with.
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="relative">
-          <input
-            type="text"
-            value={address}
-            onChange={(e) => setAddress(e.target.value)}
-            placeholder="Paste wallet address..."
-            className="w-full rounded-xl border border-gray-700/60 bg-gray-900/60 px-4 py-3 pr-24 text-sm text-gray-200 placeholder-gray-600 outline-none transition-colors focus:border-cyan-600/60 focus:ring-1 focus:ring-cyan-600/30"
-          />
-          <button
-            type="submit"
-            disabled={isLoading || !address.trim()}
-            className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-lg bg-cyan-600 px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-cyan-500 disabled:opacity-40"
-          >
-            {isLoading ? "Scanning..." : "Scan"}
-          </button>
+        {/* Same shell treatment as the main search: the focus ring lives on the
+            wrapper, the input suppresses its own outline. */}
+        <form onSubmit={handleSubmit} className="mx-auto w-full max-w-2xl">
+          <div className="relative flex items-center rounded-[14px] border bg-surface-1 transition-all duration-200 hover:border-line-str focus-within:border-og/50 focus-within:shadow-[0_0_0_3px_rgba(240,180,41,0.12),0_0_36px_-6px_rgba(240,180,41,0.28)] motion-reduce:transition-none">
+            <span
+              aria-hidden
+              className="pointer-events-none absolute left-4 flex items-center sm:left-5"
+            >
+              {isLoading ? (
+                <span className="block h-[18px] w-[18px] animate-spin rounded-full border-2 border-line-str border-t-og" />
+              ) : (
+                <svg
+                  className="h-[18px] w-[18px] text-fg-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M3 7a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+                  <path d="M16 12h3" />
+                </svg>
+              )}
+            </span>
+            <input
+              type="text"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              placeholder="Paste wallet address…"
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              className="h-14 w-full rounded-[14px] bg-transparent pl-11 pr-[92px] font-mono text-[15px] text-fg outline-none placeholder:font-sans placeholder:text-fg-4 sm:h-16 sm:pl-14 sm:pr-[104px] sm:text-base"
+            />
+            <button
+              type="submit"
+              disabled={isLoading || !address.trim()}
+              className="absolute right-2 inline-flex h-10 flex-shrink-0 items-center rounded-xl bg-og px-4 text-meta font-semibold text-bg transition-colors hover:bg-og-light disabled:opacity-40 sm:h-11 sm:px-5 sm:text-sm"
+            >
+              {isLoading ? "Scanning…" : "Scan"}
+            </button>
+          </div>
         </form>
 
         {!data && !isLoading && !error && recentWallets.length > 0 && (
-          <div className="mt-6 text-center">
-            <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-gray-600">
-              Recent Wallets
+          <div className="mt-7 text-center">
+            <p className="mb-2.5 text-micro font-medium uppercase tracking-[0.14em] text-fg-4">
+              Recent wallets
             </p>
-            <div className="flex flex-wrap justify-center gap-2">
+            <div className="flex flex-wrap justify-center gap-1.5">
               {recentWallets.map((w) => (
                 <button
                   key={w}
                   type="button"
                   onClick={() => scanWallet(w)}
-                  className="rounded-full border border-gray-800/80 bg-gray-900/50 px-3 py-1 font-mono text-xs text-gray-400 transition-all hover:border-gray-600 hover:bg-gray-800/60 hover:text-gray-200"
+                  title={w}
+                  className="rounded-full border bg-surface-2 px-3 py-1.5 font-mono text-meta text-fg-2 transition-colors hover:border-line-str hover:text-og"
                 >
                   {truncAddr(w)}
                 </button>
@@ -235,22 +268,27 @@ function WalletPageInner() {
         )}
 
         {isLoading && (
-          <div className="mt-12 text-center">
-            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-gray-700 border-t-cyan-500" />
-            <p className="mt-3 text-sm text-gray-500">
-              Analyzing wallet...
+          <div className="mt-14 text-center">
+            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-line-str border-t-og" />
+            <p className="mt-3.5 text-meta text-fg-3">
+              Analyzing wallet — pulling swaps, prices and transfers…
             </p>
           </div>
         )}
 
         {error && (
-          <div className="mt-6 rounded-lg border border-red-800/40 bg-red-900/20 px-4 py-3 text-center text-sm text-red-400">
-            {error}
+          <div className="mt-6 rounded-2xl border border-down/30 border-l-2 border-l-down/70 bg-down/[0.06] px-5 py-6 text-center">
+            <p className="font-display text-[15px] font-medium tracking-tight text-down">
+              {error}
+            </p>
+            <p className="mt-2 text-meta text-fg-3">
+              Paste a full base58 Solana address — 32–44 characters.
+            </p>
           </div>
         )}
 
         {data && (
-          <div className="mt-6">
+          <div className="mt-8 sm:mt-10">
             <WalletView
               data={data}
               onDeepen={deepenScan}
