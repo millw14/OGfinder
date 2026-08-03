@@ -14,13 +14,14 @@ const SocialXLink = dynamic(
   { ssr: false }
 );
 
+/** min-h on mobile only: comfortable thumb rows without a tall desktop list. */
 const footerLink =
-  "text-fg-3 transition-colors hover:text-fg-2 rounded-sm";
+  "inline-flex min-h-[36px] items-center rounded-sm text-fg-3 transition-colors hover:text-fg-2 sm:min-h-0";
 
 /** Shared across every page: pitch · links · donate + attribution. */
 export function SiteFooter() {
   return (
-    <footer className="relative mt-auto border-t border-line">
+    <footer className="relative mt-auto border-t">
       <div className="mx-auto grid w-full max-w-3xl gap-8 px-4 py-10 sm:grid-cols-3 sm:gap-6 sm:py-12">
         <div>
           <p className="font-display text-[15px] font-bold leading-none tracking-tight">
@@ -33,7 +34,7 @@ export function SiteFooter() {
         </div>
 
         <nav aria-label="Footer" className="text-meta">
-          <ul className="space-y-2">
+          <ul className="space-y-0.5 sm:space-y-2">
             <li>
               <a
                 href={TELEGRAM_GROUP_URL}

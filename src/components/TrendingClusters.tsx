@@ -96,11 +96,13 @@ function ClusterCard({ cluster }: { cluster: TrendingCluster }) {
             key={m.mint}
             href={`/?q=${encodeURIComponent(m.mint)}`}
             title={m.mint}
-            className={`max-w-[14rem] truncate rounded-full border bg-surface-2 px-2.5 py-1 text-micro text-fg-2 transition-colors hover:border-og/40 hover:bg-og/10 hover:text-og ${
+            className={`inline-flex min-h-[36px] max-w-[14rem] items-center rounded-full border bg-surface-2 px-2.5 py-1 text-micro text-fg-2 transition-colors hover:border-og/40 hover:bg-og/10 hover:text-og sm:min-h-0 ${
               m.name ? "" : "font-mono"
             }`}
           >
-            {m.name ?? truncateMint(m.mint)}
+            {/* truncate needs a block-level child — an anonymous flex item
+                would clip without an ellipsis. */}
+            <span className="truncate">{m.name ?? truncateMint(m.mint)}</span>
           </Link>
         ))}
       </div>
@@ -109,7 +111,7 @@ function ClusterCard({ cluster }: { cluster: TrendingCluster }) {
       <div className="flex flex-wrap items-center justify-between gap-2 border-t px-4 py-3 sm:px-5">
         <Link
           href={`/?q=${encodeURIComponent(cluster.representativeName)}`}
-          className="inline-flex items-center gap-1 text-meta font-semibold text-fg-2 transition-colors hover:text-og"
+          className="inline-flex min-h-[44px] items-center gap-1 text-meta font-semibold text-fg-2 transition-colors hover:text-og sm:min-h-0"
         >
           Run full OG search
           <span aria-hidden>→</span>
@@ -169,7 +171,7 @@ export function TrendingClusters({ initial }: { initial: TrendingResult }) {
               type="button"
               onClick={() => void selectWindow(w.value)}
               aria-pressed={activeWindow === w.value}
-              className={`rounded-full px-4 py-1.5 text-meta font-semibold transition-colors ${
+              className={`inline-flex min-h-[36px] items-center rounded-full px-4 py-1.5 text-meta font-semibold transition-colors sm:min-h-0 ${
                 activeWindow === w.value
                   ? "bg-og/[0.14] text-og ring-1 ring-inset ring-og/35"
                   : "text-fg-3 hover:bg-surface-3 hover:text-fg-2"

@@ -89,7 +89,7 @@ function CopyMintButton({ mint }: { mint: string }) {
       type="button"
       onClick={copy}
       title={copied ? "Copied" : `Copy ${mint}`}
-      className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 font-mono text-micro font-medium transition-colors ${
+      className={`inline-flex min-h-[32px] items-center whitespace-nowrap rounded-full border px-2 py-0.5 font-mono text-micro font-medium transition-colors sm:min-h-0 ${
         copied
           ? "border-up/25 bg-up/10 text-up"
           : "bg-surface-3 text-fg-3 hover:border-line-str hover:text-fg-2"
@@ -109,7 +109,7 @@ function CheckOGLink({ mint }: { mint: string }) {
     <Link
       href={`/?q=${encodeURIComponent(mint)}`}
       title="Is this the original token?"
-      className="inline-flex items-center whitespace-nowrap rounded-full border border-og/25 bg-og/10 px-2 py-0.5 text-micro font-semibold text-og transition-colors hover:border-og/45 hover:bg-og/[0.16]"
+      className="inline-flex min-h-[32px] items-center whitespace-nowrap rounded-full border border-og/25 bg-og/10 px-2 py-0.5 text-micro font-semibold text-og transition-colors hover:border-og/45 hover:bg-og/[0.16] sm:min-h-0"
     >
       Check OG
     </Link>
@@ -166,7 +166,7 @@ export function WalletView({
               type="button"
               onClick={onDeepen}
               disabled={isDeepening}
-              className="ml-2 mt-2 inline-flex items-center rounded-xl border border-og/35 px-3 py-1.5 text-meta font-semibold text-og/90 transition-colors hover:border-og/55 hover:bg-og/10 hover:text-og disabled:cursor-not-allowed disabled:opacity-50"
+              className="ml-2 mt-2 inline-flex min-h-[44px] items-center rounded-xl border border-og/35 px-3 py-1.5 text-meta font-semibold text-og/90 transition-colors hover:border-og/55 hover:bg-og/10 hover:text-og disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0"
             >
               {isDeepening ? "Scanning…" : "Scan more history"}
             </button>
@@ -412,7 +412,7 @@ export function WalletView({
                   <Link
                     href={`/wallet?address=${encodeURIComponent(sw.address)}`}
                     title="Scan this wallet"
-                    className="inline-flex items-center rounded-full border border-scan/25 bg-scan/10 px-2.5 py-1 text-micro font-semibold text-scan transition-colors hover:border-scan/45 hover:bg-scan/[0.16]"
+                    className="inline-flex min-h-[36px] items-center rounded-full border border-scan/25 bg-scan/10 px-2.5 py-1 text-micro font-semibold text-scan transition-colors hover:border-scan/45 hover:bg-scan/[0.16] sm:min-h-0"
                   >
                     Scan
                   </Link>
@@ -420,7 +420,7 @@ export function WalletView({
                     href={`https://solscan.io/account/${sw.address}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center rounded-full border bg-surface-3 px-2.5 py-1 text-micro font-medium text-fg-3 transition-colors hover:border-line-str hover:text-fg"
+                    className="inline-flex min-h-[36px] items-center rounded-full border bg-surface-3 px-2.5 py-1 text-micro font-medium text-fg-3 transition-colors hover:border-line-str hover:text-fg sm:min-h-0"
                   >
                     Solscan
                   </a>

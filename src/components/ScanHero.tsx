@@ -435,7 +435,7 @@ export function ScanHero({
               ? "Verdict pending — verifying on-chain ages"
               : "Copy a shareable verdict link"
           }
-          className={`ml-auto inline-flex flex-shrink-0 items-center gap-1.5 rounded-xl border px-3 py-1.5 text-meta font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+          className={`ml-auto inline-flex min-h-[44px] flex-shrink-0 items-center gap-1.5 rounded-xl border px-3 py-1.5 text-meta font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0 ${
             copied
               ? "border-up/40 bg-up/10 text-up"
               : copyFailed

@@ -141,7 +141,7 @@ export function WatchButton({ query, kind, originMint }: WatchButtonProps) {
             ? "Stop watching this name"
             : "Get alerted when new lookalike tokens launch with this name"
         }
-        className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-meta font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+        className={`inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border px-3 py-1.5 text-meta font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 ${
           watching
             ? "border-og/45 bg-og/[0.14] text-og hover:border-og/65 hover:bg-og/20"
             : "border-og/30 text-og/90 hover:border-og/50 hover:bg-og/10 hover:text-og"

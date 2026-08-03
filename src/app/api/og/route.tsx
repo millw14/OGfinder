@@ -20,14 +20,17 @@ export const dynamic = "force-dynamic";
  * ImageResponse constraints: inline styles, flexbox only, default font.
  */
 
-const BG = "#0a0a0f";
-const AMBER = "#fbbf24";
-const AMBER_DEEP = "#f59e0b";
-const WHITE = "#f3f4f6";
-const GRAY = "#9ca3af";
-const GRAY_DIM = "#6b7280";
-const GRAY_CARD = "#1f2937";
-const CYAN = "#22d3ee";
+/* "Obsidian & Gold" tokens, inlined — satori can't read Tailwind. Keep these
+   in step with tailwind.config.ts. AMBER = og-light (text on dark),
+   AMBER_DEEP = og (solid fills and borders), exactly as the app uses them. */
+const BG = "#07070b"; // bg
+const AMBER = "#ffd977"; // og-light
+const AMBER_DEEP = "#f0b429"; // og
+const WHITE = "#f4f4f5"; // fg
+const GRAY = "#a1a1aa"; // fg-2
+const GRAY_DIM = "#71717a"; // fg-3
+const GRAY_CARD = "#1c1c26"; // surface-3
+const CYAN = "#22d3ee"; // scan
 
 function truncMint(m: string): string {
   return m.length > 12 ? `${m.slice(0, 4)}…${m.slice(-4)}` : m;
@@ -54,7 +57,7 @@ function Frame({ children }: { children: React.ReactNode }) {
         flexDirection: "column",
         backgroundColor: BG,
         backgroundImage:
-          "radial-gradient(circle at 50% -10%, rgba(251,191,36,0.16), rgba(10,10,15,0) 60%)",
+          "radial-gradient(circle at 50% -10%, rgba(240,180,41,0.16), rgba(7,7,11,0) 60%)",
         padding: "56px 72px",
       }}
     >
@@ -216,8 +219,8 @@ function CompareCol({
         justifyContent: "center",
         border: older ? `3px solid ${AMBER_DEEP}` : `3px solid ${GRAY_CARD}`,
         backgroundColor: older
-          ? "rgba(251,191,36,0.07)"
-          : "rgba(31,41,55,0.35)",
+          ? "rgba(240,180,41,0.07)"
+          : "rgba(20,20,28,0.55)",
         borderRadius: 28,
         padding: "28px 24px",
         height: 380,

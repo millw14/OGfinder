@@ -31,22 +31,22 @@ export function NavTabs() {
   const pathname = usePathname();
 
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-bg/80 backdrop-blur-md">
-      <div className="mx-auto flex h-14 w-full max-w-3xl items-center gap-2 px-3 sm:gap-3 sm:px-4">
+    <header className="sticky top-0 z-40 border-b bg-bg/80 backdrop-blur-md">
+      <div className="mx-auto flex h-14 w-full max-w-3xl items-center gap-1.5 px-2.5 sm:gap-3 sm:px-4">
         <Link
           href="/"
           aria-label="OGfinder home"
-          className="-ml-1 flex shrink-0 items-center rounded-xl px-1 py-1 transition-colors hover:bg-surface-1 [&_.og-logo-lottie]:cursor-pointer"
+          className="-ml-0.5 flex shrink-0 items-center rounded-xl px-0.5 py-1 transition-colors hover:bg-surface-1 sm:-ml-1 sm:px-1 [&_.og-logo-lottie]:cursor-pointer"
         >
           <OGLogo size={30} autoReplay={false} />
-          <span className="-ml-px font-display text-[17px] font-bold leading-none tracking-tight text-fg sm:text-[19px]">
+          <span className="-ml-px font-display text-[15px] font-bold leading-none tracking-tight text-fg sm:text-[19px]">
             finder
           </span>
         </Link>
 
         <nav
           aria-label="Primary"
-          className="ml-auto flex items-center gap-0.5 sm:gap-1"
+          className="ml-auto flex items-center gap-0 sm:gap-1"
         >
           {tabs.map((tab) => {
             const active =
@@ -59,7 +59,7 @@ export function NavTabs() {
                 href={tab.href}
                 aria-current={active ? "page" : undefined}
                 aria-label={tab.label}
-                className={`inline-flex h-10 items-center rounded-full px-2 text-[12px] font-medium transition-colors sm:h-9 sm:px-3.5 sm:text-sm ${
+                className={`inline-flex h-11 items-center rounded-full px-2 text-meta font-medium transition-colors sm:h-9 sm:px-3.5 sm:text-sm ${
                   active
                     ? "bg-surface-2 text-og ring-1 ring-inset ring-line-str"
                     : "text-fg-3 hover:bg-surface-1 hover:text-fg-2"
@@ -80,7 +80,7 @@ export function NavTabs() {
             rel="noopener noreferrer"
             title="Add OGfinder to your Telegram group"
             aria-label="Add OGfinder to your Telegram group"
-            className="inline-flex h-10 w-10 items-center justify-center gap-1.5 rounded-full bg-og text-[13px] font-semibold text-bg transition-colors hover:bg-og-light sm:h-9 sm:w-auto sm:px-3.5"
+            className="inline-flex h-11 w-11 items-center justify-center gap-1.5 rounded-full bg-og text-meta font-semibold text-bg transition-colors hover:bg-og-light sm:h-9 sm:w-auto sm:px-3.5 sm:text-[13px]"
           >
             <svg
               width="15"

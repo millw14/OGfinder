@@ -258,7 +258,7 @@ function WalletPageInner() {
                   type="button"
                   onClick={() => scanWallet(w)}
                   title={w}
-                  className="rounded-full border bg-surface-2 px-3 py-1.5 font-mono text-meta text-fg-2 transition-colors hover:border-line-str hover:text-og"
+                  className="inline-flex min-h-[36px] items-center rounded-full border bg-surface-2 px-3 py-1.5 font-mono text-meta text-fg-2 transition-colors hover:border-line-str hover:text-og sm:min-h-0"
                 >
                   {truncAddr(w)}
                 </button>

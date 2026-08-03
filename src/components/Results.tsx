@@ -110,7 +110,7 @@ function CopyLinkButton({ query }: { query: string }) {
       type="button"
       onClick={copy}
       title="Copy a shareable link to this search"
-      className={`rounded-full border px-2.5 py-1 text-micro font-medium transition-colors ${
+      className={`inline-flex min-h-[36px] items-center rounded-full border px-2.5 py-1 text-micro font-medium transition-colors sm:min-h-0 ${
         copied
           ? "border-up/40 bg-up/10 text-up"
           : failed
@@ -330,7 +330,7 @@ export function Results({
                 disabled={empty}
                 aria-pressed={on}
                 onClick={() => toggleBucket(id)}
-                className={`rounded-full border px-2.5 py-1 text-micro font-medium transition-colors ${
+                className={`inline-flex min-h-[36px] items-center rounded-full border px-2.5 py-1 text-micro font-medium transition-colors sm:min-h-0 ${
                   empty
                     ? "cursor-default bg-surface-1 text-fg-4 opacity-40"
                     : on
@@ -355,7 +355,7 @@ export function Results({
             <button
               type="button"
               onClick={() => setSelectedBucketIds(new Set())}
-              className="rounded-full border border-transparent px-2 py-1 text-micro text-fg-3 underline-offset-2 transition-colors hover:text-og hover:underline"
+              className="inline-flex min-h-[36px] items-center rounded-full border border-transparent px-2 py-1 text-micro text-fg-3 underline-offset-2 transition-colors hover:text-og hover:underline sm:min-h-0"
             >
               Clear
             </button>

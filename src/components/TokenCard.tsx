@@ -74,14 +74,20 @@ function Dot() {
 const EXPLORER_LINK =
   "rounded-lg border bg-surface-2 px-2.5 py-1 text-micro font-medium text-fg-3 transition-colors hover:border-line-str hover:bg-surface-3 hover:text-fg";
 
+/** Three 44px rows + hairlines — used to decide whether the menu must flip up. */
+const MENU_HEIGHT = 140;
+
 export function TokenCard({ token }: { token: TokenResult }) {
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const [logoFailed, setLogoFailed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  /** Last card on screen: open the menu upward so it stays in the viewport. */
+  const [menuDropUp, setMenuDropUp] = useState(false);
   const copyLottieRef = useRef<LottieRefCurrentProps>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     return () => {
@@ -107,6 +113,18 @@ export function TokenCard({ token }: { token: TokenResult }) {
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [menuOpen]);
+
+  const toggleMenu = () => {
+    if (menuOpen) {
+      setMenuOpen(false);
+      return;
+    }
+    const rect = menuButtonRef.current?.getBoundingClientRect();
+    setMenuDropUp(
+      rect != null && window.innerHeight - rect.bottom < MENU_HEIGHT + 16
+    );
+    setMenuOpen(true);
+  };
 
   const copyMint = async () => {
     if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
@@ -238,7 +256,7 @@ export function TokenCard({ token }: { token: TokenResult }) {
                   copyLottieRef.current?.goToAndStop(0, true);
                 }
               }}
-              className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 font-mono text-micro transition-colors ${
+              className={`inline-flex min-h-[36px] items-center gap-1 rounded-lg border px-2 py-0.5 font-mono text-micro transition-colors sm:min-h-0 ${
                 copied
                   ? "border-up/40 bg-up/10 text-up"
                   : copyFailed
@@ -420,8 +438,9 @@ export function TokenCard({ token }: { token: TokenResult }) {
                 <span className="sr-only">Open Padre Terminal for this token</span>
               </a>
               <button
+                ref={menuButtonRef}
                 type="button"
-                onClick={() => setMenuOpen((v) => !v)}
+                onClick={toggleMenu}
                 aria-haspopup="menu"
                 aria-expanded={menuOpen}
                 aria-label="More explorer links"
@@ -437,7 +456,9 @@ export function TokenCard({ token }: { token: TokenResult }) {
                 <div
                   role="menu"
                   aria-label="Explorer links"
-                  className="absolute right-0 top-full z-20 mt-1.5 w-44 overflow-hidden rounded-xl border border-line-str bg-surface-2 shadow-2xl shadow-black/60"
+                  className={`absolute right-0 z-20 w-44 overflow-hidden rounded-xl border border-line-str bg-surface-2 shadow-2xl shadow-black/60 ${
+                    menuDropUp ? "bottom-full mb-1.5" : "top-full mt-1.5"
+                  }`}
                 >
                   <a
                     role="menuitem"

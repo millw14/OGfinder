@@ -192,7 +192,7 @@ function AlertsPageInner() {
             <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
               <Link
                 href="/"
-                className="inline-flex items-center rounded-xl border border-og/30 px-3.5 py-2 text-meta font-semibold text-og/90 transition-colors hover:border-og/50 hover:bg-og/10 hover:text-og"
+                className="inline-flex min-h-[44px] items-center rounded-xl border border-og/30 px-3.5 py-2 text-meta font-semibold text-og/90 transition-colors hover:border-og/50 hover:bg-og/10 hover:text-og sm:min-h-0"
               >
                 Go search
               </Link>
@@ -200,7 +200,7 @@ function AlertsPageInner() {
                 href={TELEGRAM_GROUP_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 rounded-xl border bg-surface-2 px-3.5 py-2 text-meta font-semibold text-fg-2 transition-colors hover:border-line-str hover:text-fg"
+                className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border bg-surface-2 px-3.5 py-2 text-meta font-semibold text-fg-2 transition-colors hover:border-line-str hover:text-fg sm:min-h-0"
               >
                 <svg
                   aria-hidden
@@ -272,7 +272,7 @@ function AlertsPageInner() {
                           target="_blank"
                           rel="noopener noreferrer"
                           title="Open Telegram to link clone alerts for this watch"
-                          className="inline-flex items-center rounded-full border border-scan/25 bg-scan/10 px-2.5 py-1 text-micro font-medium text-scan transition-colors hover:border-scan/45 hover:bg-scan/[0.16]"
+                          className="inline-flex min-h-[36px] items-center rounded-full border border-scan/25 bg-scan/10 px-2.5 py-1 text-micro font-medium text-scan transition-colors hover:border-scan/45 hover:bg-scan/[0.16] sm:min-h-0"
                         >
                           Get Telegram alerts
                         </a>
@@ -281,7 +281,7 @@ function AlertsPageInner() {
                         type="button"
                         onClick={() => deleteWatch(w)}
                         disabled={deletingId === w.id}
-                        className="inline-flex items-center rounded-full border bg-surface-2 px-2.5 py-1 text-micro font-medium text-fg-3 transition-colors hover:border-risk/40 hover:bg-risk/10 hover:text-risk disabled:opacity-50"
+                        className="inline-flex min-h-[36px] items-center rounded-full border bg-surface-2 px-2.5 py-1 text-micro font-medium text-fg-3 transition-colors hover:border-risk/40 hover:bg-risk/10 hover:text-risk disabled:opacity-50 sm:min-h-0"
                       >
                         {deletingId === w.id ? "Removing…" : "Delete watch"}
                       </button>

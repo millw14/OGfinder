@@ -18,6 +18,7 @@ import {
 import { SearchBar } from "@/components/SearchBar";
 import { Results } from "@/components/Results";
 import { ComparisonCard } from "@/components/ComparisonCard";
+import { BotCta } from "@/components/BotCta";
 import { NavTabs } from "@/components/NavTabs";
 import { SiteFooter } from "@/components/SiteFooter";
 import { TELEGRAM_GROUP_URL } from "@/lib/links";
@@ -391,12 +392,12 @@ function HomeInner() {
                       href={href}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 rounded-full border bg-surface-1 px-2.5 py-1 transition-colors hover:border-og/40 hover:text-og"
+                      className="inline-flex min-h-[36px] items-center gap-1.5 rounded-full border bg-surface-1 px-2.5 py-1 transition-colors hover:border-og/40 hover:text-og sm:min-h-0"
                     >
                       {inner}
                     </a>
                   ) : (
-                    <span className="inline-flex items-center gap-1.5 rounded-full border bg-surface-1 px-2.5 py-1">
+                    <span className="inline-flex min-h-[36px] items-center gap-1.5 rounded-full border bg-surface-1 px-2.5 py-1 sm:min-h-0">
                       {inner}
                     </span>
                   )}
@@ -417,7 +418,7 @@ function HomeInner() {
                   key={q}
                   type="button"
                   onClick={() => handleSearch(q)}
-                  className="rounded-full border bg-surface-2 px-3 py-1.5 text-meta text-fg-2 transition-colors hover:border-line-str hover:text-og"
+                  className="inline-flex min-h-[36px] items-center rounded-full border bg-surface-2 px-3 py-1.5 text-meta text-fg-2 transition-colors hover:border-line-str hover:text-og sm:min-h-0"
                 >
                   {q.length > 24 ? `${q.slice(0, 10)}…${q.slice(-6)}` : q}
                 </button>
@@ -445,6 +446,9 @@ function HomeInner() {
             />
           )}
         </div>
+
+        {/* Always below the results area — the verdict leads, the bot sells. */}
+        <BotCta />
       </main>
 
       <SiteFooter />

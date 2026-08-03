@@ -314,7 +314,7 @@ export function ComparisonCard({ state }: { state: CompareState }) {
                 ? "Copy a shareable comparison link"
                 : "Both mints must resolve before sharing"
             }
-            className={`inline-flex flex-shrink-0 items-center gap-1.5 self-start rounded-xl border px-3 py-1.5 text-meta font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+            className={`inline-flex min-h-[44px] flex-shrink-0 items-center gap-1.5 self-start rounded-xl border px-3 py-1.5 text-meta font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0 ${
               copied
                 ? "border-up/40 bg-up/10 text-up"
                 : copyFailed

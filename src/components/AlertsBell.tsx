@@ -173,7 +173,7 @@ export function AlertsBell() {
         aria-expanded={open}
         aria-label={hasUnseen ? "Alerts — new clones found" : "Alerts"}
         title="Clone alerts for your watched names"
-        className="relative inline-flex h-10 w-10 items-center justify-center rounded-full text-fg-3 transition-colors hover:bg-surface-1 hover:text-fg-2 sm:h-9 sm:w-9"
+        className="relative inline-flex h-11 w-11 items-center justify-center rounded-full text-fg-3 transition-colors hover:bg-surface-1 hover:text-fg-2 sm:h-9 sm:w-9"
       >
         <svg
           width="16"
@@ -192,7 +192,7 @@ export function AlertsBell() {
         {hasUnseen && (
           <span
             aria-hidden
-            className="absolute right-2 top-2 h-2 w-2 rounded-full bg-og ring-2 ring-bg"
+            className="absolute right-2.5 top-2.5 h-2 w-2 rounded-full bg-og ring-2 ring-bg sm:right-2 sm:top-2"
           />
         )}
       </button>
