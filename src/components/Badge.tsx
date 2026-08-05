@@ -3,6 +3,8 @@
 import { LottieHover } from "./LottieHover";
 import { bucketForToken, labelForBucket } from "@/lib/launchpads";
 import { Chip, type ChipTone } from "./Chip";
+import { orderSafetyFlags } from "@/lib/safety-view";
+import type { SafetyFlag, SafetyFlagCode, SafetyLevel } from "@/lib/safety";
 import crownOg from "@/assets/lottie/crown-og.json";
 
 /* The chip primitive now lives in ./Chip so pill-only surfaces don't pull in
@@ -122,11 +124,139 @@ export function ScannedMintBadge() {
   );
 }
 
+const CLEAR_TITLE =
+  "The blocking checks (transfer restrictions, freeze/seize powers, 24h sells) ran and found nothing. That is an absence of findings — not a guarantee that this token is safe.";
+const UNKNOWN_TITLE =
+  "We could not complete the safety checks for this token (RPC or market data unavailable), so nothing is known either way.";
+
 /**
- * Rug-risk chips from Helius DAS data. Chips render only when a risk is
- * explicitly PRESENT (true); undefined = unknown renders nothing — never a
- * false sense of safety. When all three are explicitly false, one emerald
- * "renounced" chip renders instead.
+ * The safety verdict as pills. THE ONLY COLOURS HERE ARE RED AND AMBER.
+ *
+ *  - blocking findings → risk red, first
+ *  - caution findings  → warn amber
+ *  - "clear"           → one NEUTRAL "no blocking flags found" — never green,
+ *                        never the word safe: it is an absence of findings
+ *  - "unknown"         → one muted "safety checks unavailable"
+ *  - no level at all   → NOTHING. The checks were not run for this token, and
+ *                        silence is the only honest rendering of that.
+ *
+ * Every chip carries its mechanism-and-consequence sentence as the tooltip.
+ */
+export function SafetyChips({
+  level,
+  flags,
+  size = "sm",
+  max,
+}: {
+  level?: SafetyLevel;
+  flags?: SafetyFlagCode[];
+  size?: "sm" | "md";
+  /** Cap the chips rendered; the overflow collapses into one "+N more". */
+  max?: number;
+}) {
+  if (!level) return null;
+
+  if (level === "unknown") {
+    return (
+      <Chip tone="muted" size={size} title={UNKNOWN_TITLE}>
+        safety checks unavailable
+      </Chip>
+    );
+  }
+
+  const ordered = orderSafetyFlags(flags);
+
+  if (ordered.length === 0) {
+    if (level === "clear") {
+      return (
+        <Chip tone="neutral" size={size} title={CLEAR_TITLE}>
+          no blocking flags found
+        </Chip>
+      );
+    }
+    return null;
+  }
+
+  const shown = max != null && max > 0 ? ordered.slice(0, max) : ordered;
+  const overflow = ordered.slice(shown.length);
+
+  return (
+    <>
+      {shown.map((f) => (
+        <Chip
+          key={f.code}
+          tone={f.tier === "blocking" ? "risk" : "warn"}
+          size={size}
+          title={f.detail}
+          className={f.tier === "blocking" ? "font-semibold" : undefined}
+        >
+          {f.label}
+        </Chip>
+      ))}
+      {overflow.length > 0 && (
+        <Chip
+          tone="neutral"
+          size={size}
+          title={overflow.map((f) => `${f.label} — ${f.detail}`).join("\n")}
+        >
+          +{overflow.length} more
+        </Chip>
+      )}
+    </>
+  );
+}
+
+/**
+ * Findings spelled out — mechanism AND consequence, one line each. Used where
+ * a chip's tooltip isn't enough: the danger strip on a card and the unsafe
+ * verdict hero, both of which a user reads before deciding to buy.
+ */
+export function SafetyFindingList({
+  flags,
+  size = "sm",
+}: {
+  flags: SafetyFlag[];
+  size?: "sm" | "md";
+}) {
+  if (flags.length === 0) return null;
+  return (
+    <ul
+      className={`space-y-1.5 ${size === "md" ? "text-meta" : "text-micro"}`}
+    >
+      {flags.map((f) => (
+        <li key={f.code} className="flex gap-2 leading-relaxed">
+          <span
+            aria-hidden
+            className={`mt-[0.45em] h-1 w-1 shrink-0 rounded-full ${
+              f.tier === "blocking" ? "bg-risk" : "bg-warn"
+            }`}
+          />
+          <span>
+            <span
+              className={`font-semibold ${
+                f.tier === "blocking" ? "text-risk" : "text-warn"
+              }`}
+            >
+              {f.label}
+            </span>
+            <span className="text-fg-3"> — {f.detail}</span>
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * Rug-risk chips from Helius DAS data, for tokens the safety engine did NOT
+ * assess (ranks 2+ in a list — see SafetyChips for assessed tokens). Chips
+ * render only when a risk is explicitly PRESENT (true); undefined = unknown
+ * renders nothing.
+ *
+ * When all three are explicitly false, one NEUTRAL factual chip renders. It is
+ * deliberately not green and deliberately not the word "safe": three revoked
+ * authorities say nothing about transfer hooks, permanent delegates or whether
+ * anyone has managed to sell.
  */
 export function RiskChips({
   mintAuthorityActive,
@@ -147,11 +277,11 @@ export function RiskChips({
   if (renounced) {
     return (
       <Chip
-        tone="up"
+        tone="neutral"
         size={size}
-        title="Mint & freeze revoked, metadata immutable"
+        title="Mint and freeze authorities are revoked and metadata is immutable. Those three checks only — nothing here covers transfer restrictions or whether sells go through."
       >
-        renounced
+        authorities revoked
       </Chip>
     );
   }
@@ -266,10 +396,28 @@ export function BurnedBadge() {
 /**
  * Rank rail marker above the token avatar. Rank 1 is the only gold surface in
  * the list; 2-3 sit on surface-3 and everything below fades back.
+ *
+ * `muted` keeps the NUMBER (rank stays factual — this token really is the
+ * oldest) while dropping the gold, which is endorsement styling a token with
+ * blocking flags has not earned.
  */
-export function RankBadge({ rank }: { rank: number }) {
+export function RankBadge({
+  rank,
+  muted = false,
+}: {
+  rank: number;
+  muted?: boolean;
+}) {
   const base =
     "flex h-6 w-10 flex-shrink-0 items-center justify-center rounded-lg font-display text-[13px] font-bold tabular-nums";
+
+  if (rank === 1 && muted) {
+    return (
+      <div className={`${base} border border-risk/35 bg-risk/[0.12] text-risk`}>
+        1
+      </div>
+    );
+  }
 
   if (rank === 1) {
     return (

@@ -5,6 +5,8 @@ import Image from "next/image";
 import Lottie, { LottieRefCurrentProps } from "lottie-react";
 import { TokenResult } from "@/lib/types";
 import { formatDate, timeAgo } from "@/lib/format";
+import { UNSAFE_RANK1_LABEL } from "@/lib/sort";
+import { blockingFlags, isDangerous } from "@/lib/safety-view";
 import copyHover from "@/assets/lottie/copy-hover.json";
 import {
   OGBadge,
@@ -17,6 +19,8 @@ import {
   HomoglyphBadge,
   ProvenanceBadge,
   RiskChips,
+  SafetyChips,
+  SafetyFindingList,
   Chip,
 } from "./Badge";
 
@@ -27,7 +31,12 @@ const OG_LABEL_TITLES: Record<string, string> = {
     "Oldest matching token, but the age gap to #2 is small or the name match is fuzzy",
   "Oldest found":
     "Oldest we could verify — its true creation may be older than shown",
+  [UNSAFE_RANK1_LABEL]:
+    "Oldest matching token, but a blocking risk flag fired — OGfinder will not endorse it as the OG",
 };
+
+/** Chips shown inline on a card before the rest collapse into "+N more". */
+const CARD_CHIP_LIMIT = 4;
 
 function truncateMint(mint: string): string {
   if (mint.length <= 16) return mint;
@@ -142,7 +151,12 @@ export function TokenCard({ token }: { token: TokenResult }) {
     }
   };
 
-  const isOG = token.rank === 1 && token.rankingMode === "creation";
+  // The crown and every gold surface below key off safetyLevel DIRECTLY, not
+  // off the confidence label, so the endorsement styling can never drift away
+  // from the verdict that withheld it.
+  const isDanger = isDangerous(token.safetyLevel);
+  const blocking = isDanger ? blockingFlags(token.safetyFlags) : [];
+  const isOG = token.rank === 1 && token.rankingMode === "creation" && !isDanger;
   const isScanned = token.isScanned === true;
   const ago = timeAgo(token.createdAt);
   const showLogo = Boolean(token.imageUrl) && !logoFailed;
@@ -169,17 +183,19 @@ export function TokenCard({ token }: { token: TokenResult }) {
   return (
     <article
       className={`rounded-2xl border p-4 transition-colors sm:p-5 ${
-        isOG
-          ? "og-glow bg-gradient-to-br from-og/[0.08] via-surface-1 to-surface-1"
-          : isScanned
-            ? "scan-ring bg-surface-1"
-            : "bg-surface-1 hover:border-line-str"
+        isDanger
+          ? "border-risk/40 bg-gradient-to-br from-risk/[0.09] via-surface-1 to-surface-1"
+          : isOG
+            ? "og-glow bg-gradient-to-br from-og/[0.08] via-surface-1 to-surface-1"
+            : isScanned
+              ? "scan-ring bg-surface-1"
+              : "bg-surface-1 hover:border-line-str"
       }`}
     >
       <div className="flex gap-3 sm:gap-4">
         {/* Rank rail */}
         <div className="flex w-10 flex-shrink-0 flex-col items-center gap-2">
-          <RankBadge rank={token.rank} />
+          <RankBadge rank={token.rank} muted={isDanger} />
           {showLogo ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -211,7 +227,7 @@ export function TokenCard({ token }: { token: TokenResult }) {
               ${token.displaySymbol}
             </span>
             {isScanned && <ScannedMintBadge />}
-            {token.rankingMode === "creation" && (
+            {token.rankingMode === "creation" && !isDanger && (
               <OGBadge rank={token.rank} />
             )}
             {token.exactMatch && token.rank !== 1 && <ExactNameBadge />}
@@ -340,18 +356,45 @@ export function TokenCard({ token }: { token: TokenResult }) {
             </div>
           )}
 
-          {/* Row 4: venue / risk badges — collapses when nothing renders */}
+          {/* Row 4: venue / safety badges — collapses when nothing renders */}
           <div className="flex flex-wrap items-center gap-1.5 empty:hidden">
             <PlatformBadge dexId={token.dexId} mint={token.mint} />
-            <RiskChips
-              mintAuthorityActive={token.mintAuthorityActive}
-              freezeAuthorityActive={token.freezeAuthorityActive}
-              metadataMutable={token.metadataMutable}
+            {/* Assessed tokens get the full verdict; unassessed ones fall back
+                to the three DAS authority facts (SafetyChips renders nothing
+                without a level, so the two never double up). */}
+            <SafetyChips
+              level={token.safetyLevel}
+              flags={token.safetyFlags}
+              max={CARD_CHIP_LIMIT}
             />
+            {token.safetyLevel == null && (
+              <RiskChips
+                mintAuthorityActive={token.mintAuthorityActive}
+                freezeAuthorityActive={token.freezeAuthorityActive}
+                metadataMutable={token.metadataMutable}
+              />
+            )}
             {token.linkProvenance && <ProvenanceBadge />}
             {token.homoglyphSuspect && <HomoglyphBadge />}
             {token.supplyZero && <BurnedBadge />}
           </div>
+
+          {/* Danger strip: the blocking mechanisms, named, in full sentences */}
+          {isDanger && blocking.length > 0 && (
+            <div className="rounded-xl border border-risk/30 bg-risk/[0.07] px-3 py-2.5">
+              <p className="text-micro font-semibold uppercase tracking-[0.16em] text-risk">
+                Blocking risk
+                {token.rank === 1 && token.rankingMode === "creation" && (
+                  <span className="ml-1.5 font-normal normal-case tracking-normal text-fg-3">
+                    — oldest by age, not endorsed as the OG
+                  </span>
+                )}
+              </p>
+              <div className="mt-1.5">
+                <SafetyFindingList flags={blocking} />
+              </div>
+            </div>
+          )}
 
           {/* Row 5: confidence + actions */}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pt-0.5">
@@ -359,7 +402,9 @@ export function TokenCard({ token }: { token: TokenResult }) {
               <ConfidenceStars score={token.confidence} />
               {token.confidenceLabel && (
                 <span
-                  className="text-micro text-fg-3"
+                  className={`text-micro ${
+                    isDanger ? "font-semibold text-risk" : "text-fg-3"
+                  }`}
                   title={OG_LABEL_TITLES[token.confidenceLabel]}
                 >
                   {token.confidenceLabel}

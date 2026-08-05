@@ -3,11 +3,13 @@ import type { NextRequest } from "next/server";
 import {
   decodeSharePayload,
   decodeComparePayload,
+  decodeSafetyMarker,
   formatShareDate,
   SharePayload,
   ComparePayload,
   CompareShareSide,
 } from "@/lib/share";
+import { flagFromCode, type SafetyFlagCode } from "@/lib/safety";
 import { formatAgeGap } from "@/lib/format";
 
 export const runtime = "edge";
@@ -18,6 +20,11 @@ export const dynamic = "force-dynamic";
  * ?cv=<base64url ComparePayload> (when v is absent) renders the head-to-head
  * card; anything else (or nothing) renders the generic branded card.
  * ImageResponse constraints: inline styles, flexbox only, default font.
+ *
+ * ?sf=<blocking flag code> is an OPTIONAL sibling of ?v= (never part of the
+ * frozen ?v= payload). When present and valid it replaces the gold OG band
+ * with a red "UNSAFE — <mechanism>" band. Links minted without it render
+ * exactly as they always have.
  */
 
 /* "Obsidian & Gold" tokens, inlined — satori can't read Tailwind. Keep these
@@ -31,6 +38,7 @@ const GRAY = "#a1a1aa"; // fg-2
 const GRAY_DIM = "#71717a"; // fg-3
 const GRAY_CARD = "#1c1c26"; // surface-3
 const CYAN = "#22d3ee"; // scan
+const RED = "#ef4444"; // risk
 
 function truncMint(m: string): string {
   return m.length > 12 ? `${m.slice(0, 4)}…${m.slice(-4)}` : m;
@@ -66,12 +74,20 @@ function Frame({ children }: { children: React.ReactNode }) {
   );
 }
 
-function VerdictCard({ p }: { p: SharePayload }) {
+function VerdictCard({
+  p,
+  unsafe = null,
+}: {
+  p: SharePayload;
+  /** Headline blocking flag from ?sf=, or null for the original card. */
+  unsafe?: SafetyFlagCode | null;
+}) {
   const minted = formatShareDate(p.d);
   const notOgLabel =
     p.r !== null && p.t !== null
       ? `NOT THE OG — #${p.r} of ${p.t} by age`
       : "NOT THE OG";
+  const flag = unsafe ? flagFromCode(unsafe) : null;
   return (
     <Frame>
       <div
@@ -112,7 +128,58 @@ function VerdictCard({ p }: { p: SharePayload }) {
           </span>
         </div>
 
-        {p.o ? (
+        {flag ? (
+          // The gold band is an endorsement, so it is replaced outright — the
+          // rank fact still ships, in gray, underneath.
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              marginTop: 36,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                backgroundColor: RED,
+                color: BG,
+                fontWeight: 900,
+                fontSize: 40,
+                padding: "14px 40px",
+                borderRadius: 24,
+                maxWidth: 1050,
+              }}
+            >
+              UNSAFE — {flag.label.toUpperCase()}
+            </div>
+            <div
+              style={{
+                display: "flex",
+                marginTop: 20,
+                color: GRAY,
+                fontSize: 26,
+                maxWidth: 940,
+                textAlign: "center",
+              }}
+            >
+              {flag.detail}
+            </div>
+            <div
+              style={{
+                display: "flex",
+                marginTop: 12,
+                color: GRAY_DIM,
+                fontSize: 24,
+              }}
+            >
+              {p.o
+                ? "oldest by age — OGfinder is not calling it the OG"
+                : notOgLabel.toLowerCase()}
+            </div>
+          </div>
+        ) : p.o ? (
           <div
             style={{
               display: "flex",
@@ -365,7 +432,10 @@ export function GET(req: NextRequest) {
   const raw = req.nextUrl.searchParams.get("v");
   const payload = raw ? decodeSharePayload(raw) : null;
   if (payload) {
-    return new ImageResponse(<VerdictCard p={payload} />, {
+    // Absent / unrecognised / non-blocking ?sf= decodes to null, which is the
+    // pre-existing card byte for byte.
+    const unsafe = decodeSafetyMarker(req.nextUrl.searchParams.get("sf"));
+    return new ImageResponse(<VerdictCard p={payload} unsafe={unsafe} />, {
       width: 1200,
       height: 630,
     });

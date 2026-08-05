@@ -9,9 +9,23 @@ import {
   TOKENS_CREATED_CAP,
 } from "@/lib/types";
 import { formatDate, timeAgo, formatAgeGap } from "@/lib/format";
-import { encodeSharePayload, SharePayload } from "@/lib/share";
+import {
+  encodeSafetyMarker,
+  encodeSharePayload,
+  SharePayload,
+} from "@/lib/share";
+import {
+  blockingFlags,
+  headlineBlockingFlag,
+  isDangerous,
+} from "@/lib/safety-view";
 import { LottieHover } from "./LottieHover";
-import { RiskChips, HolderConcChip } from "./Badge";
+import {
+  RiskChips,
+  HolderConcChip,
+  SafetyChips,
+  SafetyFindingList,
+} from "./Badge";
 import { WatchButton } from "./WatchButton";
 import crownOg from "@/assets/lottie/crown-og.json";
 
@@ -102,6 +116,22 @@ export function ScanHero({
     watchQuery.trim().length >= 2 &&
     watchQuery.trim().length <= 30;
 
+  // ── The three verdict states ──────────────────────────────────────────────
+  // The server's age verdict (isOG) is never recomputed; safety only decides
+  // whether that fact earns the gold endorsement treatment.
+  //   endorsed — oldest AND no blocking flag → gold "This is the OG" + crown
+  //   unsafeOG — oldest BUT blocking flag    → red "Oldest by age — but unsafe"
+  //   !isOG    — not the oldest              → existing treatment + chips
+  const scannedDanger = isDangerous(scanned?.safetyLevel);
+  const scannedBlocking = scannedDanger
+    ? blockingFlags(scanned?.safetyFlags)
+    : [];
+  const endorsed = isOG && !scannedDanger;
+  const unsafeOG = isOG && scannedDanger;
+  // The user is choosing between two tokens, so the OG's safety matters as
+  // much as their own — and a dangerous #1 never gets the gold panel either.
+  const ogDanger = isDangerous(og?.safetyLevel);
+
   const ago = timeAgo(scanned?.createdAt ?? null);
   const ogAgo = og ? timeAgo(og.createdAt) : "";
   const gapMs =
@@ -122,9 +152,17 @@ export function ScanHero({
       o: isOG,
       m: scannedMint,
     };
+    // ?sf= rides BESIDE ?v= (the ?v= payload contract is frozen) so the share
+    // card can swap its gold band for a named mechanism.
+    const marker = scannedDanger
+      ? headlineBlockingFlag(scanned?.safetyFlags)
+      : null;
+    const sf = marker
+      ? `&sf=${encodeURIComponent(encodeSafetyMarker(marker.code))}`
+      : "";
     const url = `${window.location.origin}/?q=${encodeURIComponent(
       scannedMint
-    )}&v=${encodeSharePayload(payload)}`;
+    )}&v=${encodeSharePayload(payload)}${sf}`;
     try {
       await navigator.clipboard.writeText(url);
       setCopyFailed(false);
@@ -142,16 +180,18 @@ export function ScanHero({
       className={`mb-4 overflow-hidden rounded-2xl border ${
         preliminary
           ? "bg-surface-1"
-          : isOG
+          : endorsed
             ? "og-glow bg-gradient-to-br from-og/[0.10] via-surface-1 to-surface-1"
-            : "border-risk/25 bg-gradient-to-br from-risk/[0.07] via-surface-1 to-surface-1"
+            : unsafeOG
+              ? "border-risk/45 bg-gradient-to-br from-risk/[0.12] via-surface-1 to-surface-1"
+              : "border-risk/25 bg-gradient-to-br from-risk/[0.07] via-surface-1 to-surface-1"
       }`}
     >
       {/* ── Verdict ─────────────────────────────────────────────────────── */}
       <div className="p-4 sm:p-6">
         <p
           className={`${EYEBROW} ${
-            preliminary ? "text-fg-4" : isOG ? "text-og" : "text-risk"
+            preliminary ? "text-fg-4" : endorsed ? "text-og" : "text-risk"
           }`}
         >
           Contract scan verdict
@@ -162,11 +202,13 @@ export function ScanHero({
             <span className="flex h-12 w-12 flex-shrink-0 animate-pulse items-center justify-center rounded-2xl border bg-surface-2 font-mono text-sm text-fg-3 sm:h-14 sm:w-14 sm:text-base">
               #{rank}
             </span>
-          ) : isOG ? (
+          ) : endorsed ? (
             <span className="og-badge-crown flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-2xl border border-og/35 bg-og/[0.12] sm:h-14 sm:w-14">
               <LottieHover animationData={crownOg} size={34} />
             </span>
           ) : (
+            // No crown for an unsafe #1 — but the rank itself still shows,
+            // because the age finding is true and we never hide it.
             <span className="flex h-12 min-w-[3rem] flex-shrink-0 items-center justify-center rounded-2xl border border-risk/25 bg-risk/[0.08] px-3 font-mono text-lg font-medium text-risk sm:h-14 sm:min-w-[3.5rem] sm:text-xl">
               #{rank}
             </span>
@@ -174,19 +216,27 @@ export function ScanHero({
 
           <div className="min-w-0">
             <h2
-              className={`font-display text-[30px] font-bold uppercase leading-[1.05] tracking-tight sm:text-[40px] ${
+              className={`font-display font-bold uppercase leading-[1.05] tracking-tight ${
+                unsafeOG
+                  ? "text-[26px] text-risk sm:text-[34px]"
+                  : "text-[30px] sm:text-[40px]"
+              } ${
                 preliminary
                   ? "animate-pulse text-fg-3"
-                  : isOG
+                  : endorsed
                     ? "text-og"
-                    : "text-fg"
+                    : unsafeOG
+                      ? ""
+                      : "text-fg"
               }`}
             >
               {preliminary
                 ? "Verifying…"
-                : isOG
+                : endorsed
                   ? "This is the OG"
-                  : "Not the OG"}
+                  : unsafeOG
+                    ? "Oldest by age — but unsafe"
+                    : "Not the OG"}
             </h2>
             <p className="mt-1.5 text-meta text-fg-3 sm:text-sm">
               {preliminary ? (
@@ -213,6 +263,31 @@ export function ScanHero({
             </p>
           </div>
         </div>
+
+        {/* Blocking findings, spelled out — the mechanism and what it does to
+            a holder. Shown whenever the scanned token is dangerous, whether or
+            not it is also the oldest. */}
+        {!preliminary && scannedBlocking.length > 0 && (
+          <div className="mt-4 rounded-xl border border-risk/30 bg-risk/[0.07] p-3.5 sm:p-4">
+            <p className={`${EYEBROW} text-risk`}>
+              {scannedBlocking.length === 1
+                ? "Blocking risk flag"
+                : `${scannedBlocking.length} blocking risk flags`}
+            </p>
+            <div className="mt-2.5">
+              <SafetyFindingList flags={scannedBlocking} size="md" />
+            </div>
+            {unsafeOG && (
+              <p className="mt-3 border-t border-risk/20 pt-3 text-meta leading-relaxed text-fg-2">
+                This is the oldest token with this name, but it carries blocking
+                risk flags —{" "}
+                <span className="font-semibold text-fg">
+                  OGfinder is not calling it the OG.
+                </span>
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── Identity ────────────────────────────────────────────────────── */}
@@ -236,6 +311,13 @@ export function ScanHero({
           <span className="font-mono text-meta text-fg-3">${symbol}</span>
         )}
         {scanned && (
+          <SafetyChips
+            level={scanned.safetyLevel}
+            flags={scanned.safetyFlags}
+            size="md"
+          />
+        )}
+        {scanned && scanned.safetyLevel == null && (
           <RiskChips
             mintAuthorityActive={scanned.mintAuthorityActive}
             freezeAuthorityActive={scanned.freezeAuthorityActive}
@@ -384,19 +466,42 @@ export function ScanHero({
                 {formatDate(scanned?.createdAt ?? null)}
                 {ago && <span className="text-fg-4"> · {ago}</span>}
               </p>
+              {scanned?.safetyLevel && (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <SafetyChips
+                    level={scanned.safetyLevel}
+                    flags={scanned.safetyFlags}
+                    max={3}
+                  />
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-center px-1 text-center">
               <div>
-                <p className={`${EYEBROW} text-fg-4`}>OG is older by</p>
+                <p className={`${EYEBROW} text-fg-4`}>
+                  {ogDanger ? "Older by" : "OG is older by"}
+                </p>
                 <p className="mt-1 font-display text-lg font-bold tracking-tight text-fg sm:text-xl">
                   {gapMs != null && gapMs > 0 ? formatAgeGap(gapMs) : "—"}
                 </p>
               </div>
             </div>
 
-            <div className="og-glow rounded-xl border bg-og/[0.06] px-3.5 py-3">
-              <p className={`${EYEBROW} text-og`}>The OG — #1 by age</p>
+            {/* The #1 gets the gold panel only if IT is clean too — otherwise
+                this strip would just move the endorsement one column over. */}
+            <div
+              className={`rounded-xl border px-3.5 py-3 ${
+                ogDanger
+                  ? "border-risk/35 bg-risk/[0.07]"
+                  : "og-glow bg-og/[0.06]"
+              }`}
+            >
+              <p
+                className={`${EYEBROW} ${ogDanger ? "text-risk" : "text-og"}`}
+              >
+                {ogDanger ? "Oldest — #1 by age, unsafe" : "The OG — #1 by age"}
+              </p>
               <p className="mt-1.5 truncate font-display text-sm font-bold tracking-tight text-fg">
                 {og.displayName}
                 <span className="ml-1.5 font-mono text-micro font-normal text-fg-3">
@@ -407,11 +512,16 @@ export function ScanHero({
                 {formatDate(og.createdAt)}
                 {ogAgo && <span className="text-fg-4"> · {ogAgo}</span>}
               </p>
-              {og.topHolderPct != null && (
-                <div className="mt-2">
+              <div className="mt-2 flex flex-wrap items-center gap-1.5 empty:hidden">
+                <SafetyChips
+                  level={og.safetyLevel}
+                  flags={og.safetyFlags}
+                  max={3}
+                />
+                {og.topHolderPct != null && (
                   <HolderConcChip pct={og.topHolderPct} />
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -440,7 +550,7 @@ export function ScanHero({
               ? "border-up/40 bg-up/10 text-up"
               : copyFailed
                 ? "border-down/40 bg-down/10 text-down"
-                : isOG && !preliminary
+                : endorsed && !preliminary
                   ? "border-og/35 bg-og/10 text-og hover:border-og/55 hover:bg-og/[0.16]"
                   : "bg-surface-2 text-fg-2 hover:border-line-str hover:text-fg"
           }`}

@@ -3,8 +3,10 @@ import { HomeClient } from "@/components/HomeClient";
 import {
   decodeSharePayload,
   decodeComparePayload,
+  decodeSafetyMarker,
   formatShareDate,
 } from "@/lib/share";
+import { flagFromCode } from "@/lib/safety";
 
 type PageSearchParams = { [key: string]: string | string[] | undefined };
 
@@ -26,19 +28,33 @@ export function generateMetadata({
       const minted = formatShareDate(p.d);
       const rankClause =
         p.r !== null && p.t !== null ? ` · #${p.r} of ${p.t} by age` : "";
-      const title = p.o
-        ? `"${p.n}" — OG verified${minted ? ` · minted ${minted}` : ""} | OGfinder`
-        : `"${p.n}" — NOT the OG${rankClause} | OGfinder`;
-      const description = p.o
-        ? `${p.n} ($${p.s}) checks out as the original "${p.n}" on Solana${
-            minted ? ` — minted ${minted}` : ""
-          }. Verified by on-chain age with OGfinder.`
-        : `${p.n} ($${p.s}) is NOT the original "${p.n}" on Solana${
-            p.r !== null && p.t !== null
-              ? ` — it ranks #${p.r} of ${p.t} by age`
-              : ""
-          }. Find the real OG with OGfinder.`;
-      const ogImage = `/api/og?v=${encodeURIComponent(rawV)}`;
+      // Optional sibling marker (?sf=): a blocking safety finding. It must
+      // reach the title/description too — an unsafe token that is genuinely
+      // the oldest may never be described as "OG verified".
+      const rawSf = typeof searchParams.sf === "string" ? searchParams.sf : null;
+      const marker = decodeSafetyMarker(rawSf);
+      const flag = marker ? flagFromCode(marker) : null;
+      const title = flag
+        ? `"${p.n}" — oldest by age, but UNSAFE: ${flag.label} | OGfinder`
+        : p.o
+          ? `"${p.n}" — OG verified${minted ? ` · minted ${minted}` : ""} | OGfinder`
+          : `"${p.n}" — NOT the OG${rankClause} | OGfinder`;
+      const description = flag
+        ? `${p.n} ($${p.s})${
+            p.o ? ` is the oldest "${p.n}" on Solana` : ""
+          } — ${flag.detail} OGfinder is not calling it the OG.`
+        : p.o
+          ? `${p.n} ($${p.s}) checks out as the original "${p.n}" on Solana${
+              minted ? ` — minted ${minted}` : ""
+            }. Verified by on-chain age with OGfinder.`
+          : `${p.n} ($${p.s}) is NOT the original "${p.n}" on Solana${
+              p.r !== null && p.t !== null
+                ? ` — it ranks #${p.r} of ${p.t} by age`
+                : ""
+            }. Find the real OG with OGfinder.`;
+      const ogImage = `/api/og?v=${encodeURIComponent(rawV)}${
+        marker ? `&sf=${encodeURIComponent(marker)}` : ""
+      }`;
       return {
         title,
         description,

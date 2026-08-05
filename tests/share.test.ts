@@ -4,6 +4,8 @@ import {
   decodeSharePayload,
   encodeComparePayload,
   decodeComparePayload,
+  encodeSafetyMarker,
+  decodeSafetyMarker,
   SharePayload,
   ComparePayload,
 } from "@/lib/share";
@@ -48,6 +50,43 @@ describe("share payload", () => {
     // Arrays are not payloads
     const arr = Buffer.from(JSON.stringify([1, 2, 3])).toString("base64url");
     expect(decodeSharePayload(arr)).toBeNull();
+  });
+});
+
+describe("safety marker (?sf=)", () => {
+  it("round-trips a blocking flag code", () => {
+    expect(decodeSafetyMarker(encodeSafetyMarker("freeze-authority"))).toBe(
+      "freeze-authority"
+    );
+    expect(decodeSafetyMarker(encodeSafetyMarker("transfer-hook"))).toBe(
+      "transfer-hook"
+    );
+  });
+
+  it("refuses caution codes — only a blocking finding earns the red band", () => {
+    expect(decodeSafetyMarker("mint-authority")).toBeNull();
+    expect(decodeSafetyMarker("mutable-metadata")).toBeNull();
+    expect(decodeSafetyMarker("few-sells")).toBeNull();
+  });
+
+  it("rejects malformed / absent input", () => {
+    expect(decodeSafetyMarker(null)).toBeNull();
+    expect(decodeSafetyMarker(undefined)).toBeNull();
+    expect(decodeSafetyMarker("")).toBeNull();
+    expect(decodeSafetyMarker("not-a-code")).toBeNull();
+    expect(decodeSafetyMarker("x".repeat(64))).toBeNull();
+    expect(decodeSafetyMarker("__proto__")).toBeNull();
+    expect(decodeSafetyMarker("constructor")).toBeNull();
+    expect(decodeSafetyMarker(5 as unknown as string)).toBeNull();
+  });
+
+  it("leaves the ?v= contract alone — old links decode byte for byte", () => {
+    // The marker is a SIBLING param: adding it changes nothing about how a
+    // previously minted verdict payload encodes or decodes.
+    const encoded = encodeSharePayload(base);
+    expect(decodeSharePayload(encoded)).toEqual(base);
+    // …and a marker value is not itself a verdict payload.
+    expect(decodeSharePayload("freeze-authority")).toBeNull();
   });
 });
 

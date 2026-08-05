@@ -4,12 +4,15 @@ import { useState, useRef, useEffect } from "react";
 import { CompareState, CompareSideState } from "@/lib/compare";
 import { formatDate, timeAgo, formatAgeGap } from "@/lib/format";
 import { encodeComparePayload, ComparePayload } from "@/lib/share";
+import { blockingFlags, isDangerous } from "@/lib/safety-view";
 import {
   Chip,
   ConfidenceStars,
   PlatformBadge,
   RiskChips,
   HomoglyphBadge,
+  SafetyChips,
+  SafetyFindingList,
 } from "./Badge";
 
 function truncateMint(mint: string): string {
@@ -94,10 +97,21 @@ function SideCard({
   const hasLiquidity = t.liquidityUsd != null && t.liquidityUsd > 0;
   const hasChange = t.priceChange24h != null;
 
+  // A dangerous side never wears the gold winner treatment: on a card whose
+  // whole job is "pick one", gold on a token that can block your sells reads
+  // as "buy this one".
+  const danger = isDangerous(t.safetyLevel);
+  const blocking = danger ? blockingFlags(t.safetyFlags) : [];
+  const goldWinner = older && !danger;
+
   return (
     <div
       className={`rounded-xl border px-3.5 py-3 ${
-        older ? "og-glow bg-og/[0.06]" : "bg-surface-1"
+        danger
+          ? "border-risk/40 bg-risk/[0.07]"
+          : goldWinner
+            ? "og-glow bg-og/[0.06]"
+            : "bg-surface-1"
       }`}
     >
       <div className="flex items-center gap-2.5">
@@ -133,9 +147,13 @@ function SideCard({
         </div>
         {older && (
           <Chip
-            tone="og"
+            tone={goldWinner ? "og" : "risk"}
             className="font-semibold uppercase tracking-[0.14em]"
-            title="Older by verified on-chain creation time"
+            title={
+              goldWinner
+                ? "Older by verified on-chain creation time"
+                : "Older by verified on-chain creation time — and carrying blocking risk flags. Older does not mean safer."
+            }
           >
             Older
           </Chip>
@@ -159,13 +177,22 @@ function SideCard({
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <ConfidenceStars score={t.confidence} />
         <PlatformBadge dexId={t.dexId} mint={t.mint} />
-        <RiskChips
-          mintAuthorityActive={t.mintAuthorityActive}
-          freezeAuthorityActive={t.freezeAuthorityActive}
-          metadataMutable={t.metadataMutable}
-        />
+        <SafetyChips level={t.safetyLevel} flags={t.safetyFlags} max={3} />
+        {t.safetyLevel == null && (
+          <RiskChips
+            mintAuthorityActive={t.mintAuthorityActive}
+            freezeAuthorityActive={t.freezeAuthorityActive}
+            metadataMutable={t.metadataMutable}
+          />
+        )}
         {t.homoglyphSuspect && <HomoglyphBadge />}
       </div>
+
+      {blocking.length > 0 && (
+        <div className="mt-2.5 rounded-lg border border-risk/25 bg-risk/[0.06] px-2.5 py-2">
+          <SafetyFindingList flags={blocking} />
+        </div>
+      )}
 
       {(hasPrice || hasLiquidity || hasChange) && (
         <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-meta">
@@ -197,9 +224,12 @@ function SideCard({
 
       {side.scannedRank != null && side.totalFound != null && (
         <p className="mt-2.5 text-micro text-fg-4" title={RANK_TOOLTIP}>
-          {side.isScannedOG === true
-            ? `OG of its own name search (#${side.scannedRank} of ${side.totalFound})`
-            : `#${side.scannedRank} of ${side.totalFound} in its own name search`}
+          {side.isScannedOG !== true
+            ? `#${side.scannedRank} of ${side.totalFound} in its own name search`
+            : danger
+              ? // Same fact, no endorsement: "OG of…" is the word we withhold.
+                `Oldest in its own name search (#${side.scannedRank} of ${side.totalFound})`
+              : `OG of its own name search (#${side.scannedRank} of ${side.totalFound})`}
         </p>
       )}
     </div>
@@ -246,6 +276,7 @@ export function ComparisonCard({ state }: { state: CompareState }) {
     aMs != null && bMs != null && aMs !== bMs ? (aMs < bMs ? "a" : "b") : null;
   const gapMs = aMs != null && bMs != null ? Math.abs(aMs - bMs) : null;
   const winnerToken = winner === "a" ? aTok : winner === "b" ? bTok : null;
+  const winnerDanger = isDangerous(winnerToken?.safetyLevel);
   const shareable = Boolean(aTok && bTok);
 
   const shareComparison = async () => {
@@ -292,8 +323,10 @@ export function ComparisonCard({ state }: { state: CompareState }) {
             <h2 className="mt-2 font-display text-[26px] font-bold leading-[1.1] tracking-tight text-fg sm:text-[32px]">
               {winnerToken && gapMs != null ? (
                 <>
-                  <span className="text-og">{winnerToken.displayName}</span> is
-                  older by {formatAgeGap(gapMs)}
+                  <span className={winnerDanger ? "text-risk" : "text-og"}>
+                    {winnerToken.displayName}
+                  </span>{" "}
+                  is older by {formatAgeGap(gapMs)}
                 </>
               ) : state.a.error || state.b.error ? (
                 "Comparison incomplete"
@@ -303,6 +336,15 @@ export function ComparisonCard({ state }: { state: CompareState }) {
                 "No age verdict"
               )}
             </h2>
+            {winnerDanger && (
+              <p className="mt-2 max-w-prose text-meta leading-relaxed text-fg-2">
+                Age only. The older token carries blocking risk flags (listed on
+                its card) —{" "}
+                <span className="font-semibold text-fg">
+                  older does not mean safer, and OGfinder is not endorsing it.
+                </span>
+              </p>
+            )}
           </div>
 
           <button
@@ -342,7 +384,13 @@ export function ComparisonCard({ state }: { state: CompareState }) {
           <div className="flex items-center justify-center px-1 text-center">
             {winner && gapMs != null ? (
               <div>
-                <p className={`${EYEBROW} text-og`}>older by</p>
+                <p
+                  className={`${EYEBROW} ${
+                    winnerDanger ? "text-fg-4" : "text-og"
+                  }`}
+                >
+                  older by
+                </p>
                 <p className="mt-1 font-display text-lg font-bold tracking-tight text-fg sm:text-xl">
                   {formatAgeGap(gapMs)}
                 </p>

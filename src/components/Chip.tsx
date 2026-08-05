@@ -21,6 +21,7 @@ export type ChipTone =
   | "risk"
   | "warn"
   | "neutral"
+  | "muted"
   | "platform";
 
 const CHIP_TONES: Record<ChipTone, string> = {
@@ -31,6 +32,9 @@ const CHIP_TONES: Record<ChipTone, string> = {
   risk: "border-risk/25 bg-risk/10 text-risk",
   warn: "border-warn/25 bg-warn/10 text-warn",
   neutral: "bg-surface-3 text-fg-3",
+  /** Quietest tone in the set — for "we don't know", which must not compete
+      with a finding for attention and must never read as a result. */
+  muted: "bg-surface-2 text-fg-4",
   platform: "bg-surface-3 text-fg-2",
 };
 

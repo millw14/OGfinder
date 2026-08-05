@@ -246,6 +246,15 @@ export function isBlockingCode(code: SafetyFlagCode): boolean {
   return FLAGS[code]?.tier === "blocking";
 }
 
+/**
+ * True when `code` is a flag this build knows about. Flag codes reach us over
+ * the wire and out of share URLs, so every consumer treats them as untrusted —
+ * an unrecognised code is dropped, never rendered as an empty chip.
+ */
+export function isKnownFlagCode(code: string): code is SafetyFlagCode {
+  return Object.prototype.hasOwnProperty.call(FLAGS, code);
+}
+
 function num(v: number | null | undefined): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }

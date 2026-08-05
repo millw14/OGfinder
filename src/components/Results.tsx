@@ -11,6 +11,7 @@ import {
   scoreConfidence,
   scoreMarketCapRank,
 } from "@/lib/sort";
+import { isDangerous } from "@/lib/safety-view";
 import { WatchButton } from "./WatchButton";
 
 /** Sweep used by every skeleton; parked by the reduced-motion block. */
@@ -444,7 +445,11 @@ export function Results({
             <span className="text-fg-4"> · </span>
             <span className="font-mono">{history.snapshotCount}</span> snapshots
             <span className="text-fg-4"> · </span>
-            OG still leads
+            {/* "OG still leads" is an endorsement; a rank-1 with blocking
+                flags gets the factual wording instead. */}
+            {isDangerous(ranked[0]?.safetyLevel)
+              ? "oldest still leads"
+              : "OG still leads"}
           </p>
         ) : null
       )}

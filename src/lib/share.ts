@@ -4,9 +4,15 @@
  * Encoded client-side into share URLs and decoded server-side by
  * generateMetadata and /api/og. Decoding treats the input as fully
  * untrusted (it arrives from the URL): anything malformed returns null.
- * Dependency-free and isomorphic (btoa/atob in the browser, Buffer on
- * the server).
+ * Isomorphic (btoa/atob in the browser, Buffer on the server) and free of
+ * runtime dependencies beyond the pure safety-flag vocabulary.
  */
+
+import {
+  isBlockingCode,
+  isKnownFlagCode,
+  type SafetyFlagCode,
+} from "./safety";
 
 export interface SharePayload {
   /** Token name */
@@ -120,6 +126,40 @@ export function decodeSharePayload(raw: string): SharePayload | null {
     o: p.o,
     m: p.m === null ? null : truncate(p.m),
   };
+}
+
+// ————— Safety marker (?sf=) — sibling of ?v=, never part of it —————
+
+/**
+ * A shared verdict link can carry ONE safety marker: the headline blocking
+ * flag code of the token the card is about (`?sf=freeze-authority`).
+ *
+ * It rides beside ?v= rather than inside the payload on purpose — the ?v=
+ * decoder is strict and its contract is frozen, so every link minted before
+ * this existed keeps decoding and rendering byte-identically.
+ *
+ * Only BLOCKING codes are accepted: the marker exists to replace an
+ * endorsement with a named mechanism, and a caution finding does not earn a
+ * red band. Anything else decodes to null, i.e. "no marker".
+ */
+
+/** Raw ?sf= length cap — the longest real code is well under this. */
+const MAX_SAFETY_MARKER = 32;
+
+/** Serialize a blocking flag code for a ?sf= param (opaque to callers). */
+export function encodeSafetyMarker(code: SafetyFlagCode): string {
+  return code;
+}
+
+/** Decode an untrusted ?sf= param. Returns null on ANY non-blocking input. */
+export function decodeSafetyMarker(
+  raw: string | null | undefined
+): SafetyFlagCode | null {
+  if (typeof raw !== "string" || raw.length === 0) return null;
+  if (raw.length > MAX_SAFETY_MARKER) return null;
+  if (!isKnownFlagCode(raw)) return null;
+  if (!isBlockingCode(raw)) return null;
+  return raw;
 }
 
 // ————— Comparison share payloads (?cv=) — sibling of ?v=, never replaces it —————
