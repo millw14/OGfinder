@@ -7,6 +7,7 @@ import {
   HeliusSlotData,
 } from "./types";
 import type { EnhancedTx } from "./wallet-analysis";
+import type { MintExtensionFacts } from "./safety";
 import {
   getCreationSlotPersisted,
   setCreationSlotPersisted,
@@ -59,6 +60,29 @@ export function getHeliusMeta(mint: string): HeliusSlotData | undefined {
 
 export function setHeliusMeta(mint: string, data: HeliusSlotData): void {
   heliusMetaCache.set(mint, data);
+}
+
+/**
+ * Token-2022 mint extensions per mint. Extensions are set at mint creation and
+ * change very rarely, so they share the long DAS metadata TTL. Only successful
+ * reads are cached — a failed read must stay "unknown" and be retried.
+ */
+const mintExtensionsCache = new NodeCache({
+  stdTTL: CACHE_HELIUS,
+  checkperiod: 120,
+});
+
+export function getMintExtensionsCache(
+  mint: string
+): MintExtensionFacts | undefined {
+  return mintExtensionsCache.get(mint);
+}
+
+export function setMintExtensionsCache(
+  mint: string,
+  data: MintExtensionFacts
+): void {
+  mintExtensionsCache.set(mint, data);
 }
 
 export function getCreationSlotCache(

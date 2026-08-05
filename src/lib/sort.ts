@@ -1,6 +1,18 @@
 import { TokenResult } from "./types";
 import { normalize } from "./normalize";
 
+/**
+ * Rank-1 label when a blocking safety flag fired. States the fact we verified
+ * (it is the oldest) and withholds the endorsement — the specific mechanism is
+ * named by the token's safetyFlags, not by this label.
+ */
+export const UNSAFE_RANK1_LABEL = "Oldest — unsafe";
+
+/** True when this rank-1 label is an OG endorsement (crown-worthy). */
+export function isOgEndorsement(confidenceLabel: string): boolean {
+  return confidenceLabel === "OG" || confidenceLabel === "Likely OG";
+}
+
 export function sortByCreationTime(results: TokenResult[]): TokenResult[] {
   return results.sort((a, b) => {
     const ta = a.createdAtMs ?? Infinity;
@@ -113,8 +125,13 @@ export function scoreMarketCapRank(results: TokenResult[]): TokenResult[] {
  *    job is matching the name). Rank 1: "OG" (exact-ish match + clear time gap
  *    to #2 + solid age data), "Likely OG" (weaker: small gap or fuzzy match),
  *    "Oldest found" (createdAtIsLowerBound or missing/pending time — the
- *    ordering itself is uncertain).
+ *    ordering itself is uncertain), "Oldest — unsafe" (a blocking safety flag:
+ *    the age claim stands, the endorsement does not).
  *  - STARS (confidence) = per-token age-data quality via ageDataQuality().
+ *
+ * THE CROWN IS AN ENDORSEMENT AND MUST BE EARNED. Rank stays factual — the
+ * oldest token is still #1 — but a token that can freeze, seize, or block your
+ * sells never gets the word "OG" attached to it here.
  */
 export function scoreConfidence(
   results: TokenResult[],
@@ -155,6 +172,11 @@ export function scoreConfidence(
       // rides through client re-scores untouched.
       if (uncertainAge || token.homoglyphSuspect === true)
         confidenceLabel = "Oldest found";
+      // A blocking safety flag costs the endorsement, never the rank: this
+      // token IS the oldest, and we say so — we just refuse to vouch for it.
+      // (Uncertain age keeps its precedence above; either way, no crown.)
+      else if (token.safetyLevel === "danger")
+        confidenceLabel = UNSAFE_RANK1_LABEL;
       else if ((exactName || exactSymbol) && significantGap && stars >= 4)
         confidenceLabel = "OG";
       else confidenceLabel = "Likely OG";

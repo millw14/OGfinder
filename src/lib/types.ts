@@ -1,3 +1,7 @@
+// Type-only import (fully erased at build time), so the value-level dependency
+// stays one-way: safety.ts imports the thresholds below, never the reverse.
+import type { SafetyLevel, SafetyFlagCode } from "./safety";
+
 export interface RawToken {
   mint: string;
   dexName?: string;
@@ -20,6 +24,16 @@ export interface RawToken {
   liquidityUsd?: number;
   /** DexScreener 24h price change (%), from the highest-liquidity pair */
   priceChange24h?: number;
+  /**
+   * DexScreener txns.h24 buy/sell counts from the SAME pair the market data
+   * comes from (highest liquidity). "Buys but no sells" is the strongest
+   * empirical honeypot tell we can get for free.
+   */
+  buys24h?: number;
+  sells24h?: number;
+  /** txns.h6 counts — corroborates the 24h picture on fast-moving launches. */
+  buys6h?: number;
+  sells6h?: number;
 }
 
 export interface HeliusSlotData {
@@ -126,6 +140,27 @@ export interface TokenResult {
    * established wallet (definitely NOT fresh), exact age unknown.
    */
   deployerIsOldWallet?: boolean;
+  /** DexScreener 24h buy/sell counts from the highest-liquidity pair. */
+  buys24h?: number | null;
+  sells24h?: number | null;
+  /** DexScreener 6h buy/sell counts (corroborator). */
+  buys6h?: number | null;
+  sells6h?: number | null;
+  /**
+   * Safety verdict for this token. Only computed for the tokens it can change
+   * a decision for (the scanned mint and rank 1) — absent elsewhere, which
+   * means NOT ASSESSED, not safe.
+   *
+   * "danger" costs rank 1 the OG crown (see sort.ts) and bars it from the OG
+   * registry. "unknown" means the checks could not run and must never render
+   * as a clean result.
+   */
+  safetyLevel?: SafetyLevel;
+  /**
+   * Findings behind safetyLevel, CODES ONLY — labels and details are
+   * re-derived client-side via flagFromCode() so payloads stay small.
+   */
+  safetyFlags?: SafetyFlagCode[];
 }
 
 /** Deployer launched ≥ this many tokens → flag as serial deployer. */

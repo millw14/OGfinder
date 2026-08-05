@@ -8,6 +8,7 @@ import {
   birdeyeSearchKeywords,
 } from "./social-url";
 import { searchByUrlDetailed, upsertTokenLinks, UrlIndexHit } from "./url-index";
+import { tradeCountFields, type DexTxnBucket } from "./dex";
 import { getBirdeyeMetadataSingle, searchBirdeye } from "./birdeye";
 
 const DEX_SEARCH = "https://api.dexscreener.com/latest/dex/search";
@@ -34,6 +35,8 @@ export interface DexPairSocial {
   marketCap?: number;
   fdv?: number;
   pairCreatedAt?: number;
+  /** Same trade-count buckets as the search endpoint (see dex.ts). */
+  txns?: { h6?: DexTxnBucket; h24?: DexTxnBucket };
   info?: {
     websites?: { url?: string }[];
     socials?: { url?: string; type?: string }[];
@@ -411,6 +414,8 @@ export async function searchDexBySocialUrl(
       dexMarketCapUsd:
         typeof pair.marketCap === "number" ? pair.marketCap : undefined,
       dexFdvUsd: typeof pair.fdv === "number" ? pair.fdv : undefined,
+      // Trade counts ride along from the same pair the market data came from.
+      ...tradeCountFields(pair.txns),
     });
   }
 

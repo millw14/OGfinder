@@ -5,6 +5,12 @@ import { getDexCache, setDexCache } from "./cache";
 
 const DEX_URL = "https://api.dexscreener.com/latest/dex/search";
 
+/** DexScreener trade counts for one time bucket. */
+export interface DexTxnBucket {
+  buys?: number;
+  sells?: number;
+}
+
 interface DexPair {
   chainId: string;
   dexId: string;
@@ -14,6 +20,17 @@ interface DexPair {
   marketCap?: number;
   fdv?: number;
   priceChange?: { h24?: number };
+  /**
+   * Buy/sell counts per bucket — already in the payload we fetch, free.
+   * h24 "buys with zero sells" is the strongest honeypot tell available
+   * without simulating a swap.
+   */
+  txns?: {
+    m5?: DexTxnBucket;
+    h1?: DexTxnBucket;
+    h6?: DexTxnBucket;
+    h24?: DexTxnBucket;
+  };
   info?: { imageUrl?: string };
   baseToken: {
     address: string;
@@ -24,6 +41,34 @@ interface DexPair {
 
 interface DexResponse {
   pairs: DexPair[] | null;
+}
+
+function count(n: unknown): number | undefined {
+  return typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+/**
+ * Buy/sell counts from ONE pair — always the pair the market data came from
+ * (highest liquidity), never summed across pairs: mixing venues would hide a
+ * dead-sells pattern behind a healthy pool.
+ *
+ * Each count is carried only when it is actually a number; a missing count
+ * stays missing so the safety engine treats it as unchecked, not as zero.
+ */
+export function tradeCountFields(txns?: {
+  h6?: DexTxnBucket;
+  h24?: DexTxnBucket;
+}): Pick<RawToken, "buys24h" | "sells24h" | "buys6h" | "sells6h"> {
+  const b24 = count(txns?.h24?.buys);
+  const s24 = count(txns?.h24?.sells);
+  const b6 = count(txns?.h6?.buys);
+  const s6 = count(txns?.h6?.sells);
+  return {
+    ...(b24 !== undefined ? { buys24h: b24 } : {}),
+    ...(s24 !== undefined ? { sells24h: s24 } : {}),
+    ...(b6 !== undefined ? { buys6h: b6 } : {}),
+    ...(s6 !== undefined ? { sells6h: s6 } : {}),
+  };
 }
 
 export async function searchDex(query: string): Promise<RawToken[]> {
@@ -125,6 +170,7 @@ export async function searchDex(query: string): Promise<RawToken[]> {
         ...(typeof marketPair.priceChange?.h24 === "number"
           ? { priceChange24h: marketPair.priceChange.h24 }
           : {}),
+        ...tradeCountFields(marketPair.txns),
       });
       if (tokens.length >= DEX_LIMIT) break;
     }

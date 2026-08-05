@@ -4,7 +4,8 @@ import {
   MAX_RESULTS,
   HeliusSlotData,
 } from "./types";
-import { getAssetBatch, getCreationSlot } from "./helius";
+import { getAssetBatch, getCreationSlot, getMintExtensions } from "./helius";
+import { assessSafety } from "./safety";
 import {
   dexPairCreatedMs,
   hasLookalikeChars,
@@ -23,6 +24,56 @@ import {
 } from "./sort";
 
 const CREATION_SLOT_CONCURRENCY = 8;
+
+/**
+ * Run the safety checks on the tokens where they can change a decision: the
+ * scanned mint and the rank-1 candidate (the only token that can wear the
+ * crown). Bounded to ≤2 extra RPC calls per cold request — one cached
+ * getAccountInfo per token — in EVERY mode, because the crown appears in text
+ * search too.
+ *
+ * Every failure degrades to "unknown": a token whose checks did not run is
+ * never described as clean, and a scan never breaks because a check failed.
+ */
+export async function annotateSafety(
+  /** MUST be in rank order — index 0 is the rank-1 candidate. */
+  tokens: TokenResult[],
+  scannedMint?: string
+): Promise<void> {
+  const targets: TokenResult[] = [];
+  const seen = new Set<string>();
+  const add = (t: TokenResult | undefined) => {
+    if (!t || seen.has(t.mint)) return;
+    seen.add(t.mint);
+    targets.push(t);
+  };
+  add(tokens[0]);
+  if (scannedMint) add(tokens.find((t) => t.mint === scannedMint));
+  if (targets.length === 0) return;
+
+  await Promise.all(
+    targets.map(async (token) => {
+      try {
+        const extensions = await getMintExtensions(token.mint);
+        // The live mint account is fresher than the DAS index for authorities;
+        // when it answered, prefer it (both describe the same on-chain field).
+        if (extensions?.mintAuthorityActive !== undefined) {
+          token.mintAuthorityActive = extensions.mintAuthorityActive;
+        }
+        if (extensions?.freezeAuthorityActive !== undefined) {
+          token.freezeAuthorityActive = extensions.freezeAuthorityActive;
+        }
+        const assessment = assessSafety({ ...token, extensions });
+        token.safetyLevel = assessment.level;
+        token.safetyFlags = assessment.flags.map((f) => f.code);
+      } catch {
+        // A thrown check is an unrun check — say so, never imply "safe".
+        token.safetyLevel = "unknown";
+        token.safetyFlags = [];
+      }
+    })
+  );
+}
 
 export async function buildTokenResults(
   rawTokens: RawToken[],
@@ -192,6 +243,14 @@ export async function buildTokenResults(
         typeof c.raw.priceChange24h === "number"
           ? c.raw.priceChange24h
           : null,
+      // Trade counts stay ABSENT when DexScreener did not report them —
+      // null here would read as "we checked", and we did not.
+      ...(typeof c.raw.buys24h === "number" ? { buys24h: c.raw.buys24h } : {}),
+      ...(typeof c.raw.sells24h === "number"
+        ? { sells24h: c.raw.sells24h }
+        : {}),
+      ...(typeof c.raw.buys6h === "number" ? { buys6h: c.raw.buys6h } : {}),
+      ...(typeof c.raw.sells6h === "number" ? { sells6h: c.raw.sells6h } : {}),
       rankingMode:
         rankBy === "marketcap"
           ? "marketcap"
@@ -221,17 +280,22 @@ export async function buildTokenResults(
 
   if (rankBy === "volume") {
     const sorted = sortByVolumeUsd(enriched);
+    await annotateSafety(sorted, options?.scannedMint);
     const scored = scoreVolumeRank(sorted);
     return sliceWithPinnedScan(scored, options?.scannedMint);
   }
 
   if (rankBy === "marketcap") {
     const sorted = sortByMarketCapLeaderboard(enriched);
+    await annotateSafety(sorted, options?.scannedMint);
     const scored = scoreMarketCapRank(sorted);
     return sliceWithPinnedScan(scored, options?.scannedMint);
   }
 
   const sorted = sortByCreationTime(enriched);
+  // Runs BEFORE scoring: scoreConfidence gates the crown on safetyLevel, so
+  // the verdict must already be on the token when the label is decided.
+  await annotateSafety(sorted, options?.scannedMint);
   const scored = scoreConfidence(sorted, queryForScore);
   return sliceWithPinnedScan(scored, options?.scannedMint);
 }

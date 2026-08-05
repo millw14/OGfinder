@@ -10,7 +10,10 @@ import {
   setHeliusMeta,
   getCreationSlotCache,
   setCreationSlotCache,
+  getMintExtensionsCache,
+  setMintExtensionsCache,
 } from "./cache";
+import type { MintExtensionFacts } from "./safety";
 import {
   getDeployerPersisted,
   setDeployerPersisted,
@@ -236,6 +239,178 @@ export async function getMintHeliusDataRpcFallback(
     }
   }
   return null;
+}
+
+// ————————————————— Token-2022 extensions (honeypot machinery) —————————————————
+
+/**
+ * jsonParsed shape of one Token-2022 extension. VERIFIED against mainnet
+ * (2026-08) — see parseMintExtensions for the per-extension evidence.
+ */
+interface ParsedExtension {
+  extension?: string;
+  state?: {
+    /** transferHook: null when no hook program is installed (inert). */
+    programId?: string | null;
+    /** permanentDelegate */
+    delegate?: string | null;
+    /** defaultAccountState: "frozen" | "initialized" */
+    accountState?: string | null;
+    /** transferFeeConfig */
+    newerTransferFee?: { transferFeeBasisPoints?: number };
+    olderTransferFee?: { transferFeeBasisPoints?: number };
+  } | null;
+}
+
+/** COption::None renders as null; the all-ones default pubkey means unset too. */
+const UNSET_PUBKEY = "11111111111111111111111111111111";
+
+function realAddress(v: unknown): string | null {
+  return typeof v === "string" && v.length > 0 && v !== UNSET_PUBKEY ? v : null;
+}
+
+/**
+ * Parse getAccountInfo(jsonParsed) into the extension facts the safety engine
+ * needs. Exported for unit tests. Returns null when the response is not a
+ * readable token mint — null always means UNKNOWN, never "no extensions".
+ *
+ * Shapes verified live on mainnet 2026-08:
+ *   transferHook       {"state":{"authority":"..","programId":null}}  (PYUSD, PUMP)
+ *                      programId "tHookmPkFZDJGkS9us6sVsnYi2EKHCrVtw8zD6oXYPE"
+ *                      on 12AR5yihid9wxUHDf5xKqLpPkRX4nyaSKiAD7LXmLBu
+ *   permanentDelegate  {"state":{"delegate":"2apBGMsS.."}}            (PYUSD)
+ *   transferFeeConfig  {"state":{"newerTransferFee":{"transferFeeBasisPoints":20},..}}
+ *   defaultAccountState{"state":{"accountState":"frozen"}}
+ *                      on 15YGYD1afQzrdjuzJBDonV7U5yPyBJs7qT5MQBLP49b
+ *   nonTransferable    NOT observed live (such tokens cannot trade on a DEX);
+ *                      parsed defensively off the extension NAME alone, which
+ *                      holds whether or not the parser emits a state object.
+ */
+export function parseMintExtensions(
+  response: unknown
+): MintExtensionFacts | null {
+  const r = response as {
+    result?: {
+      value?: null | {
+        owner?: string;
+        data?: {
+          parsed?: {
+            type?: string;
+            info?: {
+              mintAuthority?: string | null;
+              freezeAuthority?: string | null;
+              extensions?: unknown;
+            };
+          };
+        };
+      };
+    };
+    error?: unknown;
+  };
+  if (r?.error) return null;
+
+  const value = r?.result?.value;
+  if (!value || typeof value !== "object") return null;
+
+  const owner = value.owner;
+  const isToken2022 = owner === SPL_TOKEN_2022_PROGRAM;
+  if (owner !== SPL_TOKEN_PROGRAM && !isToken2022) return null;
+
+  const parsed = value.data?.parsed;
+  if (parsed?.type !== "mint") return null;
+  const info = parsed.info;
+
+  const facts: MintExtensionFacts = {
+    hasTransferHook: false,
+    nonTransferable: false,
+    defaultAccountFrozen: false,
+    permanentDelegate: null,
+    transferFeeBps: null,
+    isToken2022,
+  };
+  if (info) {
+    facts.mintAuthorityActive = realAddress(info.mintAuthority) !== null;
+    facts.freezeAuthorityActive = realAddress(info.freezeAuthority) !== null;
+  }
+
+  // A legacy SPL mint has no extensions — a successful read, zero findings.
+  const list = info?.extensions;
+  if (!Array.isArray(list)) return facts;
+
+  for (const raw of list) {
+    const e = raw as ParsedExtension;
+    const state = e?.state ?? undefined;
+    switch (e?.extension) {
+      case "transferHook":
+        // Only a REAL hook program can revert a sell; a null hook is inert.
+        if (realAddress(state?.programId)) facts.hasTransferHook = true;
+        break;
+      case "nonTransferable":
+      case "nonTransferableAccount":
+        facts.nonTransferable = true;
+        break;
+      case "defaultAccountState":
+        if (state?.accountState === "frozen") facts.defaultAccountFrozen = true;
+        break;
+      case "permanentDelegate": {
+        const delegate = realAddress(state?.delegate);
+        if (delegate) facts.permanentDelegate = delegate;
+        break;
+      }
+      case "transferFeeConfig": {
+        const bps =
+          state?.newerTransferFee?.transferFeeBasisPoints ??
+          state?.olderTransferFee?.transferFeeBasisPoints;
+        if (typeof bps === "number" && Number.isFinite(bps)) {
+          facts.transferFeeBps = bps;
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  return facts;
+}
+
+/**
+ * Read a mint's Token-2022 extensions (plus its live authorities, which come
+ * in the same account read for free). Cached — extensions change rarely.
+ *
+ * Returns null on ANY failure, which the safety engine reads as "check did not
+ * run" → unknown. It must never be read as "no dangerous extensions".
+ */
+export async function getMintExtensions(
+  mint: string
+): Promise<MintExtensionFacts | null> {
+  try {
+    const cached = getMintExtensionsCache(mint);
+    if (cached) return cached;
+
+    const params = [mint, { encoding: "jsonParsed" }];
+    const urls = [
+      getStandardJsonRpcUrl(),
+      PUBLIC_MAINNET_RPC,
+      process.env.SOLANA_RPC_URL?.trim(),
+    ].filter((u, i, a): u is string => Boolean(u) && a.indexOf(u) === i);
+
+    for (const url of urls) {
+      try {
+        const response = await jsonRpc(url, "getAccountInfo", params);
+        const facts = parseMintExtensions(response);
+        if (facts) {
+          setMintExtensionsCache(mint, facts);
+          return facts;
+        }
+      } catch {
+        // try next endpoint
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /**

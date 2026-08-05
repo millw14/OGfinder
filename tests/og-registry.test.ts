@@ -170,6 +170,116 @@ describe("recordOgFromScan — uncertain OGs are never immortalized", () => {
   }
 });
 
+describe("recordOgFromScan — a dangerous token is never cemented", () => {
+  it("refuses to register an OG with a blocking safety flag", async () => {
+    const lib = await freshRegistry();
+    lib.recordOgFromScan(
+      payload([
+        tok({
+          mint: "HoneyOG",
+          displayName: "Bonk",
+          rank: 1,
+          createdAtMs: T_OG,
+          safetyLevel: "danger",
+          safetyFlags: ["no-sells"],
+        }),
+        // A younger clean token must NOT be promoted in its place.
+        tok({ mint: "CleanClone", displayName: "Bonk", rank: 2, createdAtMs: T_CLONE }),
+      ]),
+      "CleanClone"
+    );
+    expect(rows(lib)).toHaveLength(0);
+  });
+
+  it("registers normally at caution / clear / unknown levels", async () => {
+    for (const level of ["caution", "clear", "unknown"] as const) {
+      const lib = await freshRegistry();
+      lib.recordOgFromScan(
+        payload([
+          tok({
+            mint: "BonkOG",
+            displayName: "Bonk",
+            rank: 1,
+            createdAtMs: T_OG,
+            safetyLevel: level,
+          }),
+        ]),
+        "BonkOG"
+      );
+      expect(rows(lib)).toHaveLength(1);
+      expect(rows(lib)[0].og_mint).toBe("BonkOG");
+    }
+  });
+
+  it("evicts an already-registered OG once it is assessed as dangerous", async () => {
+    const lib = await freshRegistry();
+    // Day 1: registered before the safety engine had anything to say.
+    lib.recordOgFromScan(
+      payload([tok({ mint: "BonkOG", displayName: "Bonk", rank: 1, createdAtMs: T_OG })]),
+      "BonkOG"
+    );
+    expect(rows(lib)).toHaveLength(1);
+
+    // Day 2: a later scan assesses that same mint as dangerous.
+    lib.recordOgFromScan(
+      payload([
+        tok({
+          mint: "BonkOG",
+          displayName: "Bonk",
+          rank: 1,
+          createdAtMs: T_OG,
+          safetyLevel: "danger",
+          safetyFlags: ["transfer-hook"],
+        }),
+        tok({ mint: "BonkClone", displayName: "Bonk", rank: 2, createdAtMs: T_CLONE }),
+      ]),
+      "BonkClone"
+    );
+    // The row is gone — the bot falls back to a full scan instead of serving
+    // an instant "this is the OG" for a honeypot.
+    expect(rows(lib)).toHaveLength(0);
+    expect(lib.getRegisteredOg("bonk")).toBeUndefined();
+  });
+
+  it("evicts under a different name key than the one being scanned", async () => {
+    const lib = await freshRegistry();
+    lib.recordOgFromScan(
+      payload([tok({ mint: "SharedMint", displayName: "Trump", rank: 1, createdAtMs: T_OG })]),
+      "SharedMint"
+    );
+    expect(rows(lib)).toHaveLength(1);
+    // Scanning a "Trump Coin" cohort that happens to include the dangerous
+    // mint still clears its "trump" row.
+    lib.recordOgFromScan(
+      payload([
+        tok({ mint: "TCoinOG", displayName: "Trump Coin", rank: 1, createdAtMs: T_OG }),
+        tok({
+          mint: "SharedMint",
+          displayName: "Trump",
+          rank: 2,
+          createdAtMs: T_OG,
+          safetyLevel: "danger",
+        }),
+      ]),
+      "TCoinOG"
+    );
+    const all = rows(lib);
+    expect(all).toHaveLength(1);
+    expect(all[0].name_skeleton).toBe("trump coin");
+  });
+
+  it("evictOgMint reports what it removed and is safe to repeat", async () => {
+    const lib = await freshRegistry();
+    lib.recordOgFromScan(
+      payload([tok({ mint: "BonkOG", displayName: "Bonk", rank: 1, createdAtMs: T_OG })]),
+      "BonkOG"
+    );
+    expect(lib.evictOgMint("BonkOG")).toBe(1);
+    expect(lib.evictOgMint("BonkOG")).toBe(0);
+    expect(lib.evictOgMint("NeverRegistered")).toBe(0);
+  });
+});
+
 describe("recordOgFromScan — upsert behavior", () => {
   it("bumps scan_count + verified_at on repeat scans of the same OG", async () => {
     const lib = await freshRegistry();

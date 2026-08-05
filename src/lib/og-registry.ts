@@ -17,6 +17,11 @@ import type { MintScanPayload } from "./scan";
  * Only certain ages are immortalized: an OG whose age is a lower bound
  * (truncated signature scan), still pending, missing, or whose name only
  * matches via homoglyph folding is never written.
+ *
+ * AND ONLY SAFE-ENOUGH TOKENS. A registered OG is served as an instant verdict
+ * to every Telegram group for 24h, so a token carrying a blocking safety flag
+ * is never written — and if one is already registered, it is evicted the
+ * moment we assess it as dangerous.
  */
 
 /** Registry answers older than this are stale — fall back to a full scan. */
@@ -37,11 +42,27 @@ export function isRegistryFresh(verifiedAt: number, now = Date.now()): boolean {
 }
 
 /**
+ * Remove a mint from the registry wherever it is the registered OG. Returns
+ * the number of rows deleted. Never throws (registry work is best-effort).
+ */
+export function evictOgMint(mint: string): number {
+  try {
+    const info = getDb()
+      .prepare(`DELETE FROM og_registry WHERE og_mint = ?`)
+      .run(mint);
+    return info.changes ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * Record the resolved OG of a completed FULL mint scan. Key = exact skeleton
  * of the SCANNED token's display name; the OG is the oldest (lowest-rank)
  * result whose name skeleton EXACTLY equals that key. If that candidate's age
- * is uncertain (pending / lower bound / missing) or its name is homoglyph-
- * suspect, nothing is written — we never fall through to a younger candidate.
+ * is uncertain (pending / lower bound / missing), its name is homoglyph-
+ * suspect, or it carries a blocking safety flag, nothing is written — we never
+ * fall through to a younger candidate.
  * Best-effort: every failure is swallowed (must never break a scan).
  */
 export function recordOgFromScan(
@@ -49,6 +70,13 @@ export function recordOgFromScan(
   scannedMint: string
 ): void {
   try {
+    // Eviction first, and independent of everything below: a token we have
+    // now assessed as dangerous must not keep serving instant "this is the
+    // OG" verdicts from a row written before the flag existed.
+    for (const t of payload.results) {
+      if (t.safetyLevel === "danger") evictOgMint(t.mint);
+    }
+
     const scanned = payload.results.find((t) => t.mint === scannedMint);
     const scannedName = scanned?.displayName ?? payload.scanName;
     if (!scannedName) return;
@@ -67,6 +95,11 @@ export function recordOgFromScan(
     if (og.pendingAge) return;
     if (og.createdAtIsLowerBound) return;
     if (og.homoglyphSuspect) return;
+    // A blocking safety flag bars the crown (sort.ts) — it must bar the
+    // registry too, or the honeypot gets cemented for 24h. We never fall
+    // through to a younger candidate: the key simply stays empty and the next
+    // caller pays for a full scan.
+    if (og.safetyLevel === "danger") return;
 
     getDb()
       .prepare(

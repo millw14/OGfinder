@@ -2,7 +2,7 @@ import { MIN_QUERY, TokenResult } from "./types";
 import { normalize } from "./normalize";
 import { getSearchCache, setSearchCache } from "./cache";
 import { searchTokens } from "./search";
-import { buildTokenResults } from "./enrich-results";
+import { annotateSafety, buildTokenResults } from "./enrich-results";
 import { deriveSearchTermFromMintMetadata } from "./mint-search";
 import {
   getAssetBatch,
@@ -199,6 +199,12 @@ export async function runMintScan(
         }
       }
     }
+
+    // Re-assess with the holder + deployer signals that arrived after
+    // enrichment. Extensions come from cache, so this costs no network. Both
+    // are caution-tier, so a crown already awarded stays valid; this only
+    // completes the flag list. Failures leave the earlier verdict in place.
+    await annotateSafety(final, q);
   }
 
   const payload: MintScanPayload = {
