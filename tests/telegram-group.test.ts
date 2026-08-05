@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   extractMintCandidates,
+  formatBlockingFlagLine,
   formatDeployerLine,
   formatMintVerdict,
   formatNameSearchReply,
   formatRegistryVerdict,
+  formatSafetyRiskChip,
   parseBotCommand,
   verdictShareUrl,
   VerdictCooldown,
@@ -354,6 +356,201 @@ describe("formatMintVerdict", () => {
   });
 });
 
+// ————————————————— formatMintVerdict: safety gating —————————————————
+
+/** Single-token scan payload for safety-level fixtures. */
+function scanOf(t: TokenResult): MintScanPayload {
+  return {
+    results: [t],
+    query: "bonk",
+    scanName: t.displayName,
+    scanSymbol: t.displaySymbol,
+  };
+}
+
+describe("formatMintVerdict safety gating", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-02T00:00:00.000Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const dangerToken = (over?: Partial<TokenResult>) =>
+    tok({
+      mint: BONK,
+      displayName: "Bonk",
+      displaySymbol: "BONK",
+      rank: 1,
+      createdAt: OG_CREATED,
+      createdAtMs: Date.parse(OG_CREATED),
+      safetyLevel: "danger",
+      safetyFlags: ["freeze-authority", "mint-authority", "mutable-metadata"],
+      ...over,
+    });
+
+  it("leads with the warning and NEVER crowns a danger token", () => {
+    const payload = scanOf(dangerToken());
+    const msg = formatMintVerdict(BONK, payload, SITE);
+    const lines = msg.split("\n");
+    expect(lines[0]).toBe("🛑 <b>UNSAFE — DO NOT BUY</b> — Bonk ($BONK)");
+    // Each blocking mechanism named — never a generic accusation.
+    expect(lines[1]).toBe("⛔ freeze authority active");
+    expect(lines[2]).toBe(
+      "oldest by age, but OGfinder will not call it the OG"
+    );
+    // The age fact itself survives untouched.
+    expect(lines[3]).toBe(`minted Dec 20, 2022 (${timeAgo(OG_CREATED)})`);
+    // Cautions still reported, in the risk slot, below the blocking findings.
+    expect(lines[4]).toBe("⚠️ mint authority active · metadata still mutable");
+    // Grep our own output: no crown, no endorsement, no accusation.
+    expect(msg).not.toContain("👑");
+    expect(msg).not.toContain("THIS IS THE OG");
+    expect(msg).not.toContain("OG</b> — Bonk");
+    expect(msg.toLowerCase()).not.toContain("scam");
+    // Links line still last.
+    expect(lines[lines.length - 1]).toContain("DexScreener");
+  });
+
+  it("keeps the factual rank line for a danger token that is NOT the oldest", () => {
+    const payload: MintScanPayload = {
+      results: [
+        tok({ mint: WSOL, displayName: "Bonk", rank: 1 }),
+        dangerToken({
+          mint: USDC,
+          rank: 2,
+          // Server severity order within a tier is preserved as emitted.
+          safetyFlags: ["transfer-hook", "no-sells"],
+        }),
+      ],
+      query: "bonk",
+      scanName: "Bonk",
+      scanSymbol: "BONK",
+    };
+    const lines = formatMintVerdict(USDC, payload, SITE).split("\n");
+    expect(lines[0]).toBe("🛑 <b>UNSAFE — DO NOT BUY</b> — Bonk ($BONK)");
+    expect(lines[1]).toBe("⛔ transfer hook program · buys but no sells");
+    expect(lines[2]).toBe("🚫 <b>NOT THE OG</b> — #2 of 2 by age");
+  });
+
+  it("keeps the crown for a caution token and appends the findings", () => {
+    const payload = scanOf(
+      dangerToken({
+        safetyLevel: "caution",
+        safetyFlags: ["mutable-metadata"],
+      })
+    );
+    const lines = formatMintVerdict(BONK, payload, SITE).split("\n");
+    expect(lines[0]).toBe("👑 <b>THIS IS THE OG</b> — Bonk ($BONK)");
+    expect(lines[2]).toBe("⚠️ metadata still mutable");
+  });
+
+  it("reports 'clear' as an absence of findings, never as safe", () => {
+    const payload = scanOf(
+      dangerToken({ safetyLevel: "clear", safetyFlags: [] })
+    );
+    const msg = formatMintVerdict(BONK, payload, SITE);
+    expect(msg.split("\n")[2]).toBe("🔎 no blocking flags found");
+    expect(msg.toLowerCase()).not.toContain("safe");
+  });
+
+  it("reports 'unknown' as checks unavailable, never as a clean result", () => {
+    const payload = scanOf(
+      dangerToken({ safetyLevel: "unknown", safetyFlags: [] })
+    );
+    const msg = formatMintVerdict(BONK, payload, SITE);
+    expect(msg.split("\n")[2]).toBe("❔ safety checks unavailable");
+    expect(msg).not.toContain("no blocking flags found");
+    // An unrun check must not cost the rank-1 token its crown.
+    expect(msg).toContain("👑 <b>THIS IS THE OG</b>");
+  });
+
+  it("prints the 24h buy/sell counts behind a no-sells finding", () => {
+    const payload = scanOf(
+      dangerToken({
+        safetyFlags: ["no-sells"],
+        buys24h: 212,
+        sells24h: 0,
+        liquidityUsd: 18_400,
+      })
+    );
+    const msg = formatMintVerdict(BONK, payload, SITE);
+    expect(msg).toContain("💰 liq $18.4K · 212 buys / 0 sells 24h");
+  });
+
+  it("leaves an UNASSESSED token on the legacy chips (absent is not clean)", () => {
+    const payload = scanOf(
+      tok({
+        mint: BONK,
+        displayName: "Bonk",
+        displaySymbol: "BONK",
+        rank: 1,
+        freezeAuthorityActive: true,
+      })
+    );
+    const msg = formatMintVerdict(BONK, payload, SITE);
+    expect(msg).toContain("⚠️ freeze auth");
+    expect(msg).not.toContain("no blocking flags found");
+    expect(msg).not.toContain("safety checks unavailable");
+  });
+});
+
+describe("formatBlockingFlagLine / formatSafetyRiskChip", () => {
+  it("orders blocking findings first and drops unknown codes", () => {
+    const t = tok({
+      mint: BONK,
+      safetyFlags: [
+        "mint-authority",
+        "bogus-code" as never,
+        "permanent-delegate",
+      ],
+    });
+    expect(formatBlockingFlagLine(t)).toBe("⛔ permanent delegate set");
+    expect(formatSafetyRiskChip({ ...t, safetyLevel: "danger" })).toBe(
+      "⚠️ mint authority active"
+    );
+  });
+
+  it("returns null when nothing blocks and when the token was never assessed", () => {
+    expect(formatBlockingFlagLine(tok({ mint: BONK }))).toBeNull();
+    expect(
+      formatBlockingFlagLine(tok({ mint: BONK, safetyFlags: ["low-liquidity"] }))
+    ).toBeNull();
+    expect(formatSafetyRiskChip(tok({ mint: BONK }))).toBeNull();
+  });
+});
+
+describe("verdictShareUrl safety marker", () => {
+  it("appends ?sf=<headline blocking code> for a danger verdict only", () => {
+    const danger = scanOf(
+      tok({
+        mint: BONK,
+        rank: 1,
+        safetyLevel: "danger",
+        safetyFlags: ["mint-authority", "freeze-authority"],
+      })
+    );
+    const url = new URL(verdictShareUrl(BONK, danger, SITE));
+    // Blocking-first ordering picks the mechanism, not the first code listed.
+    expect(url.searchParams.get("sf")).toBe("freeze-authority");
+    // The frozen ?v= contract is untouched by the marker.
+    expect(decodeSharePayload(url.searchParams.get("v")!)?.m).toBe(BONK);
+
+    const caution = scanOf(
+      tok({
+        mint: BONK,
+        rank: 1,
+        safetyLevel: "caution",
+        safetyFlags: ["mint-authority"],
+      })
+    );
+    expect(
+      new URL(verdictShareUrl(BONK, caution, SITE)).searchParams.get("sf")
+    ).toBeNull();
+  });
+});
+
 // ————————————————————————— formatDeployerLine —————————————————————————
 
 describe("formatDeployerLine", () => {
@@ -492,13 +689,17 @@ describe("formatRegistryVerdict", () => {
     };
   }
 
-  it("crowns the registered OG with the verification age and re-check note", () => {
-    expect(formatRegistryVerdict(BONK, entry())).toBe(
+  it("states the age fact WITHOUT crowning while safety checks are pending", () => {
+    const msg = formatRegistryVerdict(BONK, entry());
+    expect(msg).toBe(
       [
-        "👑 <b>THIS IS THE OG</b> — Bonk ($BONK) (verified today)",
-        "(from OGfinder registry — full re-check running)",
+        "⏳ <b>OLDEST BY AGE</b> — Bonk ($BONK) is the oldest token of this name (checked today)",
+        "(from OGfinder registry — safety checks still running, full verdict next)",
       ].join("\n")
     );
+    // The endorsement belongs to the full scan, which has the safety verdict.
+    expect(msg).not.toContain("👑");
+    expect(msg).not.toContain("THIS IS THE OG");
   });
 
   it("flags a non-OG with the registered OG's mint and mint date", () => {
@@ -522,7 +723,7 @@ describe("formatRegistryVerdict", () => {
 
   it("omits the symbol suffix when null", () => {
     const msg = formatRegistryVerdict(BONK, entry({ ogSymbol: null }));
-    expect(msg).toContain("— Bonk (verified today)");
+    expect(msg).toContain("— Bonk is the oldest token of this name");
   });
 });
 
@@ -579,6 +780,33 @@ describe("formatNameSearchReply", () => {
     expect(formatNameSearchReply("nope coin", [], SITE)).toBe(
       `No tokens found named "nope coin" — <a href="${SITE}/?q=nope%20coin">search on OGfinder</a>`
     );
+  });
+
+  it("withholds the crown when the oldest match carries a blocking flag", () => {
+    const results = [
+      tok({
+        mint: BONK,
+        displayName: "Bonk",
+        displaySymbol: "BONK",
+        rank: 1,
+        createdAt: OG_CREATED,
+        createdAtMs: Date.parse(OG_CREATED),
+        safetyLevel: "danger",
+        safetyFlags: ["default-frozen"],
+      }),
+      tok({ mint: USDC, displayName: "Bonk 2.0", rank: 2 }),
+    ];
+    const msg = formatNameSearchReply("bonk", results, SITE);
+    const lines = msg.split("\n");
+    expect(lines[0]).toBe(
+      `🛑 <b>UNSAFE — DO NOT BUY</b> — <b>Bonk</b> ($BONK) — minted Dec 20, 2022 (${timeAgo(OG_CREATED)})`
+    );
+    expect(lines[1]).toBe("⛔ new accounts start frozen");
+    expect(lines[2]).toBe("oldest by age, but OGfinder will not call it the OG");
+    expect(lines[3]).toBe(`<code>${BONK}</code>`);
+    expect(msg).not.toContain("👑");
+    // Ranking below it is unchanged — the list is still factual.
+    expect(msg).toContain("#2 Bonk 2.0");
   });
 
   it("escapes HTML in the query and token fields", () => {

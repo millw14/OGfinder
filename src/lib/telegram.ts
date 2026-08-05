@@ -8,7 +8,17 @@ import {
   type MintScanOutcome,
   type MintScanPayload,
 } from "./scan";
-import { encodeSharePayload, formatShareDate, type SharePayload } from "./share";
+import {
+  encodeSafetyMarker,
+  encodeSharePayload,
+  formatShareDate,
+  type SharePayload,
+} from "./share";
+import {
+  blockingFlags,
+  headlineBlockingFlag,
+  orderSafetyFlags,
+} from "./safety-view";
 import { timeAgo, formatAgeGap } from "./format";
 import { isLikelyMintAddress } from "./solana";
 import {
@@ -522,6 +532,60 @@ export function formatDeployerLine(
   return parts.join(" · ");
 }
 
+// ————————————————————————— safety lines —————————————————————————
+//
+// THE BOT IS WHERE A VERDICT IS ACTED ON. A crown here is read as an
+// endorsement, so it is gated on the same safetyLevel the web UI uses:
+//  - "danger" → the warning leads, the crown never appears, and each blocking
+//    finding is named by its mechanism (never a generic "SCAM").
+//  - "caution" → the normal verdict plus a warning line.
+//  - "clear" → "no blocking flags found" (an absence of findings, never "safe").
+//  - "unknown" → "safety checks unavailable" (an unrun check is not a pass).
+//  - ABSENT → the token was never assessed; the legacy DAS chips render exactly
+//    as they did before, and nothing claims a safety result either way.
+
+/** Headline shown instead of the crown/rank line for a blocking verdict. */
+export const UNSAFE_HEADLINE = "🛑 <b>UNSAFE — DO NOT BUY</b>";
+/** Rank-1 age statement for a blocking verdict: fact kept, endorsement withheld. */
+export const UNSAFE_RANK1_LINE =
+  "oldest by age, but OGfinder will not call it the OG";
+
+/**
+ * "⛔ freeze authority active · permanent delegate set" — the blocking findings
+ * named one by one. Null when nothing blocks (or no codes survived decoding).
+ * Pure; exported for tests.
+ */
+export function formatBlockingFlagLine(t: TokenResult): string | null {
+  const flags = blockingFlags(t.safetyFlags);
+  if (flags.length === 0) return null;
+  return `⛔ ${flags.map((f) => escapeHtml(f.label)).join(" · ")}`;
+}
+
+/**
+ * Risk-slot content for an ASSESSED token: caution findings (blocking ones
+ * already lead the message), or the level's own statement when there are none.
+ * Pure; exported for tests.
+ */
+export function formatSafetyRiskChip(t: TokenResult): string | null {
+  switch (t.safetyLevel) {
+    case "danger":
+    case "caution": {
+      const cautions = orderSafetyFlags(t.safetyFlags).filter(
+        (f) => f.tier === "caution"
+      );
+      if (cautions.length === 0) return null;
+      return `⚠️ ${cautions.map((f) => escapeHtml(f.label)).join(" · ")}`;
+    }
+    case "clear":
+      // Deliberately not "safe": we only ever report what we did not find.
+      return "🔎 no blocking flags found";
+    case "unknown":
+      return "❔ safety checks unavailable";
+    default:
+      return null;
+  }
+}
+
 /** Share URL whose /api/og card Telegram unfurls — built like ScanHero's shareVerdict. */
 export function verdictShareUrl(
   mint: string,
@@ -538,7 +602,19 @@ export function verdictShareUrl(
     o: scanned?.rank === 1,
     m: mint,
   };
-  return `${site}/?q=${encodeURIComponent(mint)}&v=${encodeSharePayload(share)}`;
+  // ?sf= rides BESIDE ?v= exactly as ScanHero builds it, so the card Telegram
+  // unfurls for a blocking verdict is the red mechanism card, not a gold "OG"
+  // one. The ?v= payload itself is untouched (its contract is frozen).
+  const marker =
+    scanned?.safetyLevel === "danger"
+      ? headlineBlockingFlag(scanned.safetyFlags)
+      : null;
+  const sf = marker
+    ? `&sf=${encodeURIComponent(encodeSafetyMarker(marker.code))}`
+    : "";
+  return `${site}/?q=${encodeURIComponent(mint)}&v=${encodeSharePayload(
+    share
+  )}${sf}`;
 }
 
 /**
@@ -563,13 +639,28 @@ export function formatMintVerdict(
   const total = payload.results.length;
   const og = payload.results[0];
   const isOG = scanned.rank === 1;
+  const danger = scanned.safetyLevel === "danger";
 
   const lines: string[] = [];
-  lines.push(
-    isOG
-      ? `👑 <b>THIS IS THE OG</b> — ${name}${sym}`
-      : `🚫 <b>NOT THE OG</b> — ${name}${sym} is #${scanned.rank} of ${total} by age`
-  );
+  if (danger) {
+    // The warning leads. The crown emoji and the words "THIS IS THE OG" are
+    // unreachable from here — a blocking flag costs the endorsement, never the
+    // rank, so the age fact is still stated (just not as a recommendation).
+    lines.push(`${UNSAFE_HEADLINE} — ${name}${sym}`);
+    const blocking = formatBlockingFlagLine(scanned);
+    if (blocking) lines.push(blocking);
+    lines.push(
+      isOG
+        ? UNSAFE_RANK1_LINE
+        : `🚫 <b>NOT THE OG</b> — #${scanned.rank} of ${total} by age`
+    );
+  } else {
+    lines.push(
+      isOG
+        ? `👑 <b>THIS IS THE OG</b> — ${name}${sym}`
+        : `🚫 <b>NOT THE OG</b> — ${name}${sym} is #${scanned.rank} of ${total} by age`
+    );
+  }
 
   const minted = formatShareDate(scanned.createdAt) ?? "unknown date";
   const ago = timeAgo(scanned.createdAt);
@@ -587,14 +678,26 @@ export function formatMintVerdict(
   }
 
   const risk: string[] = [];
-  if (scanned.mintAuthorityActive === false) risk.push("🔒 renounced");
-  if (scanned.mintAuthorityActive === true) risk.push("⚠️ mint auth active");
-  if (scanned.freezeAuthorityActive === true) risk.push("⚠️ freeze auth");
-  if (scanned.metadataMutable === true) risk.push("✏️ mutable metadata");
-  if (scanned.topHolderPct != null) {
-    risk.push(`👥 top10 hold ${Math.round(scanned.topHolderPct)}%`);
+  if (scanned.safetyLevel) {
+    // Assessed: the safety engine owns the risk slot, so its findings can't
+    // contradict the verdict line above (and can't be double-printed).
+    const chip = formatSafetyRiskChip(scanned);
+    if (chip) risk.push(chip);
+    if (scanned.topHolderPct != null) {
+      risk.push(`👥 top10 hold ${Math.round(scanned.topHolderPct)}%`);
+    }
+  } else {
+    // Never assessed (ranks 2+ of a scan, or a build without the checks): the
+    // legacy DAS chips, unchanged — they describe fields, not a verdict.
+    if (scanned.mintAuthorityActive === false) risk.push("🔒 renounced");
+    if (scanned.mintAuthorityActive === true) risk.push("⚠️ mint auth active");
+    if (scanned.freezeAuthorityActive === true) risk.push("⚠️ freeze auth");
+    if (scanned.metadataMutable === true) risk.push("✏️ mutable metadata");
+    if (scanned.topHolderPct != null) {
+      risk.push(`👥 top10 hold ${Math.round(scanned.topHolderPct)}%`);
+    }
+    if (scanned.homoglyphSuspect) risk.push("🎭 lookalike characters");
   }
-  if (scanned.homoglyphSuspect) risk.push("🎭 lookalike characters");
   if (risk.length > 0) lines.push(risk.join(" · "));
 
   const dev = formatDeployerLine(scanned);
@@ -615,6 +718,11 @@ export function formatMintVerdict(
     const pc = scanned.priceChange24h;
     market.push(`${pc >= 0 ? "+" : ""}${pc.toFixed(1)}% 24h`);
   }
+  // The raw counts behind a "buys but no sells" finding — the reader can check
+  // the claim instead of taking our word for it.
+  if (scanned.buys24h != null && scanned.sells24h != null) {
+    market.push(`${scanned.buys24h} buys / ${scanned.sells24h} sells 24h`);
+  }
   if (market.length > 0) lines.push(`💰 ${market.join(" · ")}`);
 
   lines.push(
@@ -628,10 +736,19 @@ export function formatMintVerdict(
 }
 
 /**
- * Instant verdict from the exact-name OG registry, shown while the definitive
- * full scan runs. The final scan edit always lands after this one, so a
- * contradiction is resolved by construction — the full verdict wins. Pure;
- * exported for tests.
+ * Instant answer from the exact-name OG registry, shown while the definitive
+ * full scan runs. The final scan message always lands after this one, so a
+ * contradiction is resolved by construction — the full verdict wins.
+ *
+ * IT NEVER CROWNS. The registry only remembers WHICH MINT IS OLDEST for a name
+ * (dangerous tokens are barred from it and evicted on sight — og-registry.ts),
+ * but the pasted mint's own safety checks have not run yet at this point, and
+ * a token's on-chain powers can change after it was registered. So the age
+ * fact is stated and the endorsement is deferred to the full verdict — which
+ * matters most in the one case the replacement fails to send and this message
+ * is the last word in the chat.
+ *
+ * Pure; exported for tests.
  */
 export function formatRegistryVerdict(
   mint: string,
@@ -643,7 +760,12 @@ export function formatRegistryVerdict(
   if (mint === entry.ogMint) {
     const ago = timeAgo(new Date(entry.verifiedAt).toISOString());
     lines.push(
-      `👑 <b>THIS IS THE OG</b> — ${name}${sym} (verified ${ago || "recently"})`
+      `⏳ <b>OLDEST BY AGE</b> — ${name}${sym} is the oldest token of this name (checked ${
+        ago || "recently"
+      })`
+    );
+    lines.push(
+      "(from OGfinder registry — safety checks still running, full verdict next)"
     );
   } else {
     const minted =
@@ -655,8 +777,8 @@ export function formatRegistryVerdict(
         entry.ogMint
       )}</code>${minted ? `, minted ${minted}` : ""}`
     );
+    lines.push("(from OGfinder registry — full re-check running)");
   }
-  lines.push("(from OGfinder registry — full re-check running)");
   return lines.join("\n");
 }
 
@@ -903,10 +1025,23 @@ export function formatNameSearchReply(
   const topSym = top.displaySymbol
     ? ` ($${escapeHtml(top.displaySymbol)})`
     : "";
-  const lines = [
-    `👑 Likely OG: <b>${escapeHtml(top.displayName)}</b>${topSym} — ${minted(top)}`,
-    `<code>${escapeHtml(top.mint)}</code>`,
-  ];
+  const lines: string[] = [];
+  if (top.safetyLevel === "danger") {
+    // Same rule as the mint verdict: the oldest match keeps its rank and loses
+    // the crown. buildTokenResults assesses the rank-1 candidate on every
+    // ranking path, so this fires on the text path too.
+    lines.push(
+      `${UNSAFE_HEADLINE} — <b>${escapeHtml(top.displayName)}</b>${topSym} — ${minted(top)}`
+    );
+    const blocking = formatBlockingFlagLine(top);
+    if (blocking) lines.push(blocking);
+    lines.push(UNSAFE_RANK1_LINE);
+  } else {
+    lines.push(
+      `👑 Likely OG: <b>${escapeHtml(top.displayName)}</b>${topSym} — ${minted(top)}`
+    );
+  }
+  lines.push(`<code>${escapeHtml(top.mint)}</code>`);
   for (const t of results.slice(1, 3)) {
     const sym = t.displaySymbol ? ` ($${escapeHtml(t.displaySymbol)})` : "";
     lines.push(`#${t.rank} ${escapeHtml(t.displayName)}${sym} — ${minted(t)}`);
@@ -951,6 +1086,9 @@ async function finishNameSearch(
 const WELCOME_HTML =
   "👑 OGfinder is live in this chat. Paste any Solana CA and I'll instantly " +
   "verify if it's the original token — age rank, risk flags, and market data. " +
+  "I also check freeze authority, Token-2022 transfer hooks and fees, and 24h " +
+  "buys vs sells, and a token with a blocking flag never gets called the OG. " +
+  "\"OG\" means ORIGINAL BY AGE — not safe, and not investment advice. " +
   "Commands: /og &lt;mint or name&gt;, /watch &lt;name&gt; for new-clone alerts here, /help.";
 
 function isActiveTelegramGroup(chatId: string): boolean {
@@ -1042,6 +1180,14 @@ const HELP_HTML = [
   "/watches — list this chat's watches",
   "/unwatch &lt;id or name&gt; — remove a watch",
   "Paste any Solana CA in the chat and I'll check it automatically.",
+  "<b>What I check:</b> on-chain age (which mint came first), mint and freeze " +
+    "authority, Token-2022 extensions (transfer hooks, permanent delegate, " +
+    "transfer fees), 24h buys vs sells, holder concentration and liquidity.",
+  "<b>What an OG verdict means:</b> ORIGINALITY BY AGE — that this mint came " +
+    "first, not that it is safe to buy. A token with a blocking flag (freeze " +
+    "authority, transfer hook, buys with no sells…) is never called the OG " +
+    "here, and a check I couldn't run is reported as unavailable, never as " +
+    "clean. None of this is investment advice — always do your own research.",
   "If pasted CAs get no reply here, the bot can't see plain group messages — ask the group owner to disable bot privacy via @BotFather (/setprivacy → Disable), then re-add me.",
 ].join("\n");
 
