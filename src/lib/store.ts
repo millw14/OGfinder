@@ -56,6 +56,18 @@ function ensureStoreSchema(): void {
   if (!csCols.has("deployer")) {
     db.exec("ALTER TABLE creation_slots ADD COLUMN deployer TEXT");
   }
+  // Migration: resume point for INCOMPLETE signature walks, so a later deep
+  // scan continues from the deepest page a previous attempt reached instead of
+  // re-walking from the top. Only meaningful while verified_complete = 0.
+  if (!csCols.has("deepest_sig")) {
+    db.exec("ALTER TABLE creation_slots ADD COLUMN deepest_sig TEXT");
+  }
+  if (!csCols.has("deepest_block_time")) {
+    db.exec("ALTER TABLE creation_slots ADD COLUMN deepest_block_time INTEGER");
+  }
+  if (!csCols.has("pages_walked")) {
+    db.exec("ALTER TABLE creation_slots ADD COLUMN pages_walked INTEGER");
+  }
   schemaReady = true;
   // One checkpoint at init — the WAL can grow large between restarts.
   try {
@@ -67,6 +79,8 @@ function ensureStoreSchema(): void {
 
 let getSlotStmt: Database.Statement | null = null;
 let setSlotStmt: Database.Statement | null = null;
+let getProgressStmt: Database.Statement | null = null;
+let setProgressStmt: Database.Statement | null = null;
 let getSearchStmt: Database.Statement | null = null;
 let delSearchStmt: Database.Statement | null = null;
 let setSearchStmt: Database.Statement | null = null;
@@ -92,6 +106,12 @@ export function getCreationSlotPersisted(
   }
 }
 
+/**
+ * Persist a COMPLETE creation-slot fact. Upsert (not INSERT OR REPLACE) so the
+ * row's other columns — deployer, and the resume bookkeeping below — survive.
+ * verified_complete never goes 1 → 0: a walk that reached the beginning is a
+ * settled fact, and no later partial walk may un-settle it.
+ */
 export function setCreationSlotPersisted(
   mint: string,
   data: { slot: number; blockTime: number },
@@ -101,8 +121,17 @@ export function setCreationSlotPersisted(
     ensureStoreSchema();
     if (!setSlotStmt) {
       setSlotStmt = getDb().prepare(`
-        INSERT OR REPLACE INTO creation_slots (mint, slot, block_time, verified_complete, updated_at)
+        INSERT INTO creation_slots (mint, slot, block_time, verified_complete, updated_at)
         VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(mint) DO UPDATE SET
+          slot              = excluded.slot,
+          block_time        = excluded.block_time,
+          verified_complete = MAX(creation_slots.verified_complete, excluded.verified_complete),
+          updated_at        = excluded.updated_at,
+          -- The walk finished; there is no unfinished walk left to resume.
+          deepest_sig        = NULL,
+          deepest_block_time = NULL,
+          pages_walked       = NULL
       `);
     }
     setSlotStmt.run(
@@ -111,6 +140,105 @@ export function setCreationSlotPersisted(
       data.blockTime,
       verifiedComplete ? 1 : 0,
       Date.now()
+    );
+  } catch {
+    /* persistence is best-effort */
+  }
+}
+
+/**
+ * Where an INCOMPLETE signature walk stopped. Read by the deep-scan path to
+ * resume; NEVER served as a creation date — getCreationSlotPersisted stays the
+ * only reader of finished facts, and it filters on verified_complete = 1.
+ */
+export interface CreationProgressRow {
+  /** Deepest slot/blockTime reached so far — a LOWER BOUND, not a creation time. */
+  slot: number;
+  blockTime: number;
+  /** Signature to pass as `before` to continue the backward walk. */
+  deepestSig: string | null;
+  deepestBlockTime: number | null;
+  /** Cumulative pages already spent on this address. */
+  pagesWalked: number | null;
+  /** True once the walk reached the beginning — then the row is a real answer. */
+  verifiedComplete: boolean;
+}
+
+export function getCreationProgress(
+  mint: string
+): CreationProgressRow | undefined {
+  try {
+    ensureStoreSchema();
+    if (!getProgressStmt) {
+      getProgressStmt = getDb().prepare(
+        `SELECT slot, block_time, deepest_sig, deepest_block_time, pages_walked, verified_complete
+         FROM creation_slots WHERE mint = ?`
+      );
+    }
+    const row = getProgressStmt.get(mint) as
+      | {
+          slot: number;
+          block_time: number;
+          deepest_sig: string | null;
+          deepest_block_time: number | null;
+          pages_walked: number | null;
+          verified_complete: number;
+        }
+      | undefined;
+    if (!row) return undefined;
+    return {
+      slot: row.slot,
+      blockTime: row.block_time,
+      deepestSig: row.deepest_sig,
+      deepestBlockTime: row.deepest_block_time,
+      pagesWalked: row.pages_walked,
+      verifiedComplete: row.verified_complete === 1,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Record how far an incomplete walk got. Written with verified_complete = 0 and
+ * guarded by `WHERE creation_slots.verified_complete = 0`, so partial progress
+ * can never overwrite — or downgrade — a settled creation fact.
+ */
+export function setCreationProgressPersisted(
+  mint: string,
+  data: {
+    slot: number;
+    blockTime: number;
+    deepestSig: string | null;
+    pagesWalked: number;
+  }
+): void {
+  try {
+    ensureStoreSchema();
+    if (!setProgressStmt) {
+      setProgressStmt = getDb().prepare(`
+        INSERT INTO creation_slots
+          (mint, slot, block_time, verified_complete, updated_at,
+           deepest_sig, deepest_block_time, pages_walked)
+        VALUES (?, ?, ?, 0, ?, ?, ?, ?)
+        ON CONFLICT(mint) DO UPDATE SET
+          slot               = excluded.slot,
+          block_time         = excluded.block_time,
+          deepest_sig        = excluded.deepest_sig,
+          deepest_block_time = excluded.deepest_block_time,
+          pages_walked       = excluded.pages_walked,
+          updated_at         = excluded.updated_at
+        WHERE creation_slots.verified_complete = 0
+      `);
+    }
+    setProgressStmt.run(
+      mint,
+      data.slot,
+      data.blockTime,
+      Date.now(),
+      data.deepestSig,
+      data.blockTime,
+      data.pagesWalked
     );
   } catch {
     /* persistence is best-effort */

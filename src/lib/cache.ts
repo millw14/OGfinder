@@ -11,9 +11,12 @@ import type { MintExtensionFacts } from "./safety";
 import {
   getCreationSlotPersisted,
   setCreationSlotPersisted,
+  getCreationProgress,
+  setCreationProgressPersisted,
   getSearchCachePersisted,
   setSearchCachePersisted,
   maintenanceTick,
+  type CreationProgressRow,
 } from "./store";
 
 const searchCache = new NodeCache({ stdTTL: CACHE_SEARCH, checkperiod: 120 });
@@ -111,6 +114,34 @@ export function setCreationSlotCache(
     { slot: data.slot, blockTime: data.blockTime },
     true
   );
+}
+
+/**
+ * Resume point of an UNFINISHED signature walk. Deliberately L2-only and kept
+ * out of creationSlotCache: an incomplete walk is a lower bound, and the L1/L2
+ * creation-slot path exists to serve finished answers. Callers get this only by
+ * asking for it explicitly.
+ */
+export function getCreationWalkProgress(
+  mint: string
+): CreationProgressRow | undefined {
+  return getCreationProgress(mint);
+}
+
+/**
+ * Record how deep an unfinished walk got so the next deep scan resumes there.
+ * Never touches L1 — nothing here may be served as a creation date.
+ */
+export function setCreationWalkProgress(
+  mint: string,
+  data: {
+    slot: number;
+    blockTime: number;
+    deepestSig: string | null;
+    pagesWalked: number;
+  }
+): void {
+  setCreationProgressPersisted(mint, data);
 }
 
 const walletCache = new NodeCache({ stdTTL: CACHE_WALLET, checkperiod: 60 });

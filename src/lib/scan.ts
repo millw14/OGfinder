@@ -2,7 +2,11 @@ import { MIN_QUERY, TokenResult } from "./types";
 import { normalize } from "./normalize";
 import { getSearchCache, setSearchCache } from "./cache";
 import { searchTokens } from "./search";
-import { annotateSafety, buildTokenResults } from "./enrich-results";
+import {
+  annotateSafety,
+  buildTokenResults,
+  type AgeEscalationReport,
+} from "./enrich-results";
 import { deriveSearchTermFromMintMetadata } from "./mint-search";
 import {
   getAssetBatch,
@@ -69,6 +73,22 @@ export function logSearch(
       `[OGfinder] #1: "${final[0].displayName}" created=${final[0].createdAt} via=${final[0].timeSource} mint=${final[0].mint}`
     );
   }
+}
+
+/**
+ * Dev-only trace of the deep age-resolution phase. The cap-overflow warning is
+ * NOT here — enrich-results warns on that in every environment, because an
+ * unresolved ambiguous token means the #1 answer is unproven.
+ */
+export function logAgeEscalation(report: AgeEscalationReport | null): void {
+  if (!report || process.env.NODE_ENV !== "development") return;
+  if (report.targets.length === 0) return;
+  console.log(
+    `[OGfinder] age escalation: deep-walked ${report.targets.length} in ` +
+      `${report.elapsedMs}ms (resolved=${report.resolved} ` +
+      `stillTruncated=${report.stillTruncated} ambiguous=${report.ambiguousTotal} ` +
+      `dropped=${report.droppedByCap}) mints=${report.targets.join(",")}`
+  );
 }
 
 export async function runMintScan(
@@ -153,8 +173,12 @@ export async function runMintScan(
   }
 
   const normalizedQuery = normalize(searchTerm);
+  let escalation: AgeEscalationReport | null = null;
   const final = await buildTokenResults(rawTokens, searchTerm, {
     scannedMint: q,
+    onAgeEscalation: (r) => {
+      escalation = r;
+    },
     ...(options?.fast ? { skipSignatureScan: true } : {}),
   });
   // Earliest-link-claim evidence from the local index — sub-ms SQLite read,
@@ -230,6 +254,7 @@ export async function runMintScan(
     rawTokens.length,
     final.length
   );
+  logAgeEscalation(escalation);
 
   return { ok: true, payload };
 }

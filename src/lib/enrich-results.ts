@@ -3,8 +3,16 @@ import {
   TokenResult,
   MAX_RESULTS,
   HeliusSlotData,
+  DEEP_SIG_PAGES,
+  MAX_DEEP_ESCALATIONS,
+  DEEP_PHASE_BUDGET_MS,
 } from "./types";
-import { getAssetBatch, getCreationSlot, getMintExtensions } from "./helius";
+import {
+  getAssetBatch,
+  getCreationSlot,
+  getMintExtensions,
+  type CreationSlotResult,
+} from "./helius";
 import { assessSafety } from "./safety";
 import {
   dexPairCreatedMs,
@@ -24,6 +32,210 @@ import {
 } from "./sort";
 
 const CREATION_SLOT_CONCURRENCY = 8;
+
+/** Creation time known from metadata alone, before any signature walk. */
+export interface AgeBaseline {
+  createdAtMs: number | null;
+  slot: number | null;
+  timeSource: string;
+}
+
+export interface CanonicalAge {
+  createdAtMs: number | null;
+  slot: number | null;
+  timeSource: string;
+  /** True = true creation is AT OR BEFORE createdAtMs, by an unknown amount. */
+  createdAtIsLowerBound: boolean;
+}
+
+/**
+ * Canonical creation time: the OLDEST of the metadata baseline and the
+ * oldest-signature walk. Pure, and the single definition of that merge — the
+ * bulk pass and the deep-resolution pass both go through here, so an improved
+ * walk recomputes exactly what the first pass computed.
+ *
+ * createdAtIsLowerBound is set ONLY when the truncated walk actually won the
+ * merge. A truncated walk that lost to an older exact metadata date tells us
+ * nothing and must not taint the result.
+ */
+export function canonicalAge(
+  base: AgeBaseline,
+  sig: CreationSlotResult | null | undefined
+): CanonicalAge {
+  let { createdAtMs, slot, timeSource } = base;
+  let createdAtIsLowerBound = false;
+
+  if (sig) {
+    const sigMs = sig.blockTime * 1000;
+    if (createdAtMs == null || sigMs < createdAtMs) {
+      createdAtMs = sigMs;
+      slot = sig.slot;
+      timeSource = "signatures";
+      createdAtIsLowerBound = sig.truncated;
+    }
+  }
+
+  return { createdAtMs, slot, timeSource, createdAtIsLowerBound };
+}
+
+/** Write a recomputed canonical age onto a token (in place). */
+function applyCanonicalAge(token: TokenResult, age: CanonicalAge): void {
+  token.createdAtMs = age.createdAtMs;
+  token.createdAt = age.createdAtMs
+    ? new Date(age.createdAtMs).toISOString()
+    : null;
+  token.slot = age.slot;
+  token.timeSource = age.timeSource;
+  if (age.createdAtIsLowerBound) token.createdAtIsLowerBound = true;
+  else delete token.createdAtIsLowerBound;
+}
+
+/** What the deep phase decided to do, so callers can report it. */
+export interface AgeEscalationReport {
+  /** Mints escalated to a deep walk, in the order they were chosen. */
+  targets: string[];
+  /** Tokens whose truncation could change the #1 answer (before the cap). */
+  ambiguousTotal: number;
+  /** Ambiguous tokens the cap left unresolved — MUST be surfaced, not swallowed. */
+  droppedByCap: number;
+  /** Deep walks that reached the beginning and produced an exact date. */
+  resolved: number;
+  /** Deep walks that were STILL truncated (budget/deadline) — progress persisted. */
+  stillTruncated: number;
+  /** Wall-clock the phase actually spent, against DEEP_PHASE_BUDGET_MS. */
+  elapsedMs: number;
+}
+
+/** Ranking weight for the escalation cap: real tokens outbid dust. */
+function escalationPriority(t: TokenResult): number {
+  const liq = typeof t.liquidityUsd === "number" ? t.liquidityUsd : 0;
+  const mc =
+    typeof t.marketCapUsd === "number"
+      ? t.marketCapUsd
+      : typeof t.fdvUsd === "number"
+        ? t.fdvUsd
+        : 0;
+  return Math.max(liq, mc);
+}
+
+/**
+ * Which tokens get the DEEP signature budget.
+ *
+ * A truncated token X carries "true creation <= t_X, by an unknown amount".
+ * Against the current leader L at t_L:
+ *   t_X < t_L  → X already sorts above L; it IS older, its exact date aside.
+ *   t_X > t_L  → UNKNOWABLE. X may predate L by years. This is the reported bug.
+ * So the ambiguous set is exactly the truncated tokens ranked BELOW the leader,
+ * and resolving them is what makes the #1 answer provable.
+ *
+ * Always included (when their age is still a lower bound — an exact date has
+ * nothing to resolve): the scanned mint and the current rank 1.
+ *
+ * @param tokens sorted oldest-first
+ */
+export function selectAgeEscalationTargets(
+  tokens: TokenResult[],
+  scannedMint?: string,
+  cap: number = MAX_DEEP_ESCALATIONS
+): { targets: string[]; ambiguousTotal: number; droppedByCap: number } {
+  const unresolved = (t: TokenResult | undefined): t is TokenResult =>
+    t != null && t.createdAtIsLowerBound === true;
+
+  const targets: string[] = [];
+  const seen = new Set<string>();
+  const add = (t: TokenResult | undefined) => {
+    if (!unresolved(t) || seen.has(t.mint)) return;
+    seen.add(t.mint);
+    targets.push(t.mint);
+  };
+
+  // Always: the token wearing (or about to wear) the crown, and the mint the
+  // user actually asked about.
+  add(tokens[0]);
+  if (scannedMint) add(tokens.find((t) => t.mint === scannedMint));
+
+  const leaderMs = tokens.find((t) => t.createdAtMs != null)?.createdAtMs;
+
+  const ambiguous = tokens.filter(
+    (t) =>
+      t.createdAtIsLowerBound === true &&
+      !seen.has(t.mint) &&
+      leaderMs != null &&
+      t.createdAtMs != null &&
+      t.createdAtMs > leaderMs
+  );
+
+  const ranked = [...ambiguous].sort(
+    (a, b) => escalationPriority(b) - escalationPriority(a)
+  );
+  const room = Math.max(0, cap);
+  for (const t of ranked.slice(0, room)) {
+    seen.add(t.mint);
+    targets.push(t.mint);
+  }
+
+  return {
+    targets,
+    ambiguousTotal: ambiguous.length,
+    droppedByCap: Math.max(0, ambiguous.length - room),
+  };
+}
+
+/**
+ * Deep-resolve the age-critical tokens, then recompute their canonical times.
+ * Bounded three ways: at most 2 + MAX_DEEP_ESCALATIONS tokens, DEEP_SIG_PAGES
+ * pages each, and DEEP_PHASE_BUDGET_MS wall-clock across the whole phase.
+ * Every failure leaves the token's existing (lower-bound) age untouched.
+ *
+ * @param tokens sorted oldest-first; mutated in place. Caller must re-sort.
+ */
+async function deepResolveAges(
+  tokens: TokenResult[],
+  baselines: Map<string, AgeBaseline>,
+  scannedMint: string | undefined
+): Promise<AgeEscalationReport> {
+  const { targets, ambiguousTotal, droppedByCap } = selectAgeEscalationTargets(
+    tokens,
+    scannedMint
+  );
+  const startedAt = Date.now();
+  const report: AgeEscalationReport = {
+    targets,
+    ambiguousTotal,
+    droppedByCap,
+    resolved: 0,
+    stillTruncated: 0,
+    elapsedMs: 0,
+  };
+  if (targets.length === 0) return report;
+
+  const deadlineMs = startedAt + DEEP_PHASE_BUDGET_MS;
+  const byMint = new Map(tokens.map((t) => [t.mint, t]));
+
+  for (let i = 0; i < targets.length; i += CREATION_SLOT_CONCURRENCY) {
+    const chunk = targets.slice(i, i + CREATION_SLOT_CONCURRENCY);
+    const found = await Promise.all(
+      chunk.map((mint) =>
+        getCreationSlot(mint, { maxPages: DEEP_SIG_PAGES, deadlineMs }).catch(
+          () => null
+        )
+      )
+    );
+    for (let j = 0; j < chunk.length; j++) {
+      const sig = found[j];
+      const token = byMint.get(chunk[j]);
+      if (!token || !sig) continue;
+      const base = baselines.get(chunk[j]);
+      if (!base) continue;
+      applyCanonicalAge(token, canonicalAge(base, sig));
+      if (sig.truncated) report.stillTruncated++;
+      else report.resolved++;
+    }
+  }
+
+  report.elapsedMs = Date.now() - startedAt;
+  return report;
+}
 
 /**
  * Run the safety checks on the tokens where they can change a decision: the
@@ -84,6 +296,8 @@ export async function buildTokenResults(
     rankBy?: "creation" | "volume" | "marketcap";
     /** Fast phase: skip per-mint signature scans (DAS/DexScreener times only). */
     skipSignatureScan?: boolean;
+    /** Called with what the deep age-resolution phase did (creation ranking, full pass only). */
+    onAgeEscalation?: (report: AgeEscalationReport) => void;
   }
 ): Promise<TokenResult[]> {
   const rankBy = options?.rankBy ?? "creation";
@@ -169,22 +383,23 @@ export async function buildTokenResults(
   }
 
   const enriched: TokenResult[] = [];
+  /**
+   * Metadata-only creation times, kept so the deep phase can recompute the
+   * canonical merge from scratch instead of layering onto a derived value.
+   */
+  const baselines = new Map<string, AgeBaseline>();
 
   for (let i = 0; i < candidates.length; i++) {
     const c = candidates[i];
     const sig = sigResults[i];
-    let { createdAtMs, slot, timeSource } = c;
-    let createdAtIsLowerBound = false;
-
-    if (sig) {
-      const sigMs = sig.blockTime * 1000;
-      if (createdAtMs == null || sigMs < createdAtMs) {
-        createdAtMs = sigMs;
-        slot = sig.slot;
-        timeSource = "signatures";
-        createdAtIsLowerBound = sig.truncated;
-      }
-    }
+    const base: AgeBaseline = {
+      createdAtMs: c.createdAtMs,
+      slot: c.slot,
+      timeSource: c.timeSource,
+    };
+    baselines.set(c.raw.mint, base);
+    const { createdAtMs, slot, timeSource, createdAtIsLowerBound } =
+      canonicalAge(base, sig);
 
     const displayName = resolveDisplayName(
       c.raw.dexName,
@@ -292,7 +507,30 @@ export async function buildTokenResults(
     return sliceWithPinnedScan(scored, options?.scannedMint);
   }
 
-  const sorted = sortByCreationTime(enriched);
+  let sorted = sortByCreationTime(enriched);
+
+  // Age is the whole answer in creation mode, so the tokens whose truncated
+  // walk could change the #1 answer get a deep, resumable budget here — never
+  // in the fast phase, which must stay fast and keeps pendingAge semantics.
+  if (!skipSignatureScan) {
+    const report = await deepResolveAges(
+      sorted,
+      baselines,
+      options?.scannedMint
+    );
+    if (report.droppedByCap > 0) {
+      // Silent capping is how the original bug survived — always say it.
+      console.warn(
+        `[OGfinder] age escalation capped: ${report.droppedByCap} of ` +
+          `${report.ambiguousTotal} ambiguous token(s) left unresolved ` +
+          `(query="${queryForScore}")`
+      );
+    }
+    options?.onAgeEscalation?.(report);
+    // Deep walks can move a token years earlier — the order is stale now.
+    sorted = sortByCreationTime(sorted);
+  }
+
   // Runs BEFORE scoring: scoreConfidence gates the crown on safetyLevel, so
   // the verdict must already be on the token when the label is decided.
   await annotateSafety(sorted, options?.scannedMint);

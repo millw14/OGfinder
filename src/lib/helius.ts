@@ -10,6 +10,8 @@ import {
   setHeliusMeta,
   getCreationSlotCache,
   setCreationSlotCache,
+  getCreationWalkProgress,
+  setCreationWalkProgress,
   getMintExtensionsCache,
   setMintExtensionsCache,
 } from "./cache";
@@ -483,20 +485,75 @@ export async function getTopHolderShare(
   }
 }
 
-/**
- * Backward-paginate getSignaturesForAddress to the address's very first
- * transaction. limit:1000 per page, up to MAX_SIG_PAGES pages; truncated=true
- * means the oldest page was still full — the result is only a lower bound.
- * Throws on RPC failure (callers wrap).
- */
-async function findOldestSignature(
-  address: string
-): Promise<{ oldest: SignatureResult; truncated: boolean } | null> {
-  let before: string | undefined = undefined;
-  let oldestSig: SignatureResult | null = null;
-  let truncated = false;
+/** Where a previous walk stopped, so a deeper attempt continues from there. */
+export interface WalkResumePoint {
+  /** Signature to pass as `before` — the deepest one already seen. */
+  signature: string;
+  /** Its slot/blockTime, so an immediately-empty next page still yields an answer. */
+  slot?: number;
+  blockTime?: number;
+  /** Pages already spent on this address across previous attempts. */
+  pagesWalked?: number;
+}
 
-  for (let page = 0; page < MAX_SIG_PAGES; page++) {
+export interface WalkOutcome {
+  oldest: SignatureResult;
+  /** True = the oldest page was still full — the result is only a LOWER BOUND. */
+  truncated: boolean;
+  /** Cumulative pages spent on this address (resumed pages included). */
+  pagesWalked: number;
+}
+
+/**
+ * Backward-paginate getSignaturesForAddress toward the address's very first
+ * transaction. limit:1000 per page, up to `maxPages` pages THIS call.
+ *
+ * truncated=true means the walk stopped with a full page still behind it (page
+ * budget or deadline) — the result is a lower bound, and `oldest.signature` is
+ * the resume point for a later, deeper attempt.
+ *
+ * `resume` continues a previous walk. Its slot/blockTime seed the answer, which
+ * matters in the exact case where the resumed page comes back EMPTY: that means
+ * the resume signature WAS the first transaction, so the walk is complete.
+ *
+ * `deadlineMs` (absolute epoch ms) is checked before each additional page, so a
+ * slow address stops on time instead of pinning a request open.
+ *
+ * Exported for tests. Throws on RPC failure (callers wrap).
+ */
+export async function walkToOldestSignature(
+  address: string,
+  opts?: {
+    maxPages?: number;
+    resume?: WalkResumePoint;
+    deadlineMs?: number;
+  }
+): Promise<WalkOutcome | null> {
+  const maxPages = Math.max(1, Math.floor(opts?.maxPages ?? MAX_SIG_PAGES));
+  const resume = opts?.resume;
+  const deadlineMs = opts?.deadlineMs;
+
+  let before: string | undefined = resume?.signature;
+  // Seed from the resume point only when it carries a usable timestamp.
+  let oldestSig: SignatureResult | null =
+    resume?.signature != null &&
+    typeof resume.slot === "number" &&
+    typeof resume.blockTime === "number"
+      ? {
+          slot: resume.slot,
+          blockTime: resume.blockTime,
+          signature: resume.signature,
+        }
+      : null;
+  // A resumed walk starts truncated: we know a full page sat behind the seed.
+  let truncated = resume?.signature != null;
+  const priorPages = Math.max(0, Math.floor(resume?.pagesWalked ?? 0));
+  let pages = 0;
+
+  for (let page = 0; page < maxPages; page++) {
+    // Out of time: stop with whatever we have, still flagged as a lower bound.
+    if (page > 0 && deadlineMs !== undefined && Date.now() >= deadlineMs) break;
+
     const params: [string, { limit: number; before?: string }] = [
       address,
       { limit: 1000 },
@@ -507,9 +564,11 @@ async function findOldestSignature(
       "getSignaturesForAddress",
       params
     )) as { result?: SignatureResult[] };
+    pages++;
 
     const sigs = response?.result;
     if (!Array.isArray(sigs) || sigs.length === 0) {
+      // Nothing older than `before` exists — `before` is the first transaction.
       truncated = false;
       break;
     }
@@ -528,40 +587,114 @@ async function findOldestSignature(
   }
 
   if (!oldestSig) return null;
-  return { oldest: oldestSig, truncated };
+  return { oldest: oldestSig, truncated, pagesWalked: priorPages + pages };
+}
+
+export interface CreationSlotResult {
+  slot: number;
+  blockTime: number;
+  /** True = walk incomplete; the true creation time is AT OR BEFORE blockTime. */
+  truncated: boolean;
+  /** Oldest signature reached — the resume point when truncated. */
+  signature?: string;
+  /** Cumulative pages spent on this address, including resumed ones. */
+  pagesWalked?: number;
 }
 
 /**
  * Get the actual creation slot/blockTime for a mint by paginating backward
  * through getSignaturesForAddress until we find the very first transaction.
  *
- * The oldest signature rides along in the L1 cache only (deployer resolution
- * uses it); L2 persists just slot/blockTime as before.
+ * Default budget is the cheap MAX_SIG_PAGES (bulk cohort dating). Callers that
+ * have decided a token's age is worth resolving pass a bigger `maxPages`
+ * (DEEP_SIG_PAGES); that path also RESUMES from any persisted progress rather
+ * than re-walking pages a previous attempt already paid for.
+ *
+ * Completed walks are cached (L1) and persisted as verified facts (L2).
+ * Incomplete walks are persisted as PROGRESS ONLY (verified_complete = 0) —
+ * never cached, never served as a date, but readable so the next deep attempt
+ * picks up where this one stopped.
  */
 export async function getCreationSlot(
-  mint: string
-): Promise<{
-  slot: number;
-  blockTime: number;
-  truncated: boolean;
-  signature?: string;
-} | null> {
+  mint: string,
+  opts?: {
+    maxPages?: number;
+    /** Explicit resume signature; otherwise persisted progress is used. */
+    resumeFrom?: string;
+    /** Absolute epoch-ms ceiling for this walk. */
+    deadlineMs?: number;
+  }
+): Promise<CreationSlotResult | null> {
   const cached = getCreationSlotCache(mint);
   if (cached) return { ...cached, truncated: false };
 
+  const maxPages = opts?.maxPages ?? MAX_SIG_PAGES;
+
   try {
-    const found = await findOldestSignature(mint);
+    // Resume: an explicit signature wins; otherwise reuse persisted progress.
+    // A cheap default-budget pass does NOT resume — the deep phase owns that
+    // decision, and a 5-page walk from a deep resume point would spend the
+    // bulk budget chasing one token.
+    let resume: WalkResumePoint | undefined;
+    const wantsResume = opts?.resumeFrom != null || maxPages > MAX_SIG_PAGES;
+    // Lazy: the bulk pass runs this for every token in a cohort, so it must not
+    // pay a SQLite read it has no use for.
+    const progress = wantsResume ? getCreationWalkProgress(mint) : undefined;
+    if (opts?.resumeFrom) {
+      resume = {
+        signature: opts.resumeFrom,
+        ...(progress &&
+        !progress.verifiedComplete &&
+        progress.deepestSig === opts.resumeFrom
+          ? {
+              slot: progress.slot,
+              blockTime: progress.blockTime,
+              pagesWalked: progress.pagesWalked ?? undefined,
+            }
+          : {}),
+      };
+    } else if (
+      maxPages > MAX_SIG_PAGES &&
+      progress &&
+      !progress.verifiedComplete &&
+      progress.deepestSig
+    ) {
+      resume = {
+        signature: progress.deepestSig,
+        slot: progress.slot,
+        blockTime: progress.blockTime,
+        pagesWalked: progress.pagesWalked ?? undefined,
+      };
+    }
+
+    const found = await walkToOldestSignature(mint, {
+      maxPages,
+      ...(resume ? { resume } : {}),
+      ...(opts?.deadlineMs !== undefined
+        ? { deadlineMs: opts.deadlineMs }
+        : {}),
+    });
     if (!found) return null;
 
     const data = {
       slot: found.oldest.slot,
       blockTime: found.oldest.blockTime,
       signature: found.oldest.signature,
+      pagesWalked: found.pagesWalked,
     };
     // Only cache complete scans with real blockTimes — truncated results are a
     // lower bound, so leave them uncached for a later deeper look to retry.
     if (!found.truncated && data.blockTime > 0) {
       setCreationSlotCache(mint, data);
+    } else if (found.truncated && data.blockTime > 0) {
+      // Persist the resume point so the next deep attempt continues instead of
+      // re-walking. verified_complete stays 0 — this is not an answer.
+      setCreationWalkProgress(mint, {
+        slot: data.slot,
+        blockTime: data.blockTime,
+        deepestSig: data.signature,
+        pagesWalked: found.pagesWalked,
+      });
     }
     return { ...data, truncated: found.truncated };
   } catch {
@@ -592,7 +725,7 @@ export async function getDeployer(mint: string): Promise<string | null> {
     let slot = cs.slot;
     let blockTime = cs.blockTime;
     if (!sig) {
-      const found = await findOldestSignature(mint);
+      const found = await walkToOldestSignature(mint);
       if (!found || found.truncated) return null;
       sig = found.oldest.signature;
       slot = found.oldest.slot;

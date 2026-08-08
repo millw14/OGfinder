@@ -259,7 +259,44 @@ export const CACHE_JUP = 3600;
 export const CACHE_HELIUS = 3600;
 export const DEX_TIMEOUT = 5000;
 export const HELIUS_TIMEOUT = 10000;
+/**
+ * CHEAP per-token dating budget for the bulk pass: 5 pages × 1000 signatures.
+ * Every token in a cohort pays this, so it stays small; a token whose history
+ * is deeper comes back truncated (a LOWER BOUND, never a date).
+ */
 export const MAX_SIG_PAGES = 5;
+/**
+ * DEEP budget for the handful of tokens whose truncation can change the #1
+ * answer. 40 pages = 40,000 signatures.
+ *
+ * Sizing: the reported regression (Erb3CTbF… "COPEPE") reached its first
+ * transaction at page 12 / 11,266 signatures — the 5-page budget reported a
+ * date 18 months too recent. 40 gives 3.3× headroom over that measured worst
+ * case. Tokens busier than 40k signatures are essentially all majors, which
+ * carry a Helius DAS `created_at` and therefore never depend on the walk.
+ * Deep walks are additionally bounded in wall-clock by DEEP_PHASE_BUDGET_MS
+ * and resume from persisted progress, so hitting either bound costs accuracy
+ * on that one token for one request, not correctness.
+ */
+export const DEEP_SIG_PAGES = 40;
+/**
+ * Max AMBIGUOUS truncated tokens escalated to a deep walk per scan, on top of
+ * the always-resolved set (scanned mint + current rank 1). When more tokens
+ * qualify than this, the overflow is reported — never silently dropped.
+ */
+export const MAX_DEEP_ESCALATIONS = 6;
+/**
+ * Wall-clock ceiling for the whole deep-resolution phase. Checked before each
+ * additional page, so exceeding it stops the walk, persists progress, and
+ * leaves the token an honest lower bound for a later scan to resume.
+ *
+ * Walks run concurrently, so this is (near enough) the phase's added latency:
+ * the slowest walk, capped here. Measured 2026-08-08 against mainnet at
+ * ~575ms/page, 12s buys ~20 pages — 3× what the reported regression needed
+ * after its cheap pass. Bigger values mostly buy pages on tokens too busy to
+ * finish at all, which resumption picks up on the next scan for free.
+ */
+export const DEEP_PHASE_BUDGET_MS = 12000;
 
 export const CACHE_WALLET = 300;
 export const WALLET_TX_PAGES = 5;
