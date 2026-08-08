@@ -8,11 +8,25 @@ import { normalize } from "./normalize";
  */
 export const UNSAFE_RANK1_LABEL = "Oldest — unsafe";
 
+/**
+ * Rank-1 label when the ORDER ITSELF is unproven: this is the oldest token we
+ * could date, but at least one token ranked below it carries a lower-bound age
+ * that could turn out to predate it. The rank is our best answer, not a fact,
+ * so the endorsement is withheld until the ambiguity is resolved.
+ */
+export const UNPROVEN_RANK1_LABEL = "Oldest known — unverified";
+
 /** True when this rank-1 label is an OG endorsement (crown-worthy). */
 export function isOgEndorsement(confidenceLabel: string): boolean {
   return confidenceLabel === "OG" || confidenceLabel === "Likely OG";
 }
 
+/**
+ * Ascending by creation time. A token whose time is a LOWER BOUND still sorts
+ * by that bound, which is correct in one direction only: a bound older than the
+ * leader's exact date proves that token is older (true ≤ bound < leader). A
+ * bound NEWER than the leader proves nothing — see ageOrderConfidence.
+ */
 export function sortByCreationTime(results: TokenResult[]): TokenResult[] {
   return results.sort((a, b) => {
     const ta = a.createdAtMs ?? Infinity;
@@ -20,6 +34,70 @@ export function sortByCreationTime(results: TokenResult[]): TokenResult[] {
     if (ta !== tb) return ta - tb;
     return a.mint.localeCompare(b.mint);
   });
+}
+
+/** Whether the #1 answer is provable from the data we currently hold. */
+export interface AgeOrderConfidence {
+  /** True when nothing in this list can overturn the #1 answer. */
+  proven: boolean;
+  /**
+   * Mints whose unresolved age blocks the proof, in rank order (the leader
+   * first when it is one of them).
+   */
+  unresolvedMints: string[];
+  unresolvedCount: number;
+}
+
+/**
+ * Is the #1 answer PROVEN?
+ *
+ * createdAtIsLowerBound means "true creation is AT OR BEFORE this timestamp, by
+ * an unknown amount" — there is no floor. So for a truncated token X at bound
+ * t_X against the leader L at t_L:
+ *   t_X < t_L → X already sorts above L and IS older; the order is safe.
+ *   t_X > t_L → UNKNOWABLE. X may predate L by years (the reported regression:
+ *               a 2.5-year-old token whose 5-page walk reported an 18-month-old
+ *               date and sorted BELOW a 1-year-old token).
+ * Post-sort, every truncated token that is not the leader is in the second
+ * case. Therefore: ANY lower-bound token ranked below #1 makes #1 unproven.
+ *
+ * The leader also has to know its own age: a leader that is itself a lower
+ * bound, still pending, or undated cannot be asserted as the oldest either.
+ *
+ * Pure — no I/O, no clock — so the client re-score reaches the same verdict.
+ *
+ * @param rankedTokens sorted oldest-first (sortByCreationTime output)
+ */
+export function ageOrderConfidence(
+  rankedTokens: TokenResult[]
+): AgeOrderConfidence {
+  const unresolvedMints: string[] = [];
+  // No tokens = no #1 answer to get wrong. Vacuously proven.
+  if (!Array.isArray(rankedTokens) || rankedTokens.length === 0) {
+    return { proven: true, unresolvedMints, unresolvedCount: 0 };
+  }
+
+  const leader = rankedTokens[0];
+  const leaderUnresolved =
+    leader.createdAtIsLowerBound === true ||
+    leader.pendingAge === true ||
+    leader.createdAtMs == null;
+  if (leaderUnresolved) unresolvedMints.push(leader.mint);
+
+  for (let i = 1; i < rankedTokens.length; i++) {
+    // Followers count ONLY via a lower bound: an exact date below the leader
+    // is settled, and a missing date is "unknown", which the leader's own
+    // check already covers for the only rank that makes a claim.
+    if (rankedTokens[i].createdAtIsLowerBound === true) {
+      unresolvedMints.push(rankedTokens[i].mint);
+    }
+  }
+
+  return {
+    proven: unresolvedMints.length === 0,
+    unresolvedMints,
+    unresolvedCount: unresolvedMints.length,
+  };
 }
 
 export function sortByVolumeUsd(results: TokenResult[]): TokenResult[] {
@@ -122,22 +200,43 @@ export function scoreMarketCapRank(results: TokenResult[]): TokenResult[] {
  *  - LABEL (confidenceLabel/rankLabel) = OG-ness, rank-gated. Only rank 1 (the
  *    oldest) can carry an OG-flavored label; ranks 2+ are later mints by
  *    definition, so a perfect name match earns them no label (a copycat's whole
- *    job is matching the name). Rank 1: "OG" (exact-ish match + clear time gap
- *    to #2 + solid age data), "Likely OG" (weaker: small gap or fuzzy match),
- *    "Oldest found" (createdAtIsLowerBound or missing/pending time — the
- *    ordering itself is uncertain), "Oldest — unsafe" (a blocking safety flag:
- *    the age claim stands, the endorsement does not).
+ *    job is matching the name).
  *  - STARS (confidence) = per-token age-data quality via ageDataQuality().
  *
+ * RANK-1 LABEL PRECEDENCE (first match wins the single label slot):
+ *   1. own age uncertain (lower bound / pending / undated) OR homoglyph
+ *        → "Oldest found". Highest because every label below states "oldest"
+ *          as a fact about THIS token, and here that fact is not established.
+ *   2. blocking safety flag (safetyLevel "danger")
+ *        → UNSAFE_RANK1_LABEL. The age claim stands; the endorsement does not.
+ *   3. order unproven (a lower-bound token ranks BELOW this one, so something
+ *      down the list may predate it — see ageOrderConfidence)
+ *        → UNPROVEN_RANK1_LABEL.
+ *   4. otherwise → "OG" (exact-ish match + clear gap to #2 + solid age data)
+ *      or "Likely OG".
+ * Tiers 1-3 are all non-endorsements (isOgEndorsement === false); only the
+ * wording differs, and the most fundamental caveat gets to do the talking.
+ *
  * THE CROWN IS AN ENDORSEMENT AND MUST BE EARNED. Rank stays factual — the
- * oldest token is still #1 — but a token that can freeze, seize, or block your
- * sells never gets the word "OG" attached to it here.
+ * oldest token we found is still #1 — but a token that can freeze, seize, or
+ * block your sells, or whose lead over the field is not provable, never gets
+ * the word "OG" attached to it here.
+ *
+ * Pure (no I/O), so the client re-score in Results.tsx produces the identical
+ * verdict from the identical list.
  */
 export function scoreConfidence(
   results: TokenResult[],
   query: string
 ): TokenResult[] {
   const nq = normalize(query);
+
+  // The server scores the FULL cohort before it is sliced to MAX_RESULTS, so a
+  // flag already on the wire saw more tokens than a client re-score can: it is
+  // sticky, never re-derived away. (Still pure — it only reads its input.)
+  const order = ageOrderConfidence(results);
+  const orderUnproven =
+    !order.proven || results[0]?.ageOrderUnproven === true;
 
   const withTimes = results.filter((r) => r.createdAtMs != null);
   const range =
@@ -177,12 +276,16 @@ export function scoreConfidence(
       // (Uncertain age keeps its precedence above; either way, no crown.)
       else if (token.safetyLevel === "danger")
         confidenceLabel = UNSAFE_RANK1_LABEL;
+      // This token's own age is exact, but something ranked below it is still
+      // a lower bound and could predate it. We report the best-known order and
+      // refuse to call it proven.
+      else if (orderUnproven) confidenceLabel = UNPROVEN_RANK1_LABEL;
       else if ((exactName || exactSymbol) && significantGap && stars >= 4)
         confidenceLabel = "OG";
       else confidenceLabel = "Likely OG";
     }
 
-    return {
+    const scored: TokenResult = {
       ...token,
       confidence: stars,
       confidenceLabel,
@@ -191,6 +294,14 @@ export function scoreConfidence(
       // Informational only (small gray chip on ranks 2+) — no OG implication.
       exactMatch: exactName && exactSymbol ? (true as const) : undefined,
     };
+
+    // Rank 1 carries the order verdict on the wire so the client, the bot and
+    // the share card render the same state without recomputing it. Cleared on
+    // every other rank, so a re-score can never leave it stale.
+    if (index === 0 && orderUnproven) scored.ageOrderUnproven = true;
+    else delete scored.ageOrderUnproven;
+
+    return scored;
   });
 }
 

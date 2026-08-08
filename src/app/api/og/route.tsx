@@ -4,6 +4,7 @@ import {
   decodeSharePayload,
   decodeComparePayload,
   decodeSafetyMarker,
+  decodeUnprovenMarker,
   formatShareDate,
   SharePayload,
   ComparePayload,
@@ -77,10 +78,13 @@ function Frame({ children }: { children: React.ReactNode }) {
 function VerdictCard({
   p,
   unsafe = null,
+  unproven = false,
 }: {
   p: SharePayload;
   /** Headline blocking flag from ?sf=, or null for the original card. */
   unsafe?: SafetyFlagCode | null;
+  /** ?u=1 — the ordering behind this rank is not proven, so no OG band. */
+  unproven?: boolean;
 }) {
   const minted = formatShareDate(p.d);
   const notOgLabel =
@@ -177,6 +181,45 @@ function VerdictCard({
               {p.o
                 ? "oldest by age — OGfinder is not calling it the OG"
                 : notOgLabel.toLowerCase()}
+            </div>
+          </div>
+        ) : p.o && unproven ? (
+          // Oldest we could date, but a lookalike's history was too deep to
+          // finish walking — the solid gold OG band is an assertion we have
+          // not earned, so it becomes an amber outline that says so.
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              marginTop: 36,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                backgroundColor: "rgba(240,180,41,0.10)",
+                border: `3px solid ${AMBER_DEEP}`,
+                color: AMBER,
+                fontWeight: 900,
+                fontSize: 44,
+                padding: "12px 40px",
+                borderRadius: 24,
+              }}
+            >
+              OLDEST KNOWN
+            </div>
+            <div
+              style={{
+                display: "flex",
+                marginTop: 18,
+                color: GRAY,
+                fontSize: 26,
+                maxWidth: 940,
+              }}
+            >
+              not proven — a deeper token history could still be older
             </div>
           </div>
         ) : p.o ? (
@@ -435,10 +478,15 @@ export function GET(req: NextRequest) {
     // Absent / unrecognised / non-blocking ?sf= decodes to null, which is the
     // pre-existing card byte for byte.
     const unsafe = decodeSafetyMarker(req.nextUrl.searchParams.get("sf"));
-    return new ImageResponse(<VerdictCard p={payload} unsafe={unsafe} />, {
-      width: 1200,
-      height: 630,
-    });
+    // Same deal for ?u=: absent / anything but "1" is the pre-existing card.
+    const unproven = decodeUnprovenMarker(req.nextUrl.searchParams.get("u"));
+    return new ImageResponse(
+      <VerdictCard p={payload} unsafe={unsafe} unproven={unproven} />,
+      {
+        width: 1200,
+        height: 630,
+      }
+    );
   }
   const rawCv = req.nextUrl.searchParams.get("cv");
   const cv = rawCv ? decodeComparePayload(rawCv) : null;

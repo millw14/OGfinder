@@ -356,6 +356,88 @@ describe("formatMintVerdict", () => {
   });
 });
 
+// ————————————— formatMintVerdict: unproven age ordering —————————————
+
+describe("formatMintVerdict order gating", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-02T00:00:00.000Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Rank 1 is exactly dated, but #2's walk was truncated — it could be older. */
+  const unprovenPayload = (): MintScanPayload => ({
+    results: [
+      tok({
+        mint: BONK,
+        displayName: "Bonk",
+        displaySymbol: "BONK",
+        rank: 1,
+        createdAt: OG_CREATED,
+        createdAtMs: Date.parse(OG_CREATED),
+        ageOrderUnproven: true,
+      }),
+      tok({
+        mint: USDC,
+        displayName: "Bonk",
+        displaySymbol: "BONK",
+        rank: 2,
+        createdAt: CLONE_CREATED,
+        createdAtMs: Date.parse(CLONE_CREATED),
+        createdAtIsLowerBound: true,
+      }),
+    ],
+    query: "bonk",
+    scanName: "Bonk",
+    scanSymbol: "BONK",
+    ageOrderUnproven: true,
+    ageUnresolvedCount: 1,
+  });
+
+  it("never crowns a rank-1 whose ordering is unproven", () => {
+    const lines = formatMintVerdict(BONK, unprovenPayload(), SITE).split("\n");
+    expect(lines[0]).toBe("🕰 <b>OLDEST KNOWN</b> — Bonk ($BONK), but not proven");
+    expect(lines[0]).not.toContain("THIS IS THE OG");
+    expect(lines[0]).not.toContain("👑");
+    // The limit is stated, with the count, right under the age claim.
+    expect(lines[2]).toContain("1 matching token has a history too deep");
+    expect(lines[2]).toContain("not a verified OG");
+  });
+
+  it("hedges the comparison line for a NOT-the-OG scan too", () => {
+    const lines = formatMintVerdict(USDC, unprovenPayload(), SITE).split("\n");
+    expect(lines[0]).toContain("NOT THE OG");
+    expect(lines[2]).toBe(
+      `Oldest known: <b>Bonk</b> minted Dec 20, 2022 (${formatAgeGap(
+        Date.parse(CLONE_CREATED) - Date.parse(OG_CREATED)
+      )} older) — <code>${BONK}</code>`
+    );
+  });
+
+  it("marks the share link so the unfurled card drops the gold OG band", () => {
+    const payload = unprovenPayload();
+    expect(verdictShareUrl(BONK, payload, SITE)).toContain("&u=1");
+    // A proven cohort's link is untouched.
+    const proven: MintScanPayload = {
+      ...payload,
+      results: [
+        tok({
+          mint: BONK,
+          displayName: "Bonk",
+          rank: 1,
+          createdAt: OG_CREATED,
+          createdAtMs: Date.parse(OG_CREATED),
+        }),
+      ],
+      ageOrderUnproven: undefined,
+      ageUnresolvedCount: undefined,
+    };
+    expect(verdictShareUrl(BONK, proven, SITE)).not.toContain("&u=");
+  });
+});
+
 // ————————————————— formatMintVerdict: safety gating —————————————————
 
 /** Single-token scan payload for safety-level fixtures. */

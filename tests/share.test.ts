@@ -6,6 +6,8 @@ import {
   decodeComparePayload,
   encodeSafetyMarker,
   decodeSafetyMarker,
+  decodeUnprovenMarker,
+  UNPROVEN_MARKER,
   SharePayload,
   ComparePayload,
 } from "@/lib/share";
@@ -87,6 +89,37 @@ describe("safety marker (?sf=)", () => {
     expect(decodeSharePayload(encoded)).toEqual(base);
     // …and a marker value is not itself a verdict payload.
     expect(decodeSharePayload("freeze-authority")).toBeNull();
+  });
+});
+
+describe("unproven-order marker (?u=)", () => {
+  it("accepts only the exact marker token", () => {
+    expect(decodeUnprovenMarker(UNPROVEN_MARKER)).toBe(true);
+    expect(decodeUnprovenMarker("1")).toBe(true);
+  });
+
+  it("treats anything else as no marker", () => {
+    for (const raw of [
+      null,
+      undefined,
+      "",
+      "0",
+      "true",
+      "01",
+      " 1",
+      "1 ",
+      "yes",
+      "__proto__",
+    ]) {
+      expect(decodeUnprovenMarker(raw)).toBe(false);
+    }
+    expect(decodeUnprovenMarker(1 as unknown as string)).toBe(false);
+  });
+
+  it("leaves the ?v= contract alone — old links decode byte for byte", () => {
+    const encoded = encodeSharePayload(base);
+    expect(decodeSharePayload(encoded)).toEqual(base);
+    expect(decodeSharePayload(UNPROVEN_MARKER)).toBeNull();
   });
 });
 

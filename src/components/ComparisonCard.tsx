@@ -226,9 +226,11 @@ function SideCard({
         <p className="mt-2.5 text-micro text-fg-4" title={RANK_TOOLTIP}>
           {side.isScannedOG !== true
             ? `#${side.scannedRank} of ${side.totalFound} in its own name search`
-            : danger
-              ? // Same fact, no endorsement: "OG of…" is the word we withhold.
-                `Oldest in its own name search (#${side.scannedRank} of ${side.totalFound})`
+            : // Same fact, no endorsement: "OG of…" is the word we withhold —
+              // for a blocking flag, and for an ordering that isn't proven
+              // (a lookalike whose history is too deep to date could be older).
+              danger || t.ageOrderUnproven === true
+              ? `Oldest in its own name search (#${side.scannedRank} of ${side.totalFound})`
               : `OG of its own name search (#${side.scannedRank} of ${side.totalFound})`}
         </p>
       )}

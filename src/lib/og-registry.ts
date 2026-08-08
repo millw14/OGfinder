@@ -1,5 +1,6 @@
 import { getDb } from "./url-index";
 import { skeleton } from "./normalize";
+import { ageOrderConfidence } from "./sort";
 import type { TokenResult } from "./types";
 import type { MintScanPayload } from "./scan";
 
@@ -16,7 +17,9 @@ import type { MintScanPayload } from "./scan";
  *
  * Only certain ages are immortalized: an OG whose age is a lower bound
  * (truncated signature scan), still pending, missing, or whose name only
- * matches via homoglyph folding is never written.
+ * matches via homoglyph folding is never written — nor is one whose LEAD is
+ * unprovable, i.e. a same-name token ranked below it still carries a
+ * lower-bound age that could predate it.
  *
  * AND ONLY SAFE-ENOUGH TOKENS. A registered OG is served as an instant verdict
  * to every Telegram group for 24h, so a token carrying a blocking safety flag
@@ -84,12 +87,21 @@ export function recordOgFromScan(
     if (key.length < 2) return;
 
     // EXACT skeleton equality only — "trump coin" never touches "trump".
+    const sameName: TokenResult[] = [];
     let og: TokenResult | undefined;
     for (const t of payload.results) {
       if (skeleton(t.displayName) !== key) continue;
+      sameName.push(t);
       if (og === undefined || t.rank < og.rank) og = t;
     }
     if (!og) return;
+    // An entry here is served as "the OG of <name>" for 24h, so the ORDER has
+    // to be provable, not just the candidate's own date: a same-name token
+    // ranked below it whose age is still a lower bound could predate it. The
+    // check runs over the same-name subset only — a truncated token called
+    // something else cannot contest THIS key. (sameName is already in rank
+    // order, so its [0] is `og`.)
+    if (!ageOrderConfidence(sameName).proven) return;
     // Uncertain age must not be immortalized as "the OG of <name>".
     if (og.createdAtMs == null) return;
     if (og.pendingAge) return;

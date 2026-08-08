@@ -66,6 +66,14 @@ export interface TokenResult {
   timeSource: string; // where we got creation time from
   /** True when the signature scan was truncated — real creation may be older */
   createdAtIsLowerBound?: boolean;
+  /**
+   * RANK 1 ONLY: the ordering behind this #1 is NOT proven — a token ranked
+   * below it still carries a lower-bound age that could predate it (or this
+   * token's own age is a bound / pending). Set by scoreConfidence, which also
+   * withholds the OG label; absent means the #1 answer holds against every
+   * token we ranked. Never set on ranks 2+.
+   */
+  ageOrderUnproven?: true;
   /** True when on-chain supply is zero (fully burned) */
   supplyZero?: boolean;
   /** True when this mint was pasted for a CA scan */
@@ -213,6 +221,15 @@ export interface SearchResponse {
   scanSymbol?: string | null;
   isScannedOG?: boolean;
   scannedRank?: number | null;
+  /**
+   * Creation ranking: the #1 answer is not proven (see
+   * TokenResult.ageOrderUnproven). isScannedOG keeps its literal meaning
+   * ("the scanned mint is rank 1") — this says whether rank 1 itself can be
+   * asserted, so a consumer must not render a crown while it is true.
+   */
+  ageOrderUnproven?: true;
+  /** Tokens in this response whose unresolved age blocks that proof. */
+  ageUnresolvedCount?: number;
   /** Raw user input (e.g. mint when scanning) */
   originalInput?: string;
   /** Present on fast-phase responses (signature scans skipped) */
@@ -238,6 +255,7 @@ export type ScanSummary = Pick<
   | "scanSymbol"
   | "scannedMint"
   | "verdictPreliminary"
+  | "ageOrderUnproven"
 >;
 
 /** Merged name-search cap: each mint runs Helius getAssetBatch + getCreationSlot (linear cost). */

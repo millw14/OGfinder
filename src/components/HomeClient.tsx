@@ -183,6 +183,11 @@ function HomeInner() {
             scanName: data.scanName ?? null,
             scanSymbol: data.scanSymbol ?? null,
             scannedMint: data.scannedMint,
+            // The server decides whether rank 1 is provable — carried, never
+            // re-derived, so the hero can't crown what the server would not.
+            ...(data.ageOrderUnproven === true
+              ? { ageOrderUnproven: true as const }
+              : {}),
             ...(preliminary && data.verdictPreliminary === true
               ? { verdictPreliminary: true }
               : {}),

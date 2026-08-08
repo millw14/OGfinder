@@ -6,6 +6,7 @@ import {
   TokenResult,
 } from "@/lib/types";
 import { normalize } from "@/lib/normalize";
+import { ageOrderConfidence } from "@/lib/sort";
 import { getSearchCache, setSearchCache } from "@/lib/cache";
 import { searchTokens } from "@/lib/search";
 import { buildTokenResults } from "@/lib/enrich-results";
@@ -44,6 +45,22 @@ const NEGATIVE_TTL = 60;
 function degradedFields(): { degraded?: string[] } {
   const failures = currentFailures();
   return failures.length ? { degraded: failures } : {};
+}
+
+/**
+ * Order-confidence fields for CREATION-ranked responses (text search + scan).
+ * Present only when the #1 answer is unproven, so every existing proven
+ * response is byte-identical to before. Pure and cheap — one pass, no I/O.
+ * Not emitted for social mode, which ranks by market cap, not age.
+ */
+function ageOrderFields(
+  results: TokenResult[]
+): { ageOrderUnproven?: true; ageUnresolvedCount?: number } {
+  const order = ageOrderConfidence(results);
+  // The rank-1 stamp is authoritative: scoreConfidence saw the cohort before
+  // it was sliced to MAX_RESULTS, so it can know about tokens absent here.
+  if (order.proven && results[0]?.ageOrderUnproven !== true) return {};
+  return { ageOrderUnproven: true, ageUnresolvedCount: order.unresolvedCount };
 }
 
 export async function GET(request: NextRequest) {
@@ -243,6 +260,7 @@ async function handleSearch(request: NextRequest) {
       timing: Date.now() - start,
       mode: "search" as const,
       history: getSearchHistory(normalizedQuery),
+      ...ageOrderFields(cached),
     });
   }
 
@@ -274,6 +292,7 @@ async function handleSearch(request: NextRequest) {
       phase: "fast" as const,
       enriching: true,
       history: getSearchHistory(normalizedQuery),
+      ...ageOrderFields(fastResults),
       ...degradedFields(),
     });
   }
@@ -308,6 +327,7 @@ async function handleSearch(request: NextRequest) {
     timing: Date.now() - start,
     mode: "search" as const,
     history: getSearchHistory(normalizedQuery),
+    ...ageOrderFields(final),
     ...degradedFields(),
   });
 }
@@ -329,8 +349,20 @@ function scanResponseBody(
     scannedMint: q,
     scanName: payload.scanName ?? scanned?.displayName ?? null,
     scanSymbol: payload.scanSymbol ?? scanned?.displaySymbol ?? null,
+    // isScannedOG keeps its literal meaning — "the scanned mint is rank 1" —
+    // and is deliberately NOT flipped when the order is unproven: rank is a
+    // fact about our data. What changes is that the response now says, in its
+    // own field, that rank 1 is not provable, so no consumer may crown it.
     isScannedOG: scanned?.rank === 1,
     scannedRank: scanned?.rank ?? null,
+    ...(payload.ageOrderUnproven
+      ? {
+          ageOrderUnproven: true as const,
+          ...(payload.ageUnresolvedCount != null
+            ? { ageUnresolvedCount: payload.ageUnresolvedCount }
+            : {}),
+        }
+      : ageOrderFields(payload.results)),
     originalInput: q,
     ...degradedFields(),
     ...(fast

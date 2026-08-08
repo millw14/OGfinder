@@ -18,6 +18,7 @@ import {
 import { getJupiterTokenByMint } from "./jupiter";
 import { annotateLinkProvenance } from "./provenance";
 import { recordOgFromScan } from "./og-registry";
+import { ageOrderConfidence } from "./sort";
 
 /**
  * Mint-scan pipeline, extracted from the /api/search route so non-HTTP
@@ -30,6 +31,15 @@ export interface MintScanPayload {
   query: string;
   scanName: string | null;
   scanSymbol: string | null;
+  /**
+   * The creation ordering behind rank 1 is NOT proven — a token ranked below
+   * the leader still carries a lower-bound age that could predate it. Consumers
+   * (web hero, Telegram verdict, share card) must not render a crown while this
+   * is set, even when the scanned mint is rank 1.
+   */
+  ageOrderUnproven?: true;
+  /** Tokens in this payload whose unresolved age blocks that proof. */
+  ageUnresolvedCount?: number;
 }
 
 export type MintScanOutcome =
@@ -231,11 +241,23 @@ export async function runMintScan(
     await annotateSafety(final, q);
   }
 
+  // Whether the #1 answer is provable. scoreConfidence already stamped rank 1
+  // (it saw the cohort before the MAX_RESULTS slice, so its flag wins); the
+  // recompute here supplies the count for the payload. Pure — no extra I/O.
+  const order = ageOrderConfidence(final);
+  const orderUnproven = !order.proven || final[0]?.ageOrderUnproven === true;
+
   const payload: MintScanPayload = {
     results: final,
     query: normalizedQuery,
     scanName: h.heliusName,
     scanSymbol: h.heliusSymbol,
+    ...(orderUnproven
+      ? {
+          ageOrderUnproven: true as const,
+          ageUnresolvedCount: order.unresolvedCount,
+        }
+      : {}),
   };
   if (options?.fast) {
     setSearchCache(cacheKey, payload, FAST_TTL);

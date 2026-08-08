@@ -1,8 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   ageDataQuality,
+  ageOrderConfidence,
   isOgEndorsement,
   scoreConfidence,
+  sortByCreationTime,
+  UNPROVEN_RANK1_LABEL,
   UNSAFE_RANK1_LABEL,
 } from "@/lib/sort";
 import type { TokenResult } from "@/lib/types";
@@ -57,6 +60,98 @@ describe("ageDataQuality", () => {
   it("returns 1 for pending or missing age", () => {
     expect(ageDataQuality(make({ pendingAge: true, createdAtMs: 1 }))).toBe(1);
     expect(ageDataQuality(make({ createdAtMs: null }))).toBe(1);
+  });
+});
+
+describe("ageOrderConfidence", () => {
+  const exact = (mint: string, iso: string, over?: Partial<TokenResult>) =>
+    make({
+      mint,
+      createdAtMs: Date.parse(iso),
+      createdAt: iso,
+      timeSource: "signatures",
+      ...over,
+    });
+
+  it("is proven when every ranked age is exact", () => {
+    const order = ageOrderConfidence([
+      exact("A", "2022-01-01T00:00:00Z"),
+      exact("B", "2023-01-01T00:00:00Z"),
+      exact("C", "2024-01-01T00:00:00Z"),
+    ]);
+    expect(order).toEqual({
+      proven: true,
+      unresolvedMints: [],
+      unresolvedCount: 0,
+    });
+  });
+
+  it("is unproven when ANY token ranked below #1 is a lower bound", () => {
+    const order = ageOrderConfidence([
+      exact("A", "2022-01-01T00:00:00Z"),
+      exact("B", "2023-01-01T00:00:00Z"),
+      exact("C", "2024-01-01T00:00:00Z", { createdAtIsLowerBound: true }),
+    ]);
+    // C's true creation is AT OR BEFORE 2024 by an unknown amount — it could
+    // predate A. Nothing in our data rules that out.
+    expect(order.proven).toBe(false);
+    expect(order.unresolvedMints).toEqual(["C"]);
+    expect(order.unresolvedCount).toBe(1);
+  });
+
+  it("is unproven when the leader itself is a lower bound (leader listed first)", () => {
+    const order = ageOrderConfidence([
+      exact("A", "2022-01-01T00:00:00Z", { createdAtIsLowerBound: true }),
+      exact("B", "2023-01-01T00:00:00Z", { createdAtIsLowerBound: true }),
+    ]);
+    expect(order.proven).toBe(false);
+    expect(order.unresolvedMints).toEqual(["A", "B"]);
+  });
+
+  it("is unproven when the leader is still pending or undated", () => {
+    expect(
+      ageOrderConfidence([make({ mint: "A", pendingAge: true, createdAtMs: 1 })])
+        .proven
+    ).toBe(false);
+    expect(
+      ageOrderConfidence([make({ mint: "A", createdAtMs: null })]).proven
+    ).toBe(false);
+  });
+
+  it("ignores a follower's MISSING date — only lower bounds contest the lead", () => {
+    // An undated follower is "unknown", not "could be older": the pipeline
+    // sends it to the bottom and the leader's own check owns the only claim.
+    const order = ageOrderConfidence([
+      exact("A", "2022-01-01T00:00:00Z"),
+      make({ mint: "B", createdAtMs: null }),
+    ]);
+    expect(order.proven).toBe(true);
+  });
+
+  it("empty and single-token lists", () => {
+    expect(ageOrderConfidence([])).toEqual({
+      proven: true,
+      unresolvedMints: [],
+      unresolvedCount: 0,
+    });
+    // One exact token is trivially the oldest of one.
+    expect(ageOrderConfidence([exact("A", "2022-01-01T00:00:00Z")]).proven).toBe(
+      true
+    );
+  });
+
+  it("INVARIANT: a bound OLDER than the leader cannot stay below it post-sort", () => {
+    // A truncated token whose bound predates the leader IS older (true ≤ bound
+    // < leader), and sortByCreationTime puts it first — so ageOrderConfidence
+    // never has to reason about that case.
+    const leader = exact("Leader", "2023-01-01T00:00:00Z");
+    const olderBound = exact("Bound", "2022-01-01T00:00:00Z", {
+      createdAtIsLowerBound: true,
+    });
+    const sorted = sortByCreationTime([leader, olderBound]);
+    expect(sorted.map((t) => t.mint)).toEqual(["Bound", "Leader"]);
+    // It is now the leader, and its own bound is what makes the order unproven.
+    expect(ageOrderConfidence(sorted).unresolvedMints).toEqual(["Bound"]);
   });
 });
 
@@ -178,6 +273,123 @@ describe("scoreConfidence", () => {
     // Re-scoring the output (what Results.tsx does) must be stable.
     const again = scoreConfidence(scored, "bonk");
     expect(again[0].confidenceLabel).toBe(UNSAFE_RANK1_LABEL);
+  });
+
+  it("withholds the crown when a token ranked below is still a lower bound", () => {
+    const truncated = make({
+      ...copycat,
+      createdAtIsLowerBound: true,
+      timeSource: "signatures",
+    });
+    const scored = scoreConfidence([og, truncated], "bonk");
+    // Rank is unchanged — the order we have is still our best answer.
+    expect(scored[0].mint).toBe(og.mint);
+    expect(scored[0].rank).toBe(1);
+    // The endorsement is not.
+    expect(scored[0].confidenceLabel).toBe(UNPROVEN_RANK1_LABEL);
+    expect(scored[0].confidenceLabel).toBe("Oldest known — unverified");
+    expect(isOgEndorsement(scored[0].confidenceLabel)).toBe(false);
+    expect(scored[0].rankLabel).toBe(UNPROVEN_RANK1_LABEL);
+    expect(scored[0].ageOrderUnproven).toBe(true);
+    // Only rank 1 carries the flag.
+    expect(scored[1].ageOrderUnproven).toBeUndefined();
+  });
+
+  it("PRECEDENCE: own-age uncertainty > danger > order-unproven > OG", () => {
+    const truncatedFollower = make({ ...copycat, createdAtIsLowerBound: true });
+    // 1. Rank 1's own age uncertain — wins over everything below it.
+    expect(
+      scoreConfidence(
+        [
+          make({ ...og, createdAtIsLowerBound: true, safetyLevel: "danger" }),
+          truncatedFollower,
+        ],
+        "bonk"
+      )[0].confidenceLabel
+    ).toBe("Oldest found");
+    // 2. Own age exact + blocking flag + unproven order → the safety wording.
+    expect(
+      scoreConfidence(
+        [make({ ...og, safetyLevel: "danger" }), truncatedFollower],
+        "bonk"
+      )[0].confidenceLabel
+    ).toBe(UNSAFE_RANK1_LABEL);
+    // 3. Own age exact, safe, order unproven → the order wording.
+    expect(
+      scoreConfidence([og, truncatedFollower], "bonk")[0].confidenceLabel
+    ).toBe(UNPROVEN_RANK1_LABEL);
+    // 4. Nothing outstanding → the endorsement.
+    expect(scoreConfidence([og, copycat], "bonk")[0].confidenceLabel).toBe("OG");
+  });
+
+  it("keeps the unproven flag through a client-side re-score", () => {
+    const truncated = make({ ...copycat, createdAtIsLowerBound: true });
+    const scored = scoreConfidence([og, truncated], "bonk");
+    const again = scoreConfidence(scored, "bonk");
+    expect(again[0].confidenceLabel).toBe(UNPROVEN_RANK1_LABEL);
+    expect(again[0].ageOrderUnproven).toBe(true);
+  });
+
+  it("a flag on the wire survives a re-score of a SLICED list", () => {
+    // The server scores the full cohort, then slices to MAX_RESULTS: the
+    // client can re-score a list the truncated token never made it into.
+    const stamped = { ...og, ageOrderUnproven: true as const };
+    const scored = scoreConfidence([stamped, copycat], "bonk");
+    expect(scored[0].confidenceLabel).toBe(UNPROVEN_RANK1_LABEL);
+  });
+
+  it("drops a stale flag from a token that is no longer rank 1", () => {
+    const demoted = make({
+      ...copycat,
+      ageOrderUnproven: true,
+      createdAtMs: Date.parse("2022-12-20T00:00:00Z") + 3 * YEAR,
+    });
+    const scored = scoreConfidence([og, demoted], "bonk");
+    expect(scored[1].ageOrderUnproven).toBeUndefined();
+    // ...but the leader inherits nothing from it either: the list is clean.
+    expect(scored[0].confidenceLabel).toBe("OG");
+  });
+
+  it("REPORTED CASE: an exact-dated 2025 leader with a truncated 2025 follower earns no OG", () => {
+    // Production shape of the regression's cohort AFTER the deep walk is still
+    // short: A is exactly dated, B's walk hit the page budget, so B's shown
+    // date is only an upper limit — B really was minted 2024-02-17.
+    const a = make({
+      mint: "Q32DNrAFDCXJQy7q8CNrmJyV2BVvgeWbPhbwVcypump",
+      displayName: "Pepe Cosplay",
+      displaySymbol: "COPEPE",
+      createdAtMs: Date.parse("2025-05-25T17:26:35Z"),
+      createdAt: "2025-05-25T17:26:35.000Z",
+      timeSource: "signatures",
+    });
+    const b = make({
+      mint: "Erb3CTbFpQKAgaWRBksBD3uNBdhNQ33X1eA5sue7bAiz",
+      displayName: "COPEPE",
+      displaySymbol: "COPEPE",
+      createdAtMs: Date.parse("2025-08-29T08:07:57Z"),
+      createdAt: "2025-08-29T08:07:57.000Z",
+      timeSource: "signatures",
+      createdAtIsLowerBound: true,
+    });
+    const scored = scoreConfidence(sortByCreationTime([a, b]), "copepe");
+    expect(scored.map((t) => t.mint)).toEqual([a.mint, b.mint]);
+    expect(isOgEndorsement(scored[0].confidenceLabel)).toBe(false);
+    expect(scored[0].confidenceLabel).toBe(UNPROVEN_RANK1_LABEL);
+    expect(scored[0].ageOrderUnproven).toBe(true);
+
+    // Once B's walk completes, B is the older token, it takes rank 1, and the
+    // cohort is fully dated — the crown becomes earnable again.
+    const bResolved = make({
+      ...b,
+      createdAtMs: 1708178206 * 1000,
+      createdAt: new Date(1708178206 * 1000).toISOString(),
+      createdAtIsLowerBound: undefined,
+    });
+    const after = scoreConfidence(sortByCreationTime([a, bResolved]), "copepe");
+    expect(after[0].mint).toBe(b.mint);
+    expect(after[0].createdAt).toBe("2024-02-17T13:56:46.000Z");
+    expect(after[0].ageOrderUnproven).toBeUndefined();
+    expect(isOgEndorsement(after[0].confidenceLabel)).toBe(true);
   });
 
   it("sets exactMatch only when name AND symbol both match", () => {

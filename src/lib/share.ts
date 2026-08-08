@@ -162,6 +162,26 @@ export function decodeSafetyMarker(
   return raw;
 }
 
+// ————— Unproven-order marker (?u=) — sibling of ?v=, never part of it —————
+
+/**
+ * A shared verdict link can declare that the ORDER behind its rank is not
+ * proven (`?u=1`): the token is the oldest we could date, but a lookalike
+ * ranked below it still carries a lower-bound age that could predate it.
+ *
+ * Like ?sf=, it rides BESIDE ?v= rather than inside the payload — the ?v=
+ * decoder is strict and its contract is frozen, so every link minted before
+ * this existed keeps decoding and rendering byte-identically.
+ *
+ * Only the exact token "1" is accepted; anything else means "no marker".
+ */
+export const UNPROVEN_MARKER = "1";
+
+/** Decode an untrusted ?u= param. True only for the exact marker token. */
+export function decodeUnprovenMarker(raw: string | null | undefined): boolean {
+  return raw === UNPROVEN_MARKER;
+}
+
 // ————— Comparison share payloads (?cv=) — sibling of ?v=, never replaces it —————
 
 /** One side of a shared head-to-head comparison. */

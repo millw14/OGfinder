@@ -12,6 +12,7 @@ import {
   encodeSafetyMarker,
   encodeSharePayload,
   formatShareDate,
+  UNPROVEN_MARKER,
   type SharePayload,
 } from "./share";
 import {
@@ -612,9 +613,25 @@ export function verdictShareUrl(
   const sf = marker
     ? `&sf=${encodeURIComponent(encodeSafetyMarker(marker.code))}`
     : "";
+  // ?u=1, same sibling treatment: a rank-1 whose ordering is unproven must not
+  // unfurl as a gold "OG" card in the chat.
+  const u =
+    share.o && ageOrderUnprovenFor(payload) ? `&u=${UNPROVEN_MARKER}` : "";
   return `${site}/?q=${encodeURIComponent(mint)}&v=${encodeSharePayload(
     share
-  )}${sf}`;
+  )}${sf}${u}`;
+}
+
+/**
+ * Does this payload's #1 answer rest on an unproven ordering? Server-computed
+ * (scan.ts) with the rank-1 stamp as the fallback, so a payload built before
+ * the response-level field existed still reads correctly. Pure.
+ */
+function ageOrderUnprovenFor(payload: MintScanPayload): boolean {
+  return (
+    payload.ageOrderUnproven === true ||
+    payload.results[0]?.ageOrderUnproven === true
+  );
 }
 
 /**
@@ -640,6 +657,9 @@ export function formatMintVerdict(
   const og = payload.results[0];
   const isOG = scanned.rank === 1;
   const danger = scanned.safetyLevel === "danger";
+  // The oldest token we could date is not necessarily the oldest token: a
+  // lookalike whose history was too deep to walk to the end could predate it.
+  const orderUnproven = ageOrderUnprovenFor(payload);
 
   const lines: string[] = [];
   if (danger) {
@@ -657,7 +677,11 @@ export function formatMintVerdict(
   } else {
     lines.push(
       isOG
-        ? `👑 <b>THIS IS THE OG</b> — ${name}${sym}`
+        ? orderUnproven
+          ? // Rank stays factual; the crown does not get handed out on an
+            // ordering we cannot prove.
+            `🕰 <b>OLDEST KNOWN</b> — ${name}${sym}, but not proven`
+          : `👑 <b>THIS IS THE OG</b> — ${name}${sym}`
         : `🚫 <b>NOT THE OG</b> — ${name}${sym} is #${scanned.rank} of ${total} by age`
     );
   }
@@ -673,7 +697,20 @@ export function formatMintVerdict(
         : null;
     const gap = gapMs != null && gapMs > 0 ? ` (${formatAgeGap(gapMs)} older)` : "";
     lines.push(
-      `OG: <b>${escapeHtml(og.displayName)}</b> minted ${ogDate}${gap} — <code>${escapeHtml(og.mint)}</code>`
+      `${orderUnproven ? "Oldest known" : "OG"}: <b>${escapeHtml(og.displayName)}</b> minted ${ogDate}${gap} — <code>${escapeHtml(og.mint)}</code>`
+    );
+  }
+
+  // The caveat rides directly under whichever line made the age claim, so the
+  // claim and its limit are never read apart.
+  if (orderUnproven) {
+    const n = payload.ageUnresolvedCount;
+    lines.push(
+      `⏳ ${
+        n != null && n > 0
+          ? `${n} matching token${n === 1 ? "" : "s"} ha${n === 1 ? "s" : "ve"}`
+          : "A matching token has"
+      } a history too deep to date fully — the oldest above is the oldest we can prove, not a verified OG. Re-scan later to resume the deeper walk.`
     );
   }
 

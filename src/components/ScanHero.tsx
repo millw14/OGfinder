@@ -13,6 +13,7 @@ import {
   encodeSafetyMarker,
   encodeSharePayload,
   SharePayload,
+  UNPROVEN_MARKER,
 } from "@/lib/share";
 import {
   blockingFlags,
@@ -116,21 +117,35 @@ export function ScanHero({
     watchQuery.trim().length >= 2 &&
     watchQuery.trim().length <= 30;
 
-  // ── The three verdict states ──────────────────────────────────────────────
-  // The server's age verdict (isOG) is never recomputed; safety only decides
-  // whether that fact earns the gold endorsement treatment.
-  //   endorsed — oldest AND no blocking flag → gold "This is the OG" + crown
-  //   unsafeOG — oldest BUT blocking flag    → red "Oldest by age — but unsafe"
-  //   !isOG    — not the oldest              → existing treatment + chips
+  // ── The verdict states ────────────────────────────────────────────────────
+  // The server's age verdict (isOG) is never recomputed; safety and order
+  // confidence only decide whether that fact earns the gold endorsement.
+  //   endorsed  — oldest, no blocking flag, order proven → gold + crown
+  //   unsafeOG  — oldest BUT blocking flag  → red "Oldest by age — but unsafe"
+  //   unprovenOG— oldest BUT some ranked-below token's age is still a lower
+  //               bound and could predate it → amber "Oldest known — not proven"
+  //   !isOG     — not the oldest            → existing treatment + chips
   const scannedDanger = isDangerous(scanned?.safetyLevel);
   const scannedBlocking = scannedDanger
     ? blockingFlags(scanned?.safetyFlags)
     : [];
-  const endorsed = isOG && !scannedDanger;
+  // Server verdict first; the rank-1 stamp on the results is the same fact,
+  // and covers payloads that predate the response-level field.
+  const orderUnproven =
+    scan.ageOrderUnproven === true || ranked[0]?.ageOrderUnproven === true;
   const unsafeOG = isOG && scannedDanger;
+  const unprovenOG = isOG && !scannedDanger && orderUnproven;
+  const endorsed = isOG && !scannedDanger && !orderUnproven;
   // The user is choosing between two tokens, so the OG's safety matters as
   // much as their own — and a dangerous #1 never gets the gold panel either.
   const ogDanger = isDangerous(og?.safetyLevel);
+
+  // Tokens still carrying a lower-bound age in the list we were given. The
+  // server may know of more (it ranks the cohort before slicing), so the
+  // wording below never presents this as a complete count.
+  const unresolvedShown = ranked.filter(
+    (t) => t.createdAtIsLowerBound === true
+  ).length;
 
   const ago = timeAgo(scanned?.createdAt ?? null);
   const ogAgo = og ? timeAgo(og.createdAt) : "";
@@ -160,9 +175,12 @@ export function ScanHero({
     const sf = marker
       ? `&sf=${encodeURIComponent(encodeSafetyMarker(marker.code))}`
       : "";
+    // ?u=1 rides beside ?v= the same way: the unfurled card must not show a
+    // gold "OG" band for an ordering we have not proven.
+    const u = isOG && orderUnproven ? `&u=${UNPROVEN_MARKER}` : "";
     const url = `${window.location.origin}/?q=${encodeURIComponent(
       scannedMint
-    )}&v=${encodeSharePayload(payload)}${sf}`;
+    )}&v=${encodeSharePayload(payload)}${sf}${u}`;
     try {
       await navigator.clipboard.writeText(url);
       setCopyFailed(false);
@@ -184,14 +202,22 @@ export function ScanHero({
             ? "og-glow bg-gradient-to-br from-og/[0.10] via-surface-1 to-surface-1"
             : unsafeOG
               ? "border-risk/45 bg-gradient-to-br from-risk/[0.12] via-surface-1 to-surface-1"
-              : "border-risk/25 bg-gradient-to-br from-risk/[0.07] via-surface-1 to-surface-1"
+              : unprovenOG
+                ? "border-warn/40 bg-gradient-to-br from-warn/[0.09] via-surface-1 to-surface-1"
+                : "border-risk/25 bg-gradient-to-br from-risk/[0.07] via-surface-1 to-surface-1"
       }`}
     >
       {/* ── Verdict ─────────────────────────────────────────────────────── */}
       <div className="p-4 sm:p-6">
         <p
           className={`${EYEBROW} ${
-            preliminary ? "text-fg-4" : endorsed ? "text-og" : "text-risk"
+            preliminary
+              ? "text-fg-4"
+              : endorsed
+                ? "text-og"
+                : unprovenOG
+                  ? "text-warn"
+                  : "text-risk"
           }`}
         >
           Contract scan verdict
@@ -206,6 +232,12 @@ export function ScanHero({
             <span className="og-badge-crown flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-2xl border border-og/35 bg-og/[0.12] sm:h-14 sm:w-14">
               <LottieHover animationData={crownOg} size={34} />
             </span>
+          ) : unprovenOG ? (
+            // Oldest we could date — but the crown is an assertion, and the
+            // ordering behind it is not established yet.
+            <span className="flex h-12 min-w-[3rem] flex-shrink-0 items-center justify-center rounded-2xl border border-warn/35 bg-warn/[0.10] px-3 font-mono text-lg font-medium text-warn sm:h-14 sm:min-w-[3.5rem] sm:text-xl">
+              #{rank}
+            </span>
           ) : (
             // No crown for an unsafe #1 — but the rank itself still shows,
             // because the age finding is true and we never hide it.
@@ -217,8 +249,8 @@ export function ScanHero({
           <div className="min-w-0">
             <h2
               className={`font-display font-bold uppercase leading-[1.05] tracking-tight ${
-                unsafeOG
-                  ? "text-[26px] text-risk sm:text-[34px]"
+                unsafeOG || unprovenOG
+                  ? "text-[26px] sm:text-[34px]"
                   : "text-[30px] sm:text-[40px]"
               } ${
                 preliminary
@@ -226,8 +258,10 @@ export function ScanHero({
                   : endorsed
                     ? "text-og"
                     : unsafeOG
-                      ? ""
-                      : "text-fg"
+                      ? "text-risk"
+                      : unprovenOG
+                        ? "text-warn"
+                        : "text-fg"
               }`}
             >
               {preliminary
@@ -236,7 +270,9 @@ export function ScanHero({
                   ? "This is the OG"
                   : unsafeOG
                     ? "Oldest by age — but unsafe"
-                    : "Not the OG"}
+                    : unprovenOG
+                      ? "Oldest known — not proven"
+                      : "Not the OG"}
             </h2>
             <p className="mt-1.5 text-meta text-fg-3 sm:text-sm">
               {preliminary ? (
@@ -244,6 +280,12 @@ export function ScanHero({
                   Checking on-chain ages of{" "}
                   <span className="font-mono text-fg-2">{totalCount}</span>{" "}
                   matching tokens
+                </>
+              ) : unprovenOG ? (
+                <>
+                  Oldest of the{" "}
+                  <span className="font-mono text-fg-2">{totalCount}</span>{" "}
+                  matching tokens we could date completely
                 </>
               ) : isOG ? (
                 <>
@@ -286,6 +328,39 @@ export function ScanHero({
                 </span>
               </p>
             )}
+          </div>
+        )}
+
+        {/* Unproven ordering, spelled out. A truncated history is a LOWER
+            BOUND: true creation is at or before the date shown, by an unknown
+            amount — so a token ranked below can still turn out to be older. */}
+        {!preliminary && orderUnproven && (
+          <div className="mt-4 rounded-xl border border-warn/30 bg-warn/[0.06] p-3.5 sm:p-4">
+            <p className={`${EYEBROW} text-warn`}>Age order not proven</p>
+            <p className="mt-2 text-meta leading-relaxed text-fg-2">
+              {unresolvedShown > 0 ? (
+                <>
+                  <span className="font-mono text-fg">{unresolvedShown}</span>{" "}
+                  matching token{unresolvedShown === 1 ? "" : "s"} ha
+                  {unresolvedShown === 1 ? "s" : "ve"} a transaction history too
+                  deep to walk to the end, so the date shown for{" "}
+                  {unresolvedShown === 1 ? "it" : "them"} is only an upper limit
+                  — the real mint could be far older.
+                </>
+              ) : (
+                <>
+                  At least one matching token&rsquo;s history was too deep to
+                  walk to the end, so its shown date is only an upper limit —
+                  the real mint could be far older.
+                </>
+              )}{" "}
+              <span className="font-semibold text-fg">
+                {isOG
+                  ? "#1 is the oldest we can currently prove, not a verified OG."
+                  : "The #1 above is the oldest we can currently prove, not a verified OG."}
+              </span>{" "}
+              Scanning again resumes the deeper walk where it stopped.
+            </p>
           </div>
         )}
       </div>
@@ -480,7 +555,7 @@ export function ScanHero({
             <div className="flex items-center justify-center px-1 text-center">
               <div>
                 <p className={`${EYEBROW} text-fg-4`}>
-                  {ogDanger ? "Older by" : "OG is older by"}
+                  {ogDanger || orderUnproven ? "Older by" : "OG is older by"}
                 </p>
                 <p className="mt-1 font-display text-lg font-bold tracking-tight text-fg sm:text-xl">
                   {gapMs != null && gapMs > 0 ? formatAgeGap(gapMs) : "—"}
@@ -488,19 +563,32 @@ export function ScanHero({
               </div>
             </div>
 
-            {/* The #1 gets the gold panel only if IT is clean too — otherwise
-                this strip would just move the endorsement one column over. */}
+            {/* The #1 gets the gold panel only if IT is clean AND provably
+                first — otherwise this strip would just move the endorsement one
+                column over. */}
             <div
               className={`rounded-xl border px-3.5 py-3 ${
                 ogDanger
                   ? "border-risk/35 bg-risk/[0.07]"
-                  : "og-glow bg-og/[0.06]"
+                  : orderUnproven
+                    ? "border-warn/35 bg-warn/[0.06]"
+                    : "og-glow bg-og/[0.06]"
               }`}
             >
               <p
-                className={`${EYEBROW} ${ogDanger ? "text-risk" : "text-og"}`}
+                className={`${EYEBROW} ${
+                  ogDanger
+                    ? "text-risk"
+                    : orderUnproven
+                      ? "text-warn"
+                      : "text-og"
+                }`}
               >
-                {ogDanger ? "Oldest — #1 by age, unsafe" : "The OG — #1 by age"}
+                {ogDanger
+                  ? "Oldest — #1 by age, unsafe"
+                  : orderUnproven
+                    ? "Oldest known — #1, not proven"
+                    : "The OG — #1 by age"}
               </p>
               <p className="mt-1.5 truncate font-display text-sm font-bold tracking-tight text-fg">
                 {og.displayName}

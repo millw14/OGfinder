@@ -4,7 +4,9 @@ import {
   decodeSharePayload,
   decodeComparePayload,
   decodeSafetyMarker,
+  decodeUnprovenMarker,
   formatShareDate,
+  UNPROVEN_MARKER,
 } from "@/lib/share";
 import { flagFromCode } from "@/lib/safety";
 
@@ -34,27 +36,41 @@ export function generateMetadata({
       const rawSf = typeof searchParams.sf === "string" ? searchParams.sf : null;
       const marker = decodeSafetyMarker(rawSf);
       const flag = marker ? flagFromCode(marker) : null;
+      // Optional sibling marker (?u=1): the age ORDER behind this rank is not
+      // proven. "OG verified" must never be minted for that state — the words
+      // in the unfurl are the claim, so they get the caveat too.
+      const unproven = decodeUnprovenMarker(
+        typeof searchParams.u === "string" ? searchParams.u : null
+      );
       const title = flag
         ? `"${p.n}" — oldest by age, but UNSAFE: ${flag.label} | OGfinder`
-        : p.o
-          ? `"${p.n}" — OG verified${minted ? ` · minted ${minted}` : ""} | OGfinder`
-          : `"${p.n}" — NOT the OG${rankClause} | OGfinder`;
+        : p.o && unproven
+          ? `"${p.n}" — oldest known, not proven${
+              minted ? ` · minted ${minted}` : ""
+            } | OGfinder`
+          : p.o
+            ? `"${p.n}" — OG verified${minted ? ` · minted ${minted}` : ""} | OGfinder`
+            : `"${p.n}" — NOT the OG${rankClause} | OGfinder`;
       const description = flag
         ? `${p.n} ($${p.s})${
             p.o ? ` is the oldest "${p.n}" on Solana` : ""
           } — ${flag.detail} OGfinder is not calling it the OG.`
-        : p.o
-          ? `${p.n} ($${p.s}) checks out as the original "${p.n}" on Solana${
+        : p.o && unproven
+          ? `${p.n} ($${p.s}) is the oldest "${p.n}" OGfinder could date${
               minted ? ` — minted ${minted}` : ""
-            }. Verified by on-chain age with OGfinder.`
-          : `${p.n} ($${p.s}) is NOT the original "${p.n}" on Solana${
-              p.r !== null && p.t !== null
-                ? ` — it ranks #${p.r} of ${p.t} by age`
-                : ""
-            }. Find the real OG with OGfinder.`;
+            }. Another match's history is too deep to have been walked to the end, so it could still be older.`
+          : p.o
+            ? `${p.n} ($${p.s}) checks out as the original "${p.n}" on Solana${
+                minted ? ` — minted ${minted}` : ""
+              }. Verified by on-chain age with OGfinder.`
+            : `${p.n} ($${p.s}) is NOT the original "${p.n}" on Solana${
+                p.r !== null && p.t !== null
+                  ? ` — it ranks #${p.r} of ${p.t} by age`
+                  : ""
+              }. Find the real OG with OGfinder.`;
       const ogImage = `/api/og?v=${encodeURIComponent(rawV)}${
         marker ? `&sf=${encodeURIComponent(marker)}` : ""
-      }`;
+      }${unproven ? `&u=${UNPROVEN_MARKER}` : ""}`;
       return {
         title,
         description,

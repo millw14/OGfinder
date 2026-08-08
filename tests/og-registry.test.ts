@@ -170,6 +170,50 @@ describe("recordOgFromScan — uncertain OGs are never immortalized", () => {
   }
 });
 
+describe("recordOgFromScan — an unproven lead is never cemented", () => {
+  it("refuses to write when a SAME-NAME token below is still a lower bound", async () => {
+    const lib = await freshRegistry();
+    lib.recordOgFromScan(
+      payload([
+        tok({ mint: "BonkOG", displayName: "Bonk", rank: 1, createdAtMs: T_OG }),
+        // True creation is AT OR BEFORE T_CLONE, by an unknown amount — it
+        // could predate BonkOG, so "the OG of bonk" is not established.
+        tok({
+          mint: "BonkDeep",
+          displayName: "Bonk",
+          rank: 2,
+          createdAtMs: T_CLONE,
+          createdAtIsLowerBound: true,
+        }),
+      ]),
+      "BonkOG"
+    );
+    expect(rows(lib)).toHaveLength(0);
+  });
+
+  it("still writes when the lower-bound token has a DIFFERENT name", async () => {
+    const lib = await freshRegistry();
+    lib.recordOgFromScan(
+      payload([
+        tok({ mint: "BonkOG", displayName: "Bonk", rank: 1, createdAtMs: T_OG }),
+        // Different key entirely — it can never be "the OG of bonk", however
+        // old it turns out to be.
+        tok({
+          mint: "InuDeep",
+          displayName: "Bonk Inu",
+          rank: 2,
+          createdAtMs: T_CLONE,
+          createdAtIsLowerBound: true,
+        }),
+      ]),
+      "BonkOG"
+    );
+    const all = rows(lib);
+    expect(all).toHaveLength(1);
+    expect(all[0].og_mint).toBe("BonkOG");
+  });
+});
+
 describe("recordOgFromScan — a dangerous token is never cemented", () => {
   it("refuses to register an OG with a blocking safety flag", async () => {
     const lib = await freshRegistry();

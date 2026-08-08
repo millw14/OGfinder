@@ -5,7 +5,7 @@ import Image from "next/image";
 import Lottie, { LottieRefCurrentProps } from "lottie-react";
 import { TokenResult } from "@/lib/types";
 import { formatDate, timeAgo } from "@/lib/format";
-import { UNSAFE_RANK1_LABEL } from "@/lib/sort";
+import { UNSAFE_RANK1_LABEL, UNPROVEN_RANK1_LABEL } from "@/lib/sort";
 import { blockingFlags, isDangerous } from "@/lib/safety-view";
 import copyHover from "@/assets/lottie/copy-hover.json";
 import {
@@ -33,6 +33,8 @@ const OG_LABEL_TITLES: Record<string, string> = {
     "Oldest we could verify — its true creation may be older than shown",
   [UNSAFE_RANK1_LABEL]:
     "Oldest matching token, but a blocking risk flag fired — OGfinder will not endorse it as the OG",
+  [UNPROVEN_RANK1_LABEL]:
+    "Oldest of the tokens we could date completely — another match's history was too deep to walk to the end, so it could still be older",
 };
 
 /** Chips shown inline on a card before the rest collapse into "+N more". */
@@ -151,12 +153,18 @@ export function TokenCard({ token }: { token: TokenResult }) {
     }
   };
 
-  // The crown and every gold surface below key off safetyLevel DIRECTLY, not
-  // off the confidence label, so the endorsement styling can never drift away
-  // from the verdict that withheld it.
+  // The crown and every gold surface below key off safetyLevel and the order
+  // verdict DIRECTLY, not off the confidence label, so the endorsement styling
+  // can never drift away from the verdict that withheld it.
   const isDanger = isDangerous(token.safetyLevel);
   const blocking = isDanger ? blockingFlags(token.safetyFlags) : [];
-  const isOG = token.rank === 1 && token.rankingMode === "creation" && !isDanger;
+  // ageOrderUnproven is set on rank 1 only, by scoreConfidence: something
+  // ranked below still carries a lower-bound age that could predate this one.
+  const isOG =
+    token.rank === 1 &&
+    token.rankingMode === "creation" &&
+    !isDanger &&
+    token.ageOrderUnproven !== true;
   const isScanned = token.isScanned === true;
   const ago = timeAgo(token.createdAt);
   const showLogo = Boolean(token.imageUrl) && !logoFailed;
@@ -227,9 +235,7 @@ export function TokenCard({ token }: { token: TokenResult }) {
               ${token.displaySymbol}
             </span>
             {isScanned && <ScannedMintBadge />}
-            {token.rankingMode === "creation" && !isDanger && (
-              <OGBadge rank={token.rank} />
-            )}
+            {isOG && <OGBadge rank={token.rank} />}
             {token.exactMatch && token.rank !== 1 && <ExactNameBadge />}
           </div>
 
