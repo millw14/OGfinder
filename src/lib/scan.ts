@@ -1,4 +1,4 @@
-import { MIN_QUERY, TokenResult } from "./types";
+import { MAX_HELIUS, MIN_QUERY, RawToken, TokenResult } from "./types";
 import { normalize } from "./normalize";
 import { getSearchCache, setSearchCache } from "./cache";
 import { searchTokens } from "./search";
@@ -7,7 +7,7 @@ import {
   buildTokenResults,
   type AgeEscalationReport,
 } from "./enrich-results";
-import { deriveSearchTermFromMintMetadata } from "./mint-search";
+import { deriveSearchTermsFromMintMetadata } from "./mint-search";
 import {
   getAssetBatch,
   getMintHeliusDataRpcFallback,
@@ -101,6 +101,38 @@ export function logAgeEscalation(report: AgeEscalationReport | null): void {
   );
 }
 
+/**
+ * Merge the per-term cohorts of a mint scan into one candidate list.
+ *
+ * Round-robin rather than concatenation: each searchTokens call already returns
+ * up to MAX_HELIUS candidates, so concatenating and slicing could drop the
+ * ticker cohort entirely — precisely the tokens the second term exists to
+ * surface. Interleaving guarantees every term keeps a share of the budget.
+ * First occurrence of a mint wins; later hits only fill in missing Jupiter
+ * metadata (same contract as searchTokens' own merge).
+ */
+export function mergeSearchCohorts(cohorts: RawToken[][]): RawToken[] {
+  if (cohorts.length === 1) return cohorts[0];
+
+  const merged = new Map<string, RawToken>();
+  const depth = Math.max(0, ...cohorts.map((c) => c.length));
+  for (let i = 0; i < depth && merged.size < MAX_HELIUS; i++) {
+    for (const cohort of cohorts) {
+      if (merged.size >= MAX_HELIUS) break;
+      const token = cohort[i];
+      if (!token) continue;
+      const existing = merged.get(token.mint);
+      if (!existing) {
+        merged.set(token.mint, token);
+        continue;
+      }
+      if (existing.jupName === undefined) existing.jupName = token.jupName;
+      if (existing.jupSymbol === undefined) existing.jupSymbol = token.jupSymbol;
+    }
+  }
+  return Array.from(merged.values());
+}
+
 export async function runMintScan(
   q: string,
   cacheKey: string,
@@ -141,10 +173,11 @@ export async function runMintScan(
     };
   }
 
-  let searchTerm = deriveSearchTermFromMintMetadata(
+  let searchTerms = deriveSearchTermsFromMintMetadata(
     h.heliusName,
     h.heliusSymbol
   );
+  let searchTerm = searchTerms[0] ?? "";
 
   if (searchTerm.length < MIN_QUERY) {
     const jup = await getJupiterTokenByMint(q);
@@ -154,10 +187,11 @@ export async function runMintScan(
         heliusName: jup.name,
         heliusSymbol: jup.symbol,
       };
-      searchTerm = deriveSearchTermFromMintMetadata(
+      searchTerms = deriveSearchTermsFromMintMetadata(
         h.heliusName,
         h.heliusSymbol
       );
+      searchTerm = searchTerms[0] ?? "";
     }
   }
 
@@ -169,7 +203,12 @@ export async function runMintScan(
     };
   }
 
-  let rawTokens = await searchTokens(searchTerm);
+  // Search the name AND the ticker: a copycat riding someone else's ticker is
+  // invisible to a name-only search, which is how a newer token used to get
+  // crowned (see deriveSearchTermsFromMintMetadata).
+  let rawTokens = mergeSearchCohorts(
+    await Promise.all(searchTerms.map((term) => searchTokens(term)))
+  );
   const hasScanned = rawTokens.some((t) => t.mint === q);
   if (!hasScanned) {
     rawTokens = [
