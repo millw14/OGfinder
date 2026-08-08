@@ -33,6 +33,7 @@ function make(partial: Partial<TokenResult>): TokenResult {
 }
 
 const YEAR = 365 * 24 * 3600 * 1000;
+const MONTH = 30 * 24 * 3600 * 1000;
 
 describe("ageDataQuality", () => {
   it("tiers by time source", () => {
@@ -81,22 +82,64 @@ describe("ageOrderConfidence", () => {
     ]);
     expect(order).toEqual({
       proven: true,
+      blockingMints: [],
+      blockingCount: 0,
       unresolvedMints: [],
       unresolvedCount: 0,
     });
   });
 
-  it("is unproven when ANY token ranked below #1 is a lower bound", () => {
+  it("is unproven when a lower bound below #1 sits within the material window", () => {
     const order = ageOrderConfidence([
       exact("A", "2022-01-01T00:00:00Z"),
-      exact("B", "2023-01-01T00:00:00Z"),
-      exact("C", "2024-01-01T00:00:00Z", { createdAtIsLowerBound: true }),
+      exact("B", "2022-04-01T00:00:00Z", { createdAtIsLowerBound: true }),
     ]);
-    // C's true creation is AT OR BEFORE 2024 by an unknown amount — it could
-    // predate A. Nothing in our data rules that out.
+    // B's true creation is AT OR BEFORE 2022-04 by an unknown amount, and three
+    // months of quiet before heavy trading is ordinary — it could predate A.
+    // This is the shape of the reported regression.
     expect(order.proven).toBe(false);
-    expect(order.unresolvedMints).toEqual(["C"]);
+    expect(order.blockingMints).toEqual(["B"]);
+    expect(order.unresolvedMints).toEqual(["B"]);
     expect(order.unresolvedCount).toBe(1);
+  });
+
+  it("still counts — but is not blocked by — a bound years newer than the leader", () => {
+    // Real shape of the "bonk" cohort: every unresolved bound is 29-44 months
+    // newer than BONK, which would require years of dormancy to overturn it.
+    const order = ageOrderConfidence([
+      exact("A", "2022-12-20T00:00:00Z"),
+      exact("B", "2025-05-13T00:00:00Z", { createdAtIsLowerBound: true }),
+      exact("C", "2026-08-07T00:00:00Z", { createdAtIsLowerBound: true }),
+    ]);
+    expect(order.proven).toBe(true);
+    expect(order.blockingMints).toEqual([]);
+    // Never hidden: the caveat still reports them.
+    expect(order.unresolvedMints).toEqual(["B", "C"]);
+    expect(order.unresolvedCount).toBe(2);
+  });
+
+  it("MATERIALITY BOUNDARY: exactly at the window blocks, just past it does not", () => {
+    const leaderMs = Date.parse("2022-01-01T00:00:00Z");
+    const at = ageOrderConfidence([
+      exact("A", "2022-01-01T00:00:00Z"),
+      make({
+        mint: "B",
+        createdAtMs: leaderMs + YEAR,
+        createdAtIsLowerBound: true,
+      }),
+    ]);
+    expect(at.proven).toBe(false);
+
+    const past = ageOrderConfidence([
+      exact("A", "2022-01-01T00:00:00Z"),
+      make({
+        mint: "B",
+        createdAtMs: leaderMs + YEAR + 1,
+        createdAtIsLowerBound: true,
+      }),
+    ]);
+    expect(past.proven).toBe(true);
+    expect(past.unresolvedCount).toBe(1);
   });
 
   it("is unproven when the leader itself is a lower bound (leader listed first)", () => {
@@ -131,6 +174,8 @@ describe("ageOrderConfidence", () => {
   it("empty and single-token lists", () => {
     expect(ageOrderConfidence([])).toEqual({
       proven: true,
+      blockingMints: [],
+      blockingCount: 0,
       unresolvedMints: [],
       unresolvedCount: 0,
     });
@@ -275,10 +320,29 @@ describe("scoreConfidence", () => {
     expect(again[0].confidenceLabel).toBe(UNSAFE_RANK1_LABEL);
   });
 
+  /**
+   * A truncated bound close enough to the leader to be a credible threat —
+   * `copycat` sits 3 years out, which the materiality window treats as noise.
+   */
+  const nearTruncated = make({
+    mint: "Near1111111111111111111111111111111111111",
+    displayName: "Bonk",
+    displaySymbol: "Bonk",
+    createdAtMs: Date.parse("2022-12-20T00:00:00Z") + 3 * MONTH,
+    timeSource: "signatures",
+    createdAtIsLowerBound: true,
+  });
+
+  it("keeps the crown when the only lower bound is years newer than the leader", () => {
+    const distant = make({ ...copycat, createdAtIsLowerBound: true });
+    const scored = scoreConfidence([og, distant], "bonk");
+    expect(scored[0].confidenceLabel).toBe("OG");
+    expect(scored[0].ageOrderUnproven).toBeUndefined();
+  });
+
   it("withholds the crown when a token ranked below is still a lower bound", () => {
     const truncated = make({
-      ...copycat,
-      createdAtIsLowerBound: true,
+      ...nearTruncated,
       timeSource: "signatures",
     });
     const scored = scoreConfidence([og, truncated], "bonk");
@@ -296,7 +360,7 @@ describe("scoreConfidence", () => {
   });
 
   it("PRECEDENCE: own-age uncertainty > danger > order-unproven > OG", () => {
-    const truncatedFollower = make({ ...copycat, createdAtIsLowerBound: true });
+    const truncatedFollower = nearTruncated;
     // 1. Rank 1's own age uncertain — wins over everything below it.
     expect(
       scoreConfidence(
@@ -323,8 +387,7 @@ describe("scoreConfidence", () => {
   });
 
   it("keeps the unproven flag through a client-side re-score", () => {
-    const truncated = make({ ...copycat, createdAtIsLowerBound: true });
-    const scored = scoreConfidence([og, truncated], "bonk");
+    const scored = scoreConfidence([og, nearTruncated], "bonk");
     const again = scoreConfidence(scored, "bonk");
     expect(again[0].confidenceLabel).toBe(UNPROVEN_RANK1_LABEL);
     expect(again[0].ageOrderUnproven).toBe(true);

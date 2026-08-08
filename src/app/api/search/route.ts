@@ -59,8 +59,15 @@ function ageOrderFields(
   const order = ageOrderConfidence(results);
   // The rank-1 stamp is authoritative: scoreConfidence saw the cohort before
   // it was sliced to MAX_RESULTS, so it can know about tokens absent here.
-  if (order.proven && results[0]?.ageOrderUnproven !== true) return {};
-  return { ageOrderUnproven: true, ageUnresolvedCount: order.unresolvedCount };
+  const unproven = !order.proven || results[0]?.ageOrderUnproven === true;
+  const fields: { ageOrderUnproven?: true; ageUnresolvedCount?: number } = {};
+  if (unproven) fields.ageOrderUnproven = true;
+  // Disclosed even when the crown stands: unresolved ages that are too far from
+  // the leader to be credible threats are still reported, never hidden.
+  if (order.unresolvedCount > 0) {
+    fields.ageUnresolvedCount = order.unresolvedCount;
+  }
+  return fields;
 }
 
 export async function GET(request: NextRequest) {

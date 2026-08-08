@@ -36,13 +36,37 @@ export function sortByCreationTime(results: TokenResult[]): TokenResult[] {
   });
 }
 
+/**
+ * How close an unresolved bound must sit to the leader before it is treated as
+ * a live threat to the #1 answer.
+ *
+ * A truncated token has ≥ MAX_SIG_PAGES × 1000 transactions all NEWER than its
+ * bound. For it to actually predate the leader it must therefore have sat
+ * essentially dormant for the whole gap, then suddenly produced thousands of
+ * transactions. Inside a year that is unremarkable — the reported regression
+ * was a 3-month gap and the token really was older. At 2-4 years it is a
+ * different claim entirely: every unresolved token in the "bonk" cohort sits
+ * 29-44 months newer than BONK.
+ *
+ * So the gap decides whether the crown is BLOCKED; every unresolved token is
+ * still counted and disclosed either way. Widen this to be stricter.
+ */
+export const MATERIAL_AGE_GAP_MS = 365 * 24 * 60 * 60 * 1000;
+
 /** Whether the #1 answer is provable from the data we currently hold. */
 export interface AgeOrderConfidence {
-  /** True when nothing in this list can overturn the #1 answer. */
+  /** True when nothing can CREDIBLY overturn the #1 answer. */
   proven: boolean;
   /**
-   * Mints whose unresolved age blocks the proof, in rank order (the leader
-   * first when it is one of them).
+   * Mints whose unresolved age is close enough to the leader to block the
+   * endorsement, in rank order (the leader first when it is one of them).
+   */
+  blockingMints: string[];
+  blockingCount: number;
+  /**
+   * EVERY token with an unresolved age, including the ones too far from the
+   * leader to be credible threats. Always disclosed to the user — the crown is
+   * gated on blockingCount, but the caveat reports the honest total.
    */
   unresolvedMints: string[];
   unresolvedCount: number;
@@ -59,10 +83,14 @@ export interface AgeOrderConfidence {
  *               a 2.5-year-old token whose 5-page walk reported an 18-month-old
  *               date and sorted BELOW a 1-year-old token).
  * Post-sort, every truncated token that is not the leader is in the second
- * case. Therefore: ANY lower-bound token ranked below #1 makes #1 unproven.
+ * case — so each is a POTENTIAL threat. Whether it is a CREDIBLE one is
+ * decided by MATERIAL_AGE_GAP_MS (see there): a bound just months newer than
+ * the leader is an ordinary overlap, a bound years newer would require the
+ * token to have been dormant that entire time.
  *
  * The leader also has to know its own age: a leader that is itself a lower
- * bound, still pending, or undated cannot be asserted as the oldest either.
+ * bound, still pending, or undated cannot be asserted as the oldest either —
+ * that always blocks, regardless of gap.
  *
  * Pure — no I/O, no clock — so the client re-score reaches the same verdict.
  *
@@ -71,30 +99,48 @@ export interface AgeOrderConfidence {
 export function ageOrderConfidence(
   rankedTokens: TokenResult[]
 ): AgeOrderConfidence {
+  const blockingMints: string[] = [];
   const unresolvedMints: string[] = [];
+  const empty = { blockingMints, blockingCount: 0, unresolvedMints, unresolvedCount: 0 };
   // No tokens = no #1 answer to get wrong. Vacuously proven.
   if (!Array.isArray(rankedTokens) || rankedTokens.length === 0) {
-    return { proven: true, unresolvedMints, unresolvedCount: 0 };
+    return { proven: true, ...empty };
   }
 
   const leader = rankedTokens[0];
+  const leaderTime = leader.createdAtMs;
   const leaderUnresolved =
     leader.createdAtIsLowerBound === true ||
     leader.pendingAge === true ||
-    leader.createdAtMs == null;
-  if (leaderUnresolved) unresolvedMints.push(leader.mint);
+    leaderTime == null;
+  // A leader that cannot date itself always blocks — no gap reasoning applies.
+  if (leaderUnresolved) {
+    blockingMints.push(leader.mint);
+    unresolvedMints.push(leader.mint);
+  }
 
   for (let i = 1; i < rankedTokens.length; i++) {
     // Followers count ONLY via a lower bound: an exact date below the leader
     // is settled, and a missing date is "unknown", which the leader's own
     // check already covers for the only rank that makes a claim.
-    if (rankedTokens[i].createdAtIsLowerBound === true) {
-      unresolvedMints.push(rankedTokens[i].mint);
-    }
+    const t = rankedTokens[i];
+    if (t.createdAtIsLowerBound !== true) continue;
+    unresolvedMints.push(t.mint);
+
+    const bound = t.createdAtMs;
+    // Unknown bound, or a leader with no date to measure against: cannot rule
+    // the threat out, so it blocks.
+    const credible =
+      bound == null ||
+      leaderTime == null ||
+      bound - leaderTime <= MATERIAL_AGE_GAP_MS;
+    if (credible) blockingMints.push(t.mint);
   }
 
   return {
-    proven: unresolvedMints.length === 0,
+    proven: blockingMints.length === 0,
+    blockingMints,
+    blockingCount: blockingMints.length,
     unresolvedMints,
     unresolvedCount: unresolvedMints.length,
   };

@@ -199,9 +199,12 @@ export function Results({
   // Creation ranking only — a market-cap leaderboard makes no age claim.
   const orderUnproven =
     searchMode !== "social" && ranked[0]?.ageOrderUnproven === true;
+  // Counted even when the crown stands: tokens whose bound sits too far from
+  // the leader to be a credible threat are disclosed, never hidden.
   const unresolvedCount = useMemo(
-    () => (orderUnproven ? ageOrderConfidence(ranked).unresolvedCount : 0),
-    [orderUnproven, ranked]
+    () =>
+      searchMode === "social" ? 0 : ageOrderConfidence(ranked).unresolvedCount,
+    [searchMode, ranked]
   );
 
   const displayed = useMemo(() => {
@@ -401,6 +404,23 @@ export function Results({
           — a transaction history too deep to walk to the end, so the date shown
           for {unresolvedCount === 1 ? "it" : "them"} is only an upper limit.
           #1 is the oldest we can currently prove, not a verified OG.
+        </div>
+      )}
+
+      {/* Crown stands, but be straight about what is still unresolved: these
+          bounds sit far enough from #1 that overturning it would need years of
+          dormancy, so they inform rather than block. */}
+      {!orderUnproven && unresolvedCount > 0 && searchMode !== "scan" && (
+        <div
+          role="status"
+          title={UNPROVEN_ORDER_TITLE}
+          className="mb-3 px-1 text-meta text-fg-4"
+        >
+          <span className="font-mono text-fg-3">{unresolvedCount}</span> token
+          {unresolvedCount === 1 ? " has" : "s have"} an unresolved age (history
+          too deep to walk); {unresolvedCount === 1 ? "its" : "their"} date is an
+          upper limit, but {unresolvedCount === 1 ? "it sits" : "they sit"} far
+          enough below #1 not to change the verdict.
         </div>
       )}
 
