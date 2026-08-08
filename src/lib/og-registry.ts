@@ -1,7 +1,7 @@
 import { getDb } from "./url-index";
 import { skeleton } from "./normalize";
 import { ageOrderConfidence } from "./sort";
-import type { TokenResult } from "./types";
+import { MAX_RESULTS, type TokenResult } from "./types";
 import type { MintScanPayload } from "./scan";
 
 /**
@@ -19,7 +19,9 @@ import type { MintScanPayload } from "./scan";
  * (truncated signature scan), still pending, missing, or whose name only
  * matches via homoglyph folding is never written — nor is one whose LEAD is
  * unprovable, i.e. a same-name token ranked below it still carries a
- * lower-bound age that could predate it.
+ * lower-bound age that could predate it. When a scan turns up such a
+ * contender, an entry stored earlier for that name is EVICTED as well: a
+ * stored row is served as fact for 24h, and this one is no longer provable.
  *
  * AND ONLY SAFE-ENOUGH TOKENS. A registered OG is served as an instant verdict
  * to every Telegram group for 24h, so a token carrying a blocking safety flag
@@ -53,6 +55,24 @@ export function evictOgMint(mint: string): number {
     const info = getDb()
       .prepare(`DELETE FROM og_registry WHERE og_mint = ?`)
       .run(mint);
+    return info.changes ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Drop the registered OG for one name key. Used when a scan discovers that the
+ * key's answer is no longer PROVABLE: a stored entry asserts "the OG of <name>
+ * is X" instantly to every Telegram group for 24h, and an assertion we can no
+ * longer support has to go, even though re-earning it costs a full scan.
+ * Returns rows deleted; never throws.
+ */
+export function evictOgKey(nameSkeleton: string): number {
+  try {
+    const info = getDb()
+      .prepare(`DELETE FROM og_registry WHERE name_skeleton = ?`)
+      .run(nameSkeleton);
     return info.changes ?? 0;
   } catch {
     return 0;
@@ -101,7 +121,30 @@ export function recordOgFromScan(
     // check runs over the same-name subset only — a truncated token called
     // something else cannot contest THIS key. (sameName is already in rank
     // order, so its [0] is `og`.)
-    if (!ageOrderConfidence(sameName).proven) return;
+    if (!ageOrderConfidence(sameName).proven) {
+      // Retire any entry stored back when the key looked settled — but ONLY on
+      // positive evidence, i.e. a same-name token (the candidate itself or one
+      // below it) whose age is an actual lower bound. An unproven verdict that
+      // rests on missing data instead (RPC hiccup → no date at all) leaves the
+      // stored answer alone: absence of data is not evidence against it.
+      if (sameName.some((t) => t.createdAtIsLowerBound === true)) {
+        evictOgKey(key);
+      }
+      return;
+    }
+    // The list above is capped at MAX_RESULTS. When it comes back full, tokens
+    // we never received could carry this key as well, so the same-name check
+    // is no longer exhaustive — fall back to the server's whole-cohort verdict
+    // (stamped on rank 1 BEFORE the slice). Deliberately conservative: it can
+    // decline a key that only a differently-named token contests, and the cost
+    // of declining is one full scan, not a wrong answer.
+    if (
+      payload.results.length >= MAX_RESULTS &&
+      (payload.ageOrderUnproven === true ||
+        payload.results[0]?.ageOrderUnproven === true)
+    ) {
+      return;
+    }
     // Uncertain age must not be immortalized as "the OG of <name>".
     if (og.createdAtMs == null) return;
     if (og.pendingAge) return;

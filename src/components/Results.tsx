@@ -3,9 +3,10 @@
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TokenResult, ScanSummary, SearchHistory } from "@/lib/types";
-import { formatDate } from "@/lib/format";
+import { formatDate, UNPROVEN_ORDER_TITLE } from "@/lib/format";
 import { bucketForToken, LAUNCHPAD_BUCKETS } from "@/lib/launchpads";
 import {
+  ageOrderConfidence,
   sortByCreationTime,
   sortByMarketCapLeaderboard,
   scoreConfidence,
@@ -192,6 +193,17 @@ export function Results({
     return scoreConfidence(sorted, lastQuery);
   }, [results, lastQuery, searchMode]);
 
+  // Is the #1 answer provable? scoreConfidence stamps rank 1 (the stamp is
+  // sticky, so a server that saw the pre-slice cohort wins over this subset);
+  // the count is recomputed from the same pure helper the server used.
+  // Creation ranking only — a market-cap leaderboard makes no age claim.
+  const orderUnproven =
+    searchMode !== "social" && ranked[0]?.ageOrderUnproven === true;
+  const unresolvedCount = useMemo(
+    () => (orderUnproven ? ageOrderConfidence(ranked).unresolvedCount : 0),
+    [orderUnproven, ranked]
+  );
+
   const displayed = useMemo(() => {
     if (!filtersActive) return ranked;
     return ranked.filter((t) =>
@@ -364,6 +376,34 @@ export function Results({
         </div>
       </div>
 
+      {/* Text search has no verdict hero, so this banner is the ONLY place the
+          unproven ordering gets stated there. Scan mode already carries the
+          full explanation in ScanHero — no second copy of it here. */}
+      {orderUnproven && searchMode !== "scan" && (
+        <div
+          role="status"
+          title={UNPROVEN_ORDER_TITLE}
+          className="mb-3 rounded-xl border border-warn/30 border-l-2 border-l-warn/70 bg-warn/[0.06] px-3 py-2 text-meta leading-relaxed text-fg-2"
+        >
+          <span className="font-semibold uppercase tracking-[0.14em] text-warn">
+            Age order not proven
+          </span>
+          <span className="text-fg-4"> · </span>
+          {unresolvedCount > 0 ? (
+            <>
+              <span className="font-mono text-fg">{unresolvedCount}</span> token
+              {unresolvedCount === 1 ? "" : "s"} ha
+              {unresolvedCount === 1 ? "s" : "ve"} an unresolved age
+            </>
+          ) : (
+            <>at least one token has an unresolved age</>
+          )}{" "}
+          — a transaction history too deep to walk to the end, so the date shown
+          for {unresolvedCount === 1 ? "it" : "them"} is only an upper limit.
+          #1 is the oldest we can currently prove, not a verified OG.
+        </div>
+      )}
+
       {degraded && degraded.length > 0 && (
         <div
           role="status"
@@ -446,8 +486,9 @@ export function Results({
             <span className="font-mono">{history.snapshotCount}</span> snapshots
             <span className="text-fg-4"> · </span>
             {/* "OG still leads" is an endorsement; a rank-1 with blocking
-                flags gets the factual wording instead. */}
-            {isDangerous(ranked[0]?.safetyLevel)
+                flags — or one whose lead is not provable — gets the factual
+                wording instead. */}
+            {isDangerous(ranked[0]?.safetyLevel) || orderUnproven
               ? "oldest still leads"
               : "OG still leads"}
           </p>

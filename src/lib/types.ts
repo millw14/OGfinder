@@ -256,6 +256,7 @@ export type ScanSummary = Pick<
   | "scannedMint"
   | "verdictPreliminary"
   | "ageOrderUnproven"
+  | "ageUnresolvedCount"
 >;
 
 /** Merged name-search cap: each mint runs Helius getAssetBatch + getCreationSlot (linear cost). */

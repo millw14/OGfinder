@@ -4,13 +4,13 @@ import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
 import Lottie, { LottieRefCurrentProps } from "lottie-react";
 import { TokenResult } from "@/lib/types";
-import { formatDate, timeAgo } from "@/lib/format";
 import { UNSAFE_RANK1_LABEL, UNPROVEN_RANK1_LABEL } from "@/lib/sort";
 import { blockingFlags, isDangerous } from "@/lib/safety-view";
 import copyHover from "@/assets/lottie/copy-hover.json";
 import {
   OGBadge,
   ConfidenceStars,
+  CreationDate,
   PlatformBadge,
   RankBadge,
   ScannedMintBadge,
@@ -21,6 +21,7 @@ import {
   RiskChips,
   SafetyChips,
   SafetyFindingList,
+  UnprovenOrderBadge,
   Chip,
 } from "./Badge";
 
@@ -165,8 +166,14 @@ export function TokenCard({ token }: { token: TokenResult }) {
     token.rankingMode === "creation" &&
     !isDanger &&
     token.ageOrderUnproven !== true;
+  // Rank 1 of an ordering we cannot prove: neutral amber treatment in place of
+  // the gold one — same rank, no endorsement. Danger keeps precedence.
+  const isUnprovenRank1 =
+    token.rank === 1 &&
+    token.rankingMode === "creation" &&
+    !isDanger &&
+    token.ageOrderUnproven === true;
   const isScanned = token.isScanned === true;
-  const ago = timeAgo(token.createdAt);
   const showLogo = Boolean(token.imageUrl) && !logoFailed;
   const hasPrice = token.priceUsd != null && token.priceUsd > 0;
   const hasLiquidity = token.liquidityUsd != null && token.liquidityUsd > 0;
@@ -195,15 +202,21 @@ export function TokenCard({ token }: { token: TokenResult }) {
           ? "border-risk/40 bg-gradient-to-br from-risk/[0.09] via-surface-1 to-surface-1"
           : isOG
             ? "og-glow bg-gradient-to-br from-og/[0.08] via-surface-1 to-surface-1"
-            : isScanned
-              ? "scan-ring bg-surface-1"
-              : "bg-surface-1 hover:border-line-str"
+            : isUnprovenRank1
+              ? "border-warn/30 bg-gradient-to-br from-warn/[0.05] via-surface-1 to-surface-1"
+              : isScanned
+                ? "scan-ring bg-surface-1"
+                : "bg-surface-1 hover:border-line-str"
       }`}
     >
       <div className="flex gap-3 sm:gap-4">
         {/* Rank rail */}
         <div className="flex w-10 flex-shrink-0 flex-col items-center gap-2">
-          <RankBadge rank={token.rank} muted={isDanger} />
+          <RankBadge
+            rank={token.rank}
+            muted={isDanger}
+            unproven={isUnprovenRank1}
+          />
           {showLogo ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -236,32 +249,23 @@ export function TokenCard({ token }: { token: TokenResult }) {
             </span>
             {isScanned && <ScannedMintBadge />}
             {isOG && <OGBadge rank={token.rank} />}
+            {/* Stands exactly where the crown would have — same slot, no
+                endorsement, and it says why on hover. */}
+            {isUnprovenRank1 && <UnprovenOrderBadge />}
             {token.exactMatch && token.rank !== 1 && <ExactNameBadge />}
           </div>
 
           {/* Row 2: age + mint */}
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-meta text-fg-3">
-            {token.pendingAge ? (
-              <span
-                className="animate-pulse font-medium text-fg-4"
-                title="On-chain age check in progress"
-              >
-                dating…
-              </span>
-            ) : (
-              <span className="font-mono text-fg-2">
-                {formatDate(token.createdAt)}
-              </span>
-            )}
-            {ago && <span className="font-mono text-fg-4">{ago}</span>}
-            {token.createdAtIsLowerBound && (
-              <span
-                className="text-micro font-medium text-warn"
-                title="Active token — creation may be older than shown"
-              >
-                may be older
-              </span>
-            )}
+            {/* A truncated walk is a BOUND, not a date: this renders "on or
+                before <date>" / "at least <n> ago" so the row can never be
+                read as an exact creation time. */}
+            <CreationDate
+              createdAt={token.createdAt}
+              isLowerBound={token.createdAtIsLowerBound === true}
+              pending={token.pendingAge === true}
+              showAgo
+            />
             <Dot />
             <button
               type="button"
@@ -409,7 +413,11 @@ export function TokenCard({ token }: { token: TokenResult }) {
               {token.confidenceLabel && (
                 <span
                   className={`text-micro ${
-                    isDanger ? "font-semibold text-risk" : "text-fg-3"
+                    isDanger
+                      ? "font-semibold text-risk"
+                      : isUnprovenRank1
+                        ? "font-semibold text-warn"
+                        : "text-fg-3"
                   }`}
                   title={OG_LABEL_TITLES[token.confidenceLabel]}
                 >

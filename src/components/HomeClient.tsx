@@ -185,8 +185,16 @@ function HomeInner() {
             scannedMint: data.scannedMint,
             // The server decides whether rank 1 is provable — carried, never
             // re-derived, so the hero can't crown what the server would not.
+            // Its count comes along too: it saw the cohort before the
+            // MAX_RESULTS slice, so it can be larger than anything the client
+            // could tally from `results`.
             ...(data.ageOrderUnproven === true
-              ? { ageOrderUnproven: true as const }
+              ? {
+                  ageOrderUnproven: true as const,
+                  ...(data.ageUnresolvedCount != null
+                    ? { ageUnresolvedCount: data.ageUnresolvedCount }
+                    : {}),
+                }
               : {}),
             ...(preliminary && data.verdictPreliminary === true
               ? { verdictPreliminary: true }

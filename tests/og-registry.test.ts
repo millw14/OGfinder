@@ -191,6 +191,91 @@ describe("recordOgFromScan — an unproven lead is never cemented", () => {
     expect(rows(lib)).toHaveLength(0);
   });
 
+  it("evicts a stored entry once a same-name contender turns up bounded", async () => {
+    const lib = await freshRegistry();
+    // Day 1: every same-name token was exactly dated, so the key was earned.
+    lib.recordOgFromScan(
+      payload([
+        tok({ mint: "BonkOG", displayName: "Bonk", rank: 1, createdAtMs: T_OG }),
+      ]),
+      "BonkOG"
+    );
+    expect(rows(lib)).toHaveLength(1);
+
+    // Day 2: a same-name token appears whose walk was truncated — its true
+    // creation is at or BEFORE T_CLONE, so it could predate BonkOG. The stored
+    // "the OG of bonk is BonkOG" is no longer provable and must not keep being
+    // served instantly for the rest of the 24h window.
+    lib.recordOgFromScan(
+      payload([
+        tok({ mint: "BonkOG", displayName: "Bonk", rank: 1, createdAtMs: T_OG }),
+        tok({
+          mint: "BonkDeep",
+          displayName: "Bonk",
+          rank: 2,
+          createdAtMs: T_CLONE,
+          createdAtIsLowerBound: true,
+        }),
+      ]),
+      "BonkOG"
+    );
+    expect(rows(lib)).toHaveLength(0);
+    expect(lib.getRegisteredOg("bonk")).toBeUndefined();
+  });
+
+  it("keeps the stored entry when the scan merely FAILED to date a token", async () => {
+    const lib = await freshRegistry();
+    lib.recordOgFromScan(
+      payload([
+        tok({ mint: "BonkOG", displayName: "Bonk", rank: 1, createdAtMs: T_OG }),
+      ]),
+      "BonkOG"
+    );
+    // No lower bound anywhere — the leader simply has no date this time (RPC
+    // hiccup). Absence of data is not evidence against the stored answer, so
+    // nothing new is written AND nothing is thrown away.
+    lib.recordOgFromScan(
+      payload([
+        tok({ mint: "BonkOG", displayName: "Bonk", rank: 1, createdAtMs: null }),
+      ]),
+      "BonkOG"
+    );
+    expect(rows(lib)).toHaveLength(1);
+    expect(lib.getRegisteredOg("bonk")!.ogMint).toBe("BonkOG");
+  });
+
+  it("declines when the result window is FULL and the cohort verdict is unproven", async () => {
+    const lib = await freshRegistry();
+    // 100 results = the MAX_RESULTS slice, so same-name tokens we never
+    // received could exist below it. The server stamped rank 1 unproven from
+    // the pre-slice cohort — that verdict wins over what we can see here.
+    const many = Array.from({ length: 100 }, (_, i) =>
+      tok({
+        mint: `Bonk${i}`,
+        displayName: i === 0 ? "Bonk" : `Bonk ${i}`,
+        rank: i + 1,
+        createdAtMs: T_OG + i * 1000,
+      })
+    );
+    many[0].ageOrderUnproven = true;
+    lib.recordOgFromScan(
+      { ...payload(many), ageOrderUnproven: true, ageUnresolvedCount: 4 },
+      "Bonk0"
+    );
+    expect(rows(lib)).toHaveLength(0);
+
+    // The identical cohort UNDER the cap is visible in full, so the same-name
+    // check is exhaustive and the key is earned.
+    const lib2 = await freshRegistry();
+    const few = many.slice(0, 99);
+    lib2.recordOgFromScan(
+      { ...payload(few), ageOrderUnproven: true, ageUnresolvedCount: 4 },
+      "Bonk0"
+    );
+    expect(rows(lib2)).toHaveLength(1);
+    expect(rows(lib2)[0].og_mint).toBe("Bonk0");
+  });
+
   it("still writes when the lower-bound token has a DIFFERENT name", async () => {
     const lib = await freshRegistry();
     lib.recordOgFromScan(

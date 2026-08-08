@@ -4,6 +4,12 @@ import { LottieHover } from "./LottieHover";
 import { bucketForToken, labelForBucket } from "@/lib/launchpads";
 import { Chip, type ChipTone } from "./Chip";
 import { orderSafetyFlags } from "@/lib/safety-view";
+import {
+  formatAgeAgo,
+  formatCreatedAt,
+  LOWER_BOUND_TITLE,
+  UNPROVEN_ORDER_TITLE,
+} from "@/lib/format";
 import type { SafetyFlag, SafetyFlagCode, SafetyLevel } from "@/lib/safety";
 import crownOg from "@/assets/lottie/crown-og.json";
 
@@ -50,6 +56,88 @@ export function ConfidenceStars({ score }: { score: number }) {
         />
       ))}
     </span>
+  );
+}
+
+/**
+ * A token's creation time, rendered so it can never overstate what we know.
+ *
+ * A truncated signature walk yields a LOWER BOUND — "created at or before this
+ * date, by an unknown amount" — which is exactly the fact the reported
+ * regression threw away. So a bounded date renders as "on or before <date>"
+ * (never bare) and its age as "at least <n> ago", both in warn amber with the
+ * explanation on hover. Unbounded dates render exactly as before.
+ */
+export function CreationDate({
+  createdAt,
+  isLowerBound = false,
+  pending = false,
+  showAgo = false,
+  className = "",
+}: {
+  createdAt: string | null;
+  isLowerBound?: boolean;
+  pending?: boolean;
+  /** Also render the relative age ("2y 3mo ago") beside the date. */
+  showAgo?: boolean;
+  /** Classes for the date itself (the age always sits one step quieter). */
+  className?: string;
+}) {
+  if (pending) {
+    return (
+      <span
+        className="animate-pulse font-medium text-fg-4"
+        title="On-chain age check in progress"
+      >
+        dating…
+      </span>
+    );
+  }
+  const ago = showAgo ? formatAgeAgo(createdAt, isLowerBound) : "";
+  return (
+    <>
+      <span
+        className={`font-mono ${
+          isLowerBound ? "text-warn" : className || "text-fg-2"
+        }`}
+        title={isLowerBound ? LOWER_BOUND_TITLE : undefined}
+      >
+        {formatCreatedAt(createdAt, isLowerBound)}
+      </span>
+      {ago && (
+        <span
+          className={`font-mono ${isLowerBound ? "text-warn/70" : "text-fg-4"}`}
+          title={isLowerBound ? LOWER_BOUND_TITLE : undefined}
+        >
+          {ago}
+        </span>
+      )}
+    </>
+  );
+}
+
+/**
+ * Rank-1 marker for a creation ranking whose ORDER is not proven: a token
+ * ranked below still carries a lower-bound age that could predate it. Neutral
+ * amber, never gold — it stands exactly where the OG crown would have.
+ */
+export function UnprovenOrderBadge({ count }: { count?: number | null }) {
+  return (
+    <Chip
+      tone="warn"
+      size="md"
+      className="font-semibold uppercase tracking-[0.14em]"
+      title={UNPROVEN_ORDER_TITLE}
+    >
+      oldest known
+      {count != null && count > 0 ? (
+        <span className="font-mono normal-case tracking-normal">
+          · {count} unresolved
+        </span>
+      ) : (
+        <span className="normal-case tracking-normal">· not proven</span>
+      )}
+    </Chip>
   );
 }
 
@@ -397,16 +485,21 @@ export function BurnedBadge() {
  * Rank rail marker above the token avatar. Rank 1 is the only gold surface in
  * the list; 2-3 sit on surface-3 and everything below fades back.
  *
- * `muted` keeps the NUMBER (rank stays factual — this token really is the
- * oldest) while dropping the gold, which is endorsement styling a token with
- * blocking flags has not earned.
+ * `muted` and `unproven` both keep the NUMBER (rank stays factual — this token
+ * really is the oldest we could date) while dropping the gold, which is
+ * endorsement styling that neither a token with blocking flags nor an
+ * unprovable ordering has earned. `muted` wins when both apply: a blocking
+ * flag is the more urgent thing to see.
  */
 export function RankBadge({
   rank,
   muted = false,
+  unproven = false,
 }: {
   rank: number;
   muted?: boolean;
+  /** Rank 1 of an ordering that a lower-bound token below could still overturn. */
+  unproven?: boolean;
 }) {
   const base =
     "flex h-6 w-10 flex-shrink-0 items-center justify-center rounded-lg font-display text-[13px] font-bold tabular-nums";
@@ -414,6 +507,17 @@ export function RankBadge({
   if (rank === 1 && muted) {
     return (
       <div className={`${base} border border-risk/35 bg-risk/[0.12] text-risk`}>
+        1
+      </div>
+    );
+  }
+
+  if (rank === 1 && unproven) {
+    return (
+      <div
+        className={`${base} border border-warn/35 bg-warn/[0.10] text-warn`}
+        title={UNPROVEN_ORDER_TITLE}
+      >
         1
       </div>
     );

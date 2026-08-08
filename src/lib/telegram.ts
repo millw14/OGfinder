@@ -37,6 +37,7 @@ import {
   isRegistryFresh,
   type OgRegistryEntry,
 } from "./og-registry";
+import { ageOrderConfidence } from "./sort";
 import { getSearchCache, setSearchCache } from "./cache";
 import { searchTokens } from "./search";
 import { buildTokenResults } from "./enrich-results";
@@ -550,6 +551,28 @@ export const UNSAFE_HEADLINE = "🛑 <b>UNSAFE — DO NOT BUY</b>";
 /** Rank-1 age statement for a blocking verdict: fact kept, endorsement withheld. */
 export const UNSAFE_RANK1_LINE =
   "oldest by age, but OGfinder will not call it the OG";
+/** Headline for a rank 1 whose ORDER is unproven — never the crown. */
+export const UNPROVEN_HEADLINE = "🕰 <b>OLDEST KNOWN SO FAR</b>";
+
+/**
+ * "oldest known so far — 3 tokens still unresolved". The count is the server's
+ * (it saw the cohort before the MAX_RESULTS slice); without it we still say
+ * the order is unproven rather than implying it is settled. Pure.
+ */
+export function formatUnprovenSuffix(count?: number | null): string {
+  if (count == null || count <= 0) return "order not proven";
+  return `${count} token${count === 1 ? "" : "s"} still unresolved`;
+}
+
+/**
+ * A date we only hold an upper limit for is never printed bare: a truncated
+ * signature walk proves "existed by this date", not "created on it". Pure.
+ */
+function mintedDate(t: TokenResult | undefined): string {
+  const date = formatShareDate(t?.createdAt ?? null) ?? "unknown date";
+  if (!t?.createdAtIsLowerBound || date === "unknown date") return date;
+  return `on or before ${date}`;
+}
 
 /**
  * "⛔ freeze authority active · permanent delegate set" — the blocking findings
@@ -661,10 +684,12 @@ export function formatMintVerdict(
   // lookalike whose history was too deep to walk to the end could predate it.
   const orderUnproven = ageOrderUnprovenFor(payload);
 
+  // THREE MUTUALLY EXCLUSIVE HEADLINE BRANCHES. The crown lives in the last
+  // one and nowhere else, so neither a blocking flag nor an unprovable
+  // ordering can reach it — the same structural guarantee, twice.
   const lines: string[] = [];
   if (danger) {
-    // The warning leads. The crown emoji and the words "THIS IS THE OG" are
-    // unreachable from here — a blocking flag costs the endorsement, never the
+    // The warning leads. A blocking flag costs the endorsement, never the
     // rank, so the age fact is still stated (just not as a recommendation).
     lines.push(`${UNSAFE_HEADLINE} — ${name}${sym}`);
     const blocking = formatBlockingFlagLine(scanned);
@@ -674,28 +699,52 @@ export function formatMintVerdict(
         ? UNSAFE_RANK1_LINE
         : `🚫 <b>NOT THE OG</b> — #${scanned.rank} of ${total} by age`
     );
+  } else if (isOG && orderUnproven) {
+    // Rank stays factual; the crown is not handed out on an ordering we
+    // cannot prove, and the reason rides in the same line.
+    lines.push(
+      `${UNPROVEN_HEADLINE} — ${name}${sym}, ${formatUnprovenSuffix(
+        payload.ageUnresolvedCount
+      )}`
+    );
+  } else if (isOG) {
+    lines.push(`👑 <b>THIS IS THE OG</b> — ${name}${sym}`);
   } else {
     lines.push(
-      isOG
-        ? orderUnproven
-          ? // Rank stays factual; the crown does not get handed out on an
-            // ordering we cannot prove.
-            `🕰 <b>OLDEST KNOWN</b> — ${name}${sym}, but not proven`
-          : `👑 <b>THIS IS THE OG</b> — ${name}${sym}`
-        : `🚫 <b>NOT THE OG</b> — ${name}${sym} is #${scanned.rank} of ${total} by age`
+      `🚫 <b>NOT THE OG</b> — ${name}${sym} is #${scanned.rank} of ${total} by age`
     );
   }
 
-  const minted = formatShareDate(scanned.createdAt) ?? "unknown date";
+  // "minted on or before <date>" whenever the walk was truncated — and the age
+  // becomes a minimum, since creation at or before T means at least that old.
+  const minted = mintedDate(scanned);
   const ago = timeAgo(scanned.createdAt);
-  lines.push(`minted ${minted}${ago ? ` (${ago})` : ""}`);
+  const agoText = ago
+    ? scanned.createdAtIsLowerBound
+      ? ` (at least ${ago})`
+      : ` (${ago})`
+    : "";
+  lines.push(`minted ${minted}${agoText}`);
   if (!isOG && og && og.mint !== mint) {
-    const ogDate = formatShareDate(og.createdAt) ?? "unknown date";
+    const ogDate = mintedDate(og);
     const gapMs =
       scanned.createdAtMs != null && og.createdAtMs != null
         ? scanned.createdAtMs - og.createdAtMs
         : null;
-    const gap = gapMs != null && gapMs > 0 ? ` (${formatAgeGap(gapMs)} older)` : "";
+    // The difference of two dates is exact only when both dates are. With one
+    // side a bound the gap is itself a bound; with both, it is unknown.
+    const gapQualifier =
+      og.createdAtIsLowerBound && scanned.createdAtIsLowerBound
+        ? null
+        : og.createdAtIsLowerBound
+          ? "at least "
+          : scanned.createdAtIsLowerBound
+            ? "at most "
+            : "";
+    const gap =
+      gapMs != null && gapMs > 0 && gapQualifier != null
+        ? ` (${gapQualifier}${formatAgeGap(gapMs)} older)`
+        : "";
     lines.push(
       `${orderUnproven ? "Oldest known" : "OG"}: <b>${escapeHtml(og.displayName)}</b> minted ${ogDate}${gap} — <code>${escapeHtml(og.mint)}</code>`
     );
@@ -1056,8 +1105,17 @@ export function formatNameSearchReply(
     const d = formatShareDate(t.createdAt);
     if (!d) return "age unknown";
     const ago = timeAgo(t.createdAt);
+    // Same rule as the mint verdict: a truncated walk is a bound, so the date
+    // gets "on or before" and the age becomes a minimum.
+    if (t.createdAtIsLowerBound) {
+      return `minted on or before ${d}${ago ? ` (at least ${ago})` : ""}`;
+    }
     return `minted ${d}${ago ? ` (${ago})` : ""}`;
   };
+  // The same gate as formatMintVerdict, on the same pure helper: a list whose
+  // #1 could be overturned by an unresolved age never gets the crown here
+  // either. Fast-phase ages make this common — which is the honest outcome.
+  const order = ageOrderConfidence(results);
   const top = results[0];
   const topSym = top.displaySymbol
     ? ` ($${escapeHtml(top.displaySymbol)})`
@@ -1073,6 +1131,14 @@ export function formatNameSearchReply(
     const blocking = formatBlockingFlagLine(top);
     if (blocking) lines.push(blocking);
     lines.push(UNSAFE_RANK1_LINE);
+  } else if (!order.proven) {
+    // No crown on an unproven ordering — the caveat rides in the same line so
+    // the claim and its limit can never be read apart.
+    lines.push(
+      `🕰 Oldest known so far: <b>${escapeHtml(top.displayName)}</b>${topSym} — ${minted(
+        top
+      )} · ${formatUnprovenSuffix(order.unresolvedCount)}`
+    );
   } else {
     lines.push(
       `👑 Likely OG: <b>${escapeHtml(top.displayName)}</b>${topSym} — ${minted(top)}`

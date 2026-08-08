@@ -396,9 +396,11 @@ describe("formatMintVerdict order gating", () => {
     ageUnresolvedCount: 1,
   });
 
-  it("never crowns a rank-1 whose ordering is unproven", () => {
+  it("never crowns a rank-1 whose ordering is unproven, and counts what blocks it", () => {
     const lines = formatMintVerdict(BONK, unprovenPayload(), SITE).split("\n");
-    expect(lines[0]).toBe("🕰 <b>OLDEST KNOWN</b> — Bonk ($BONK), but not proven");
+    expect(lines[0]).toBe(
+      "🕰 <b>OLDEST KNOWN SO FAR</b> — Bonk ($BONK), 1 token still unresolved"
+    );
     expect(lines[0]).not.toContain("THIS IS THE OG");
     expect(lines[0]).not.toContain("👑");
     // The limit is stated, with the count, right under the age claim.
@@ -406,13 +408,49 @@ describe("formatMintVerdict order gating", () => {
     expect(lines[2]).toContain("not a verified OG");
   });
 
+  it("says the order is not proven when the count is unavailable", () => {
+    const payload = { ...unprovenPayload(), ageUnresolvedCount: undefined };
+    const lines = formatMintVerdict(BONK, payload, SITE).split("\n");
+    expect(lines[0]).toBe(
+      "🕰 <b>OLDEST KNOWN SO FAR</b> — Bonk ($BONK), order not proven"
+    );
+    expect(lines[0]).not.toContain("👑");
+  });
+
   it("hedges the comparison line for a NOT-the-OG scan too", () => {
     const lines = formatMintVerdict(USDC, unprovenPayload(), SITE).split("\n");
     expect(lines[0]).toContain("NOT THE OG");
+    // The scanned side is the truncated one, so its own date is a bound and
+    // the gap to #1 is an upper limit — it could even be the older token.
+    expect(lines[1]).toBe(
+      `minted on or before May 1, 2023 (at least ${timeAgo(CLONE_CREATED)})`
+    );
     expect(lines[2]).toBe(
-      `Oldest known: <b>Bonk</b> minted Dec 20, 2022 (${formatAgeGap(
+      `Oldest known: <b>Bonk</b> minted Dec 20, 2022 (at most ${formatAgeGap(
         Date.parse(CLONE_CREATED) - Date.parse(OG_CREATED)
       )} older) — <code>${BONK}</code>`
+    );
+  });
+
+  it("bounds the gap the other way when the #1 is the truncated side", () => {
+    const p = unprovenPayload();
+    p.results[0].createdAtIsLowerBound = true;
+    delete p.results[1].createdAtIsLowerBound;
+    const lines = formatMintVerdict(USDC, p, SITE).split("\n");
+    expect(lines[1]).toBe(`minted May 1, 2023 (${timeAgo(CLONE_CREATED)})`);
+    expect(lines[2]).toBe(
+      `Oldest known: <b>Bonk</b> minted on or before Dec 20, 2022 (at least ${formatAgeGap(
+        Date.parse(CLONE_CREATED) - Date.parse(OG_CREATED)
+      )} older) — <code>${BONK}</code>`
+    );
+  });
+
+  it("drops the gap entirely when BOTH dates are bounds", () => {
+    const p = unprovenPayload();
+    p.results[0].createdAtIsLowerBound = true;
+    const lines = formatMintVerdict(USDC, p, SITE).split("\n");
+    expect(lines[2]).toBe(
+      `Oldest known: <b>Bonk</b> minted on or before Dec 20, 2022 — <code>${BONK}</code>`
     );
   });
 
@@ -889,6 +927,64 @@ describe("formatNameSearchReply", () => {
     expect(msg).not.toContain("👑");
     // Ranking below it is unchanged — the list is still factual.
     expect(msg).toContain("#2 Bonk 2.0");
+  });
+
+  it("withholds the crown when a match below is still a lower bound", () => {
+    const results = [
+      tok({
+        mint: BONK,
+        displayName: "Bonk",
+        displaySymbol: "BONK",
+        rank: 1,
+        createdAt: OG_CREATED,
+        createdAtMs: Date.parse(OG_CREATED),
+      }),
+      tok({
+        mint: USDC,
+        displayName: "Bonk 2.0",
+        rank: 2,
+        createdAt: CLONE_CREATED,
+        createdAtMs: Date.parse(CLONE_CREATED),
+        createdAtIsLowerBound: true,
+      }),
+    ];
+    const msg = formatNameSearchReply("bonk", results, SITE);
+    const lines = msg.split("\n");
+    expect(lines[0]).toBe(
+      `🕰 Oldest known so far: <b>Bonk</b> ($BONK) — minted Dec 20, 2022 (${timeAgo(
+        OG_CREATED
+      )}) · 1 token still unresolved`
+    );
+    expect(msg).not.toContain("👑");
+    // The bounded runner-up says so on its own line as well.
+    expect(lines[2]).toBe(
+      `#2 Bonk 2.0 ($TOK) — minted on or before May 1, 2023 (at least ${timeAgo(
+        CLONE_CREATED
+      )})`
+    );
+  });
+
+  it("keeps the crown when every match is exactly dated", () => {
+    const results = [
+      tok({
+        mint: BONK,
+        displayName: "Bonk",
+        displaySymbol: "BONK",
+        rank: 1,
+        createdAt: OG_CREATED,
+        createdAtMs: Date.parse(OG_CREATED),
+      }),
+      tok({
+        mint: USDC,
+        displayName: "Bonk 2.0",
+        rank: 2,
+        createdAt: CLONE_CREATED,
+        createdAtMs: Date.parse(CLONE_CREATED),
+      }),
+    ];
+    expect(formatNameSearchReply("bonk", results, SITE)).toContain(
+      "👑 Likely OG"
+    );
   });
 
   it("escapes HTML in the query and token fields", () => {

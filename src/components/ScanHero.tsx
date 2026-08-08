@@ -8,7 +8,11 @@ import {
   FRESH_WALLET_MS,
   TOKENS_CREATED_CAP,
 } from "@/lib/types";
-import { formatDate, timeAgo, formatAgeGap } from "@/lib/format";
+import {
+  formatAgeAgo,
+  formatAgeGap,
+  UNPROVEN_ORDER_TITLE,
+} from "@/lib/format";
 import {
   encodeSafetyMarker,
   encodeSharePayload,
@@ -22,6 +26,7 @@ import {
 } from "@/lib/safety-view";
 import { LottieHover } from "./LottieHover";
 import {
+  CreationDate,
   RiskChips,
   HolderConcChip,
   SafetyChips,
@@ -140,19 +145,38 @@ export function ScanHero({
   // much as their own — and a dangerous #1 never gets the gold panel either.
   const ogDanger = isDangerous(og?.safetyLevel);
 
-  // Tokens still carrying a lower-bound age in the list we were given. The
-  // server may know of more (it ranks the cohort before slicing), so the
-  // wording below never presents this as a complete count.
+  // How many tokens block the proof. The server's count is authoritative (it
+  // ranks the cohort before slicing to MAX_RESULTS); the local tally is the
+  // fallback for payloads that predate the field. Neither is presented as
+  // exhaustive — the copy says "N tokens have", never "only N".
   const unresolvedShown = ranked.filter(
     (t) => t.createdAtIsLowerBound === true
   ).length;
+  const unresolvedCount = scan.ageUnresolvedCount ?? unresolvedShown;
 
-  const ago = timeAgo(scanned?.createdAt ?? null);
-  const ogAgo = og ? timeAgo(og.createdAt) : "";
+  const ago = formatAgeAgo(
+    scanned?.createdAt ?? null,
+    scanned?.createdAtIsLowerBound === true
+  );
+  const ogAgo = og ? formatAgeAgo(og.createdAt, og.createdAtIsLowerBound) : "";
   const gapMs =
     og?.createdAtMs != null && scanned?.createdAtMs != null
       ? scanned.createdAtMs - og.createdAtMs
       : null;
+  // A gap between two dates is only exact when BOTH are exact. With the #1 a
+  // bound, the true gap is at least this big; with the scanned token a bound,
+  // at most this big (and it can even flip sign — which is the unproven state
+  // the panel above already spells out). With both, it is unknowable.
+  const ogBound = og?.createdAtIsLowerBound === true;
+  const scannedBound = scanned?.createdAtIsLowerBound === true;
+  const gapUnknown = ogBound && scannedBound;
+  const gapQualifier = gapUnknown
+    ? ""
+    : ogBound
+      ? "at least "
+      : scannedBound
+        ? "at most "
+        : "";
   const showLogo = Boolean(scanned?.imageUrl) && !logoFailed;
 
   const shareVerdict = async () => {
@@ -282,11 +306,22 @@ export function ScanHero({
                   matching tokens
                 </>
               ) : unprovenOG ? (
-                <>
+                <span title={UNPROVEN_ORDER_TITLE}>
                   Oldest of the{" "}
                   <span className="font-mono text-fg-2">{totalCount}</span>{" "}
-                  matching tokens we could date completely
-                </>
+                  matching tokens we could date completely —{" "}
+                  {unresolvedCount > 0 ? (
+                    <>
+                      <span className="font-mono text-warn">
+                        {unresolvedCount}
+                      </span>{" "}
+                      token{unresolvedCount === 1 ? "" : "s"} still ha
+                      {unresolvedCount === 1 ? "s" : "ve"} an unresolved age
+                    </>
+                  ) : (
+                    <>at least one still has an unresolved age</>
+                  )}
+                </span>
               ) : isOG ? (
                 <>
                   Oldest of{" "}
@@ -335,16 +370,26 @@ export function ScanHero({
             BOUND: true creation is at or before the date shown, by an unknown
             amount — so a token ranked below can still turn out to be older. */}
         {!preliminary && orderUnproven && (
-          <div className="mt-4 rounded-xl border border-warn/30 bg-warn/[0.06] p-3.5 sm:p-4">
-            <p className={`${EYEBROW} text-warn`}>Age order not proven</p>
+          <div
+            className="mt-4 rounded-xl border border-warn/30 bg-warn/[0.06] p-3.5 sm:p-4"
+            title={UNPROVEN_ORDER_TITLE}
+          >
+            <p className={`${EYEBROW} text-warn`}>
+              Age order not proven
+              {unresolvedCount > 0 && (
+                <span className="ml-1.5 font-mono normal-case tracking-normal">
+                  · {unresolvedCount} unresolved
+                </span>
+              )}
+            </p>
             <p className="mt-2 text-meta leading-relaxed text-fg-2">
-              {unresolvedShown > 0 ? (
+              {unresolvedCount > 0 ? (
                 <>
-                  <span className="font-mono text-fg">{unresolvedShown}</span>{" "}
-                  matching token{unresolvedShown === 1 ? "" : "s"} ha
-                  {unresolvedShown === 1 ? "s" : "ve"} a transaction history too
+                  <span className="font-mono text-fg">{unresolvedCount}</span>{" "}
+                  matching token{unresolvedCount === 1 ? "" : "s"} ha
+                  {unresolvedCount === 1 ? "s" : "ve"} a transaction history too
                   deep to walk to the end, so the date shown for{" "}
-                  {unresolvedShown === 1 ? "it" : "them"} is only an upper limit
+                  {unresolvedCount === 1 ? "it" : "them"} is only an upper limit
                   — the real mint could be far older.
                 </>
               ) : (
@@ -408,26 +453,22 @@ export function ScanHero({
         </span>
         <span className="text-meta text-fg-3">
           minted{" "}
-          {scanned?.pendingAge ? (
-            <span
-              className="animate-pulse font-medium text-fg-4"
-              title="On-chain age check in progress"
-            >
-              dating…
-            </span>
-          ) : (
-            <span className="font-mono text-fg-2">
-              {formatDate(scanned?.createdAt ?? null)}
-            </span>
-          )}
+          {/* Bound-aware: a truncated walk reads "on or before <date>" here
+              too, so the most prominent date on the page never asserts an
+              exact creation we did not establish. */}
+          <CreationDate
+            createdAt={scanned?.createdAt ?? null}
+            isLowerBound={scanned?.createdAtIsLowerBound === true}
+            pending={scanned?.pendingAge === true}
+          />
         </span>
-        {ago && <span className="font-mono text-meta text-fg-4">{ago}</span>}
-        {scanned?.createdAtIsLowerBound && (
+        {ago && (
           <span
-            className="text-micro font-medium text-warn"
-            title="Active token — creation may be older than shown"
+            className={`font-mono text-meta ${
+              scanned?.createdAtIsLowerBound ? "text-warn/70" : "text-fg-4"
+            }`}
           >
-            may be older
+            {ago}
           </span>
         )}
         <span className="font-mono text-micro text-scan">
@@ -537,9 +578,23 @@ export function ScanHero({
                   </span>
                 )}
               </p>
-              <p className="mt-1 font-mono text-micro text-fg-2">
-                {formatDate(scanned?.createdAt ?? null)}
-                {ago && <span className="text-fg-4"> · {ago}</span>}
+              <p className="mt-1 text-micro">
+                <CreationDate
+                  createdAt={scanned?.createdAt ?? null}
+                  isLowerBound={scanned?.createdAtIsLowerBound === true}
+                />
+                {ago && (
+                  <span
+                    className={`font-mono ${
+                      scanned?.createdAtIsLowerBound
+                        ? "text-warn/70"
+                        : "text-fg-4"
+                    }`}
+                  >
+                    {" "}
+                    · {ago}
+                  </span>
+                )}
               </p>
               {scanned?.safetyLevel && (
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -557,8 +612,28 @@ export function ScanHero({
                 <p className={`${EYEBROW} text-fg-4`}>
                   {ogDanger || orderUnproven ? "Older by" : "OG is older by"}
                 </p>
-                <p className="mt-1 font-display text-lg font-bold tracking-tight text-fg sm:text-xl">
-                  {gapMs != null && gapMs > 0 ? formatAgeGap(gapMs) : "—"}
+                <p
+                  className="mt-1 font-display text-lg font-bold tracking-tight text-fg sm:text-xl"
+                  title={
+                    gapUnknown
+                      ? "Both creation times are upper limits, so the gap between them is unknown."
+                      : gapQualifier
+                        ? "One of the two creation times is an upper limit, so this gap is a bound, not an exact difference."
+                        : undefined
+                  }
+                >
+                  {gapMs != null && gapMs > 0 && !gapUnknown ? (
+                    <>
+                      {gapQualifier && (
+                        <span className="text-meta font-medium text-fg-3">
+                          {gapQualifier}
+                        </span>
+                      )}
+                      {formatAgeGap(gapMs)}
+                    </>
+                  ) : (
+                    "—"
+                  )}
                 </p>
               </div>
             </div>
@@ -596,9 +671,21 @@ export function ScanHero({
                   ${og.displaySymbol}
                 </span>
               </p>
-              <p className="mt-1 font-mono text-micro text-fg-2">
-                {formatDate(og.createdAt)}
-                {ogAgo && <span className="text-fg-4"> · {ogAgo}</span>}
+              <p className="mt-1 text-micro">
+                <CreationDate
+                  createdAt={og.createdAt}
+                  isLowerBound={og.createdAtIsLowerBound === true}
+                />
+                {ogAgo && (
+                  <span
+                    className={`font-mono ${
+                      og.createdAtIsLowerBound ? "text-warn/70" : "text-fg-4"
+                    }`}
+                  >
+                    {" "}
+                    · {ogAgo}
+                  </span>
+                )}
               </p>
               <div className="mt-2 flex flex-wrap items-center gap-1.5 empty:hidden">
                 <SafetyChips
