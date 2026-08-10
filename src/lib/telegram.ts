@@ -260,26 +260,44 @@ export interface AlertMessageInput {
   payload?: unknown;
 }
 
-/** Clone alert body (Telegram HTML parse mode). */
+/**
+ * Clone alert body (Telegram HTML parse mode), on the same block layout as the
+ * verdicts: headline · subject · actions, separated by a blank line. Pure.
+ */
 export function formatCloneAlertMessage(
   a: AlertMessageInput,
   site: string
 ): string {
   const name = escapeHtml(a.name ?? "Unnamed token");
-  let head = `🚨 New clone of "${escapeHtml(a.displayQuery)}": <b>${name}</b>`;
-  if (a.symbol) head += ` ($${escapeHtml(a.symbol)})`;
-  if (a.source) head += ` via ${escapeHtml(a.source)}`;
-  const lines = [head];
+  const sym = a.symbol ? ` ($${escapeHtml(a.symbol)})` : "";
+  const blocks: string[] = [
+    `🚨 <b>NEW CLONE</b> · “${escapeHtml(a.displayQuery)}”`,
+  ];
+  // Subject: identity, then one glyph-led fact row each. Nothing was pasted
+  // here, so unlike a verdict the mint IS new information — it earns a <code>
+  // block the reader can tap to copy.
+  const subject: string[] = [`<b>${name}</b>${sym}`];
+  if (a.source) subject.push(`🔎 spotted via ${escapeHtml(a.source)}`);
+  if (a.mint) subject.push(`<code>${escapeHtml(a.mint)}</code>`);
+  blocks.push(subject.join("\n"));
   if (a.mint) {
-    lines.push(`${site}/?q=${encodeURIComponent(a.mint)}`);
-    lines.push(`https://dexscreener.com/solana/${encodeURIComponent(a.mint)}`);
+    blocks.push(
+      [
+        `<a href="${site}/?q=${encodeURIComponent(a.mint)}">Verdict card</a>`,
+        `<a href="https://dexscreener.com/solana/${encodeURIComponent(
+          a.mint
+        )}">Chart</a>`,
+      ].join(" · ")
+    );
   }
-  return lines.join("\n");
+  return blocks.join("\n\n");
 }
 
 /**
- * Flip alert body. Flip rows (NULL mint allowed) carry their context in the
- * payload JSON — render a payload `message` string when present.
+ * Flip alert body, same block layout. Flip rows (NULL mint allowed) carry
+ * their context in the payload JSON — render a payload `message` string when
+ * present. Every block below the headline is optional, so a bare flip row
+ * degrades to the headline alone rather than to empty blocks. Pure.
  */
 export function formatFlipAlertMessage(
   a: AlertMessageInput,
@@ -289,17 +307,26 @@ export function formatFlipAlertMessage(
     typeof a.payload === "object" && a.payload !== null
       ? (a.payload as Record<string, unknown>)
       : {};
-  let head = `🔁 Watch update for "${escapeHtml(a.displayQuery)}"`;
-  if (a.name) head += `: <b>${escapeHtml(a.name)}</b>`;
-  if (a.symbol) head += ` ($${escapeHtml(a.symbol)})`;
-  const lines = [head];
+  const blocks: string[] = [
+    `🔁 <b>WATCH UPDATE</b> · “${escapeHtml(a.displayQuery)}”`,
+  ];
+  const subject: string[] = [];
+  if (a.name || a.symbol) {
+    const nm = escapeHtml(a.name ?? "Unnamed token");
+    const sym = a.symbol ? ` ($${escapeHtml(a.symbol)})` : "";
+    subject.push(`<b>${nm}</b>${sym}`);
+  }
   if (typeof p.message === "string" && p.message) {
-    lines.push(escapeHtml(p.message));
+    subject.push(`ℹ️ ${escapeHtml(p.message)}`);
   }
+  if (a.mint) subject.push(`<code>${escapeHtml(a.mint)}</code>`);
+  if (subject.length > 0) blocks.push(subject.join("\n"));
   if (a.mint) {
-    lines.push(`${site}/?q=${encodeURIComponent(a.mint)}`);
+    blocks.push(
+      `<a href="${site}/?q=${encodeURIComponent(a.mint)}">Verdict card</a>`
+    );
   }
-  return lines.join("\n");
+  return blocks.join("\n\n");
 }
 
 /** Constant-time secret check; length mismatch and missing row both fail. */
@@ -328,7 +355,7 @@ async function handleStart(chatId: string, arg: string | null): Promise<void> {
   if (!parsed) {
     await reply(
       chatId,
-      'Hi! Link a watch from the OGfinder site — the "Get Telegram alerts" button opens this chat with the right code.'
+      '👑 <b>OGfinder</b>\n\nLink a watch from the OGfinder site · the "Get Telegram alerts" button opens this chat with the right code.'
     );
     return;
   }
@@ -341,7 +368,7 @@ async function handleStart(chatId: string, arg: string | null): Promise<void> {
   if (!row || !secretMatches(row.secret, parsed.secret)) {
     await reply(
       chatId,
-      "That link doesn't match an active watch — it may have been deleted. Re-create the watch on the site and try again."
+      "❌ That link doesn't match an active watch · it may have been deleted. Re-create the watch on the site and try again."
     );
     return;
   }
@@ -350,7 +377,7 @@ async function handleStart(chatId: string, arg: string | null): Promise<void> {
   ).run(chatId, parsed.watchId);
   await reply(
     chatId,
-    `Linked — you'll get new-clone alerts for "${escapeHtml(row.display_query)}". Send /stop to unlink.`
+    `✅ <b>Linked</b> · new-clone alerts for “${escapeHtml(row.display_query)}” land here.\n\nSend /stop to unlink.`
   );
 }
 
@@ -363,7 +390,7 @@ async function handleStop(chatId: string): Promise<void> {
   await reply(
     chatId,
     info.changes > 0
-      ? `Unlinked ${info.changes} watch${info.changes === 1 ? "" : "es"} — no more alerts in this chat.`
+      ? `✅ Unlinked ${info.changes} watch${info.changes === 1 ? "" : "es"} · no more alerts in this chat.`
       : "No watches were linked to this chat."
   );
 }
@@ -381,13 +408,17 @@ async function handleList(chatId: string): Promise<void> {
   }
   const lines = rows.map(
     (r) =>
-      `• <b>${escapeHtml(r.display_query)}</b> (${
+      `• <b>${escapeHtml(r.display_query)}</b> · ${
         r.kind === "mint-cluster" ? "clone-cluster" : "name"
-      } watch)`
+      } watch`
   );
   await reply(
     chatId,
-    `Watches linked to this chat:\n${lines.join("\n")}\nSend /stop to unlink all.`
+    [
+      "👀 <b>Watches linked to this chat</b>",
+      lines.join("\n"),
+      "Send /stop to unlink all.",
+    ].join("\n\n")
   );
 }
 
@@ -490,10 +521,15 @@ function fmtPrice(v: number): string {
   return `$${v.toFixed(decimals)}`;
 }
 
+/** "2.3" not "2.30", and "412" not "412.0" — a trailing .0 just adds noise. */
+function trimTenth(n: number): string {
+  return n.toFixed(1).replace(/\.0$/, "");
+}
+
 function fmtCompactUsd(v: number): string {
-  if (v >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
-  if (v >= 1e6) return `$${(v / 1e6).toFixed(1)}M`;
-  if (v >= 1e3) return `$${(v / 1e3).toFixed(1)}K`;
+  if (v >= 1e9) return `$${trimTenth(v / 1e9)}B`;
+  if (v >= 1e6) return `$${trimTenth(v / 1e6)}M`;
+  if (v >= 1e3) return `$${trimTenth(v / 1e3)}K`;
   return `$${Math.round(v)}`;
 }
 
@@ -684,36 +720,40 @@ export function formatMintVerdict(
   // lookalike whose history was too deep to walk to the end could predate it.
   const orderUnproven = ageOrderUnprovenFor(payload);
 
-  // THREE MUTUALLY EXCLUSIVE HEADLINE BRANCHES. The crown lives in the last
-  // one and nowhere else, so neither a blocking flag nor an unprovable
-  // ordering can reach it — the same structural guarantee, twice.
-  const lines: string[] = [];
+  // ── BLOCK 1 · VERDICT ────────────────────────────────────────────────
+  // One bold headline, nothing else competing with it. THREE MUTUALLY
+  // EXCLUSIVE BRANCHES: the crown lives in the last one and nowhere else, so
+  // neither a blocking flag nor an unprovable ordering can reach it.
+  const verdict: string[] = [];
   if (danger) {
     // The warning leads. A blocking flag costs the endorsement, never the
-    // rank, so the age fact is still stated (just not as a recommendation).
-    lines.push(`${UNSAFE_HEADLINE} — ${name}${sym}`);
+    // rank, so the age fact is still stated below (just not as advice).
+    verdict.push(UNSAFE_HEADLINE);
     const blocking = formatBlockingFlagLine(scanned);
-    if (blocking) lines.push(blocking);
-    lines.push(
+    if (blocking) verdict.push(blocking);
+    verdict.push(
       isOG
-        ? UNSAFE_RANK1_LINE
-        : `🚫 <b>NOT THE OG</b> — #${scanned.rank} of ${total} by age`
+        ? `🕰 ${UNSAFE_RANK1_LINE}`
+        : `🚫 not the OG · #${scanned.rank} of ${total} by age`
     );
   } else if (isOG && orderUnproven) {
-    // Rank stays factual; the crown is not handed out on an ordering we
-    // cannot prove, and the reason rides in the same line.
-    lines.push(
-      `${UNPROVEN_HEADLINE} — ${name}${sym}, ${formatUnprovenSuffix(
-        payload.ageUnresolvedCount
-      )}`
+    verdict.push(
+      `${UNPROVEN_HEADLINE} · ${formatUnprovenSuffix(payload.ageUnresolvedCount)}`
     );
   } else if (isOG) {
-    lines.push(`👑 <b>THIS IS THE OG</b> — ${name}${sym}`);
+    verdict.push("👑 <b>THIS IS THE OG</b>");
   } else {
-    lines.push(
-      `🚫 <b>NOT THE OG</b> — ${name}${sym} is #${scanned.rank} of ${total} by age`
+    verdict.push(
+      `🚫 <b>NOT THE OG</b> · #${scanned.rank} of ${total} by age`
     );
   }
+  const blocks: string[] = [verdict.join("\n")];
+
+  // ── BLOCK 2 · THE TOKEN ──────────────────────────────────────────────
+  // Identity first, then one glyph-led fact row each: age, safety, dev,
+  // market. The pasted CA is deliberately NOT echoed — the reader just sent
+  // it; the mint that earns space here is the OG's, in block 3.
+  const subject: string[] = [`<b>${name}</b>${sym}`];
 
   // "minted on or before <date>" whenever the walk was truncated — and the age
   // becomes a minimum, since creation at or before T means at least that old.
@@ -721,47 +761,10 @@ export function formatMintVerdict(
   const ago = timeAgo(scanned.createdAt);
   const agoText = ago
     ? scanned.createdAtIsLowerBound
-      ? ` (at least ${ago})`
-      : ` (${ago})`
+      ? ` · at least ${ago}`
+      : ` · ${ago}`
     : "";
-  lines.push(`minted ${minted}${agoText}`);
-  if (!isOG && og && og.mint !== mint) {
-    const ogDate = mintedDate(og);
-    const gapMs =
-      scanned.createdAtMs != null && og.createdAtMs != null
-        ? scanned.createdAtMs - og.createdAtMs
-        : null;
-    // The difference of two dates is exact only when both dates are. With one
-    // side a bound the gap is itself a bound; with both, it is unknown.
-    const gapQualifier =
-      og.createdAtIsLowerBound && scanned.createdAtIsLowerBound
-        ? null
-        : og.createdAtIsLowerBound
-          ? "at least "
-          : scanned.createdAtIsLowerBound
-            ? "at most "
-            : "";
-    const gap =
-      gapMs != null && gapMs > 0 && gapQualifier != null
-        ? ` (${gapQualifier}${formatAgeGap(gapMs)} older)`
-        : "";
-    lines.push(
-      `${orderUnproven ? "Oldest known" : "OG"}: <b>${escapeHtml(og.displayName)}</b> minted ${ogDate}${gap} — <code>${escapeHtml(og.mint)}</code>`
-    );
-  }
-
-  // The caveat rides directly under whichever line made the age claim, so the
-  // claim and its limit are never read apart.
-  if (orderUnproven) {
-    const n = payload.ageUnresolvedCount;
-    lines.push(
-      `⏳ ${
-        n != null && n > 0
-          ? `${n} matching token${n === 1 ? "" : "s"} ha${n === 1 ? "s" : "ve"}`
-          : "A matching token has"
-      } a history too deep to date fully — the oldest above is the oldest we can prove, not a verified OG. Re-scan later to resume the deeper walk.`
-    );
-  }
+  subject.push(`📅 minted ${minted}${agoText}`);
 
   const risk: string[] = [];
   if (scanned.safetyLevel) {
@@ -770,7 +773,7 @@ export function formatMintVerdict(
     const chip = formatSafetyRiskChip(scanned);
     if (chip) risk.push(chip);
     if (scanned.topHolderPct != null) {
-      risk.push(`👥 top10 hold ${Math.round(scanned.topHolderPct)}%`);
+      risk.push(`👥 top 10 hold ${Math.round(scanned.topHolderPct)}%`);
     }
   } else {
     // Never assessed (ranks 2+ of a scan, or a build without the checks): the
@@ -780,14 +783,14 @@ export function formatMintVerdict(
     if (scanned.freezeAuthorityActive === true) risk.push("⚠️ freeze auth");
     if (scanned.metadataMutable === true) risk.push("✏️ mutable metadata");
     if (scanned.topHolderPct != null) {
-      risk.push(`👥 top10 hold ${Math.round(scanned.topHolderPct)}%`);
+      risk.push(`👥 top 10 hold ${Math.round(scanned.topHolderPct)}%`);
     }
     if (scanned.homoglyphSuspect) risk.push("🎭 lookalike characters");
   }
-  if (risk.length > 0) lines.push(risk.join(" · "));
+  if (risk.length > 0) subject.push(risk.join(" · "));
 
   const dev = formatDeployerLine(scanned);
-  if (dev) lines.push(dev);
+  if (dev) subject.push(dev);
 
   const market: string[] = [];
   const mc = scanned.marketCapUsd ?? scanned.fdvUsd;
@@ -804,21 +807,74 @@ export function formatMintVerdict(
     const pc = scanned.priceChange24h;
     market.push(`${pc >= 0 ? "+" : ""}${pc.toFixed(1)}% 24h`);
   }
-  // The raw counts behind a "buys but no sells" finding — the reader can check
-  // the claim instead of taking our word for it.
-  if (scanned.buys24h != null && scanned.sells24h != null) {
+  // The raw counts behind a "buys but no sells" finding — shown ONLY when that
+  // is what the safety engine flagged, so the reader can check the claim. On a
+  // healthy token they are noise that pushes the row past one line.
+  const sellFlagged = (scanned.safetyFlags ?? []).some(
+    (f) => f === "no-sells" || f === "few-sells"
+  );
+  if (sellFlagged && scanned.buys24h != null && scanned.sells24h != null) {
     market.push(`${scanned.buys24h} buys / ${scanned.sells24h} sells 24h`);
   }
-  if (market.length > 0) lines.push(`💰 ${market.join(" · ")}`);
+  if (market.length > 0) subject.push(`💰 ${market.join(" · ")}`);
+  blocks.push(subject.join("\n"));
 
-  lines.push(
+  // ── BLOCK 3 · THE REAL OG ────────────────────────────────────────────
+  // Quoted so it reads as its own card: this is the answer the reader came
+  // for, and the only mint worth the space is the one they need to copy.
+  if (!isOG && og && og.mint !== mint) {
+    const gapMs =
+      scanned.createdAtMs != null && og.createdAtMs != null
+        ? scanned.createdAtMs - og.createdAtMs
+        : null;
+    // The difference of two dates is exact only when both dates are. With one
+    // side a bound the gap is itself a bound; with both, it is unknown.
+    const gapQualifier =
+      og.createdAtIsLowerBound && scanned.createdAtIsLowerBound
+        ? null
+        : og.createdAtIsLowerBound
+          ? "at least "
+          : scanned.createdAtIsLowerBound
+            ? "at most "
+            : "";
+    const gap =
+      gapMs != null && gapMs > 0 && gapQualifier != null
+        ? ` · ${gapQualifier}${formatAgeGap(gapMs)} older`
+        : "";
+    // The crown rides on the claim, not the card: when the ordering is
+    // unproven this token is only the oldest we could DATE, and the caveat
+    // block below says exactly that — so it gets the clock, not the crown.
+    const heading = orderUnproven ? "Oldest known" : "The OG";
+    const glyph = orderUnproven ? "🕰" : "👑";
+    blocks.push(
+      `<blockquote>${glyph} <b>${heading}: ${escapeHtml(og.displayName)}</b>\n` +
+        `📅 ${mintedDate(og)}${gap}\n` +
+        `<code>${escapeHtml(og.mint)}</code></blockquote>`
+    );
+  }
+
+  // ── BLOCK 4 · THE CAVEAT ─────────────────────────────────────────────
+  if (orderUnproven) {
+    const n = payload.ageUnresolvedCount;
+    blocks.push(
+      `⏳ ${
+        n != null && n > 0
+          ? `${n} matching token${n === 1 ? "" : "s"} ha${n === 1 ? "s" : "ve"}`
+          : "A matching token has"
+      } a history too deep to date fully — the oldest above is the oldest we can prove, not a verified OG.`
+    );
+  }
+
+  // ── BLOCK 5 · ACTIONS ────────────────────────────────────────────────
+  blocks.push(
     [
-      `<a href="${verdictShareUrl(mint, payload, site)}">OGfinder verdict</a>`,
-      `<a href="https://dexscreener.com/solana/${mint}">DexScreener</a>`,
-      `<a href="https://trade.padre.gg/trade/solana/${mint}">Padre</a>`,
+      `<a href="${verdictShareUrl(mint, payload, site)}">Verdict card</a>`,
+      `<a href="https://dexscreener.com/solana/${mint}">Chart</a>`,
+      `<a href="https://trade.padre.gg/trade/solana/${mint}">Trade</a>`,
     ].join(" · ")
   );
-  return lines.join("\n");
+  // Blank line between blocks — the whole point of the layout.
+  return blocks.join("\n\n");
 }
 
 /**
@@ -842,30 +898,27 @@ export function formatRegistryVerdict(
 ): string {
   const name = escapeHtml(entry.ogName);
   const sym = entry.ogSymbol ? ` ($${escapeHtml(entry.ogSymbol)})` : "";
-  const lines: string[] = [];
+  // Same block layout as the full verdict, so the message it replaces lands
+  // in a shape the reader already recognises.
   if (mint === entry.ogMint) {
     const ago = timeAgo(new Date(entry.verifiedAt).toISOString());
-    lines.push(
-      `⏳ <b>OLDEST BY AGE</b> — ${name}${sym} is the oldest token of this name (checked ${
-        ago || "recently"
-      })`
-    );
-    lines.push(
-      "(from OGfinder registry — safety checks still running, full verdict next)"
-    );
-  } else {
-    const minted =
-      entry.ogCreatedAtMs != null
-        ? formatShareDate(new Date(entry.ogCreatedAtMs).toISOString())
-        : null;
-    lines.push(
-      `🚫 <b>NOT THE OG</b> — the OG of "${name}"${sym} is <code>${escapeHtml(
-        entry.ogMint
-      )}</code>${minted ? `, minted ${minted}` : ""}`
-    );
-    lines.push("(from OGfinder registry — full re-check running)");
+    return [
+      "🕰 <b>OLDEST BY AGE</b>",
+      `<b>${name}</b>${sym}\n📅 oldest of this name · checked ${ago || "recently"}`,
+      "<i>From the OGfinder registry — safety checks still running, full verdict next.</i>",
+    ].join("\n\n");
   }
-  return lines.join("\n");
+  const minted =
+    entry.ogCreatedAtMs != null
+      ? formatShareDate(new Date(entry.ogCreatedAtMs).toISOString())
+      : null;
+  return [
+    "🚫 <b>NOT THE OG</b>",
+    `<blockquote>👑 <b>The OG: ${name}</b>${sym}\n` +
+      (minted ? `📅 minted ${minted}\n` : "") +
+      `<code>${escapeHtml(entry.ogMint)}</code></blockquote>`,
+    "<i>From the OGfinder registry — full re-check running.</i>",
+  ].join("\n\n");
 }
 
 /** sendMessage returning the new message_id (null on any failure). */
@@ -958,7 +1011,7 @@ async function finishVerdict(
       await replaceChatMessage(
         chatId,
         interimMessageId,
-        "Couldn't verify this mint — not found on-chain or upstream APIs down",
+        "🔍 <b>Couldn't verify this mint</b>\n\nNot found on-chain · or upstream APIs are down.",
         { replyToMessageId }
       );
     }
@@ -1009,7 +1062,7 @@ async function startVerdictScan(
   mint: string
 ): Promise<void> {
   if (botScansInFlight >= MAX_CONCURRENT_BOT_SCANS) {
-    await sendChatMessage(chatId, "⏳ busy, try again in a moment", {
+    await sendChatMessage(chatId, "⏳ <b>Busy</b> · try again in a moment", {
       replyToMessageId,
     });
     return;
@@ -1099,7 +1152,8 @@ export function formatNameSearchReply(
 ): string {
   const link = `${site}/?q=${encodeURIComponent(query)}`;
   if (results.length === 0) {
-    return `No tokens found named "${escapeHtml(query)}" — <a href="${link}">search on OGfinder</a>`;
+    // Same quote style and " · " separator as every other row in this reply.
+    return `🔎 No tokens found named “${escapeHtml(query)}” · <a href="${link}">search on OGfinder</a>`;
   }
   const minted = (t: TokenResult): string => {
     const d = formatShareDate(t.createdAt);
@@ -1108,9 +1162,9 @@ export function formatNameSearchReply(
     // Same rule as the mint verdict: a truncated walk is a bound, so the date
     // gets "on or before" and the age becomes a minimum.
     if (t.createdAtIsLowerBound) {
-      return `minted on or before ${d}${ago ? ` (at least ${ago})` : ""}`;
+      return `minted on or before ${d}${ago ? ` · at least ${ago}` : ""}`;
     }
-    return `minted ${d}${ago ? ` (${ago})` : ""}`;
+    return `minted ${d}${ago ? ` · ${ago}` : ""}`;
   };
   // The same gate as formatMintVerdict, on the same pure helper: a list whose
   // #1 could be overturned by an unresolved age never gets the crown here
@@ -1120,38 +1174,61 @@ export function formatNameSearchReply(
   const topSym = top.displaySymbol
     ? ` ($${escapeHtml(top.displaySymbol)})`
     : "";
-  const lines: string[] = [];
+  // Same three-block layout as the mint verdict: headline, the pick as its own
+  // quoted card, then the runners-up and the footer.
+  const blocks: string[] = [];
+  const headline: string[] = [];
+  let pickLabel = "Likely OG";
+  // The pick card below is THE SAME TOKEN the headline just judged, so its
+  // glyph tracks the headline: the crown appears only on the branch that
+  // actually endorses. Withholding the crown in the headline and then printing
+  // it one line later would hand back the endorsement we just refused.
+  let pickGlyph = "👑";
   if (top.safetyLevel === "danger") {
     // Same rule as the mint verdict: the oldest match keeps its rank and loses
     // the crown. buildTokenResults assesses the rank-1 candidate on every
     // ranking path, so this fires on the text path too.
-    lines.push(
-      `${UNSAFE_HEADLINE} — <b>${escapeHtml(top.displayName)}</b>${topSym} — ${minted(top)}`
-    );
+    headline.push(UNSAFE_HEADLINE);
     const blocking = formatBlockingFlagLine(top);
-    if (blocking) lines.push(blocking);
-    lines.push(UNSAFE_RANK1_LINE);
+    if (blocking) headline.push(blocking);
+    headline.push(`🕰 ${UNSAFE_RANK1_LINE}`);
+    pickLabel = "Oldest match";
+    pickGlyph = "🕰";
   } else if (!order.proven) {
-    // No crown on an unproven ordering — the caveat rides in the same line so
-    // the claim and its limit can never be read apart.
-    lines.push(
-      `🕰 Oldest known so far: <b>${escapeHtml(top.displayName)}</b>${topSym} — ${minted(
-        top
-      )} · ${formatUnprovenSuffix(order.unresolvedCount)}`
+    headline.push(
+      `${UNPROVEN_HEADLINE} · ${formatUnprovenSuffix(order.unresolvedCount)}`
     );
+    pickLabel = "Oldest known";
+    pickGlyph = "🕰";
   } else {
-    lines.push(
-      `👑 Likely OG: <b>${escapeHtml(top.displayName)}</b>${topSym} — ${minted(top)}`
+    // No crown here — it belongs to the pick in the quoted block below, and
+    // printing it twice in one message reads as clutter.
+    headline.push(`🔎 <b>OLDEST MATCH FOR “${escapeHtml(query)}”</b>`);
+  }
+  blocks.push(headline.join("\n"));
+
+  blocks.push(
+    `<blockquote>${pickGlyph} <b>${pickLabel}: ${escapeHtml(top.displayName)}</b>${topSym}\n` +
+      `📅 ${minted(top)}\n` +
+      `<code>${escapeHtml(top.mint)}</code></blockquote>`
+  );
+
+  const runners = results.slice(1, 3);
+  if (runners.length > 0) {
+    blocks.push(
+      runners
+        .map((t) => {
+          const sym = t.displaySymbol ? ` ($${escapeHtml(t.displaySymbol)})` : "";
+          return `#${t.rank} ${escapeHtml(t.displayName)}${sym} · ${minted(t)}`;
+        })
+        .join("\n")
     );
   }
-  lines.push(`<code>${escapeHtml(top.mint)}</code>`);
-  for (const t of results.slice(1, 3)) {
-    const sym = t.displaySymbol ? ` ($${escapeHtml(t.displaySymbol)})` : "";
-    lines.push(`#${t.rank} ${escapeHtml(t.displayName)}${sym} — ${minted(t)}`);
-  }
-  lines.push(
-    `${results.length} token${results.length === 1 ? "" : "s"} ranked by best-known age — <a href="${link}">open the link for on-chain verification</a>`
+
+  blocks.push(
+    `${results.length} token${results.length === 1 ? "" : "s"} by best-known age · <a href="${link}">verify on OGfinder</a>`
   );
+  const lines = [blocks.join("\n\n")];
   return lines.join("\n");
 }
 
@@ -1175,7 +1252,7 @@ async function finishNameSearch(
       await replaceChatMessage(
         chatId,
         interimMessageId,
-        "Search failed — upstream APIs down, try again shortly",
+        "🔍 <b>Search failed</b>\n\nUpstream APIs down · try again shortly.",
         { replyToMessageId }
       );
     }
@@ -1186,13 +1263,27 @@ async function finishNameSearch(
 
 // ————————————————————————— Group registry —————————————————————————
 
-const WELCOME_HTML =
-  "👑 OGfinder is live in this chat. Paste any Solana CA and I'll instantly " +
-  "verify if it's the original token — age rank, risk flags, and market data. " +
-  "I also check freeze authority, Token-2022 transfer hooks and fees, and 24h " +
-  "buys vs sells, and a token with a blocking flag never gets called the OG. " +
-  "\"OG\" means ORIGINAL BY AGE — not safe, and not investment advice. " +
-  "Commands: /og &lt;mint or name&gt;, /watch &lt;name&gt; for new-clone alerts here, /help.";
+/**
+ * Posted once when the bot joins a group. Same block layout as the verdicts —
+ * headline, what it does, the commands, and the honesty note as its own last
+ * block so the one claim people misread is never buried mid-paragraph.
+ * Exported for tests (pure constant).
+ */
+export const WELCOME_HTML = [
+  "👑 <b>OGfinder is live in this chat</b>",
+  "Paste any Solana CA and I'll check whether it's the original token of " +
+    "that name — age rank, market data, and the checks that decide it: mint " +
+    "and freeze authority, Token-2022 transfer hooks and fees, and 24h buys " +
+    "vs sells.",
+  [
+    "/og &lt;mint or name&gt; — OG-check a CA or a token name",
+    "/watch &lt;name&gt; — new-clone alerts for a name in this chat",
+    "/help — everything I check, in detail",
+  ].join("\n"),
+  "<i>An OG verdict means ORIGINAL BY AGE — that a mint came first, not that " +
+    "it is safe to buy, and never investment advice. A token with a blocking " +
+    "flag is never called the OG here.</i>",
+].join("\n\n");
 
 function isActiveTelegramGroup(chatId: string): boolean {
   try {
@@ -1276,13 +1367,22 @@ async function handleMyChatMember(
 
 // ————————————————————— Group/DM command handlers —————————————————————
 
-const HELP_HTML = [
-  "<b>OGfinder bot</b> — checks which token of a name is the original.",
-  "/og &lt;mint or name&gt; — OG-check a CA or a token name",
-  "/watch &lt;name&gt; — new-clone alerts for a name in this chat (25/day cap)",
-  "/watches — list this chat's watches",
-  "/unwatch &lt;id or name&gt; — remove a watch",
-  "Paste any Solana CA in the chat and I'll check it automatically.",
+/**
+ * /help. Blocks, not a wall: headline, commands, the paste-a-CA behaviour,
+ * what gets checked, what the verdict does and does not mean, and last the
+ * privacy note that unblocks a silent group. Exported for tests (pure).
+ */
+export const HELP_HTML = [
+  "<b>OGfinder bot</b> — which token of a name came first.",
+  [
+    "/og &lt;mint or name&gt; — OG-check a CA or a token name",
+    "/watch &lt;name&gt; — new-clone alerts for a name in this chat (25/day cap)",
+    "/watches — list this chat's watches",
+    "/unwatch &lt;id or name&gt; — remove a watch",
+    "/help — this message",
+  ].join("\n"),
+  "Paste any Solana CA straight into the chat and I'll check it " +
+    "automatically — no command needed.",
   "<b>What I check:</b> on-chain age (which mint came first), mint and freeze " +
     "authority, Token-2022 extensions (transfer hooks, permanent delegate, " +
     "transfer fees), 24h buys vs sells, holder concentration and liquidity.",
@@ -1291,8 +1391,10 @@ const HELP_HTML = [
     "authority, transfer hook, buys with no sells…) is never called the OG " +
     "here, and a check I couldn't run is reported as unavailable, never as " +
     "clean. None of this is investment advice — always do your own research.",
-  "If pasted CAs get no reply here, the bot can't see plain group messages — ask the group owner to disable bot privacy via @BotFather (/setprivacy → Disable), then re-add me.",
-].join("\n");
+  "<i>If pasted CAs get no reply here, the bot can't see plain group " +
+    "messages — ask the group owner to disable bot privacy via @BotFather " +
+    "(/setprivacy → Disable), then re-add me.</i>",
+].join("\n\n");
 
 async function handleOg(
   chatId: string,
@@ -1315,19 +1417,19 @@ async function handleOg(
   if (arg.length < MIN_QUERY || arg.length > MAX_QUERY) {
     await reply(
       chatId,
-      `Token names are ${MIN_QUERY}-${MAX_QUERY} characters — or paste a full mint address.`
+      `Token names are ${MIN_QUERY}-${MAX_QUERY} characters · or paste a full mint address.`
     );
     return;
   }
   if (botScansInFlight >= MAX_CONCURRENT_BOT_SCANS) {
-    await sendChatMessage(chatId, "⏳ busy, try again in a moment", {
+    await sendChatMessage(chatId, "⏳ <b>Busy</b> · try again in a moment", {
       replyToMessageId,
     });
     return;
   }
   const placeholderId = await sendChatMessage(
     chatId,
-    `🔍 Ranking lookalikes of "${escapeHtml(arg)}" by age…`,
+    `🔍 Ranking lookalikes of “${escapeHtml(arg)}” by age…`,
     { replyToMessageId }
   );
   if (placeholderId == null) return;
@@ -1348,7 +1450,7 @@ async function handleWatch(chatId: string, arg: string | null): Promise<void> {
   if (!arg) {
     await reply(
       chatId,
-      "Usage: /watch &lt;token name&gt; — e.g. /watch bonk. New-clone alerts land in this chat."
+      "Usage: /watch &lt;token name&gt; · e.g. /watch bonk\n\nNew-clone alerts land in this chat."
     );
     return;
   }
@@ -1360,7 +1462,7 @@ async function handleWatch(chatId: string, arg: string | null): Promise<void> {
       telegramChatId: chatId,
     });
   } catch {
-    await reply(chatId, "Couldn't create the watch — try again shortly.");
+    await reply(chatId, "Couldn't create the watch · try again shortly.");
     return;
   }
   if (!result.ok) {
@@ -1368,8 +1470,8 @@ async function handleWatch(chatId: string, arg: string | null): Promise<void> {
       result.error === "invalid"
         ? "Watch names are 2-30 characters with at least 2 letters/numbers."
         : result.error === "limit"
-          ? "This chat already has 10 watches — /unwatch one first."
-          : "Watch capacity is full right now — try again later.";
+          ? "This chat already has 10 watches · /unwatch one first."
+          : "Watch capacity is full right now · try again later.";
     await reply(chatId, msg);
     return;
   }
@@ -1377,8 +1479,11 @@ async function handleWatch(chatId: string, arg: string | null): Promise<void> {
   await reply(
     chatId,
     w.existing
-      ? `Already watching "<b>${escapeHtml(w.displayQuery)}</b>" (#${w.id}) in this chat.`
-      : `Watching "<b>${escapeHtml(w.displayQuery)}</b>" (#${w.id}) — new clone alerts will land here. 25/day cap. /unwatch ${w.id} to stop.`
+      ? `👀 Already watching <b>${escapeHtml(w.displayQuery)}</b> (#${w.id}) in this chat.`
+      : [
+          `👀 <b>Watching ${escapeHtml(w.displayQuery)}</b> (#${w.id})`,
+          `New-clone alerts land here · 25/day cap · /unwatch ${w.id} to stop.`,
+        ].join("\n\n")
   );
 }
 
@@ -1392,23 +1497,27 @@ async function handleWatches(chatId: string): Promise<void> {
   if (rows.length === 0) {
     await reply(
       chatId,
-      "No watches in this chat — /watch &lt;name&gt; to add one."
+      "No watches in this chat · /watch &lt;name&gt; to add one."
     );
     return;
   }
   const lines = rows.map((r) => {
     const ago = timeAgo(new Date(r.createdAt).toISOString());
-    return `#${r.id} — <b>${escapeHtml(r.displayQuery)}</b>${ago ? ` (${ago})` : ""}`;
+    return `#${r.id} · <b>${escapeHtml(r.displayQuery)}</b>${ago ? ` · ${ago}` : ""}`;
   });
   await reply(
     chatId,
-    `Watches in this chat:\n${lines.join("\n")}\n/unwatch &lt;id or name&gt; to remove.`
+    [
+      "👀 <b>Watches in this chat</b>",
+      lines.join("\n"),
+      "/unwatch &lt;id or name&gt; to remove.",
+    ].join("\n\n")
   );
 }
 
 async function handleUnwatch(chatId: string, arg: string | null): Promise<void> {
   if (!arg) {
-    await reply(chatId, "Usage: /unwatch &lt;id or name&gt; — /watches lists them.");
+    await reply(chatId, "Usage: /unwatch &lt;id or name&gt; · /watches lists them.");
     return;
   }
   let removed = 0;
@@ -1420,8 +1529,8 @@ async function handleUnwatch(chatId: string, arg: string | null): Promise<void> 
   await reply(
     chatId,
     removed > 0
-      ? `Removed ${removed} watch${removed === 1 ? "" : "es"}.`
-      : `No watch matching "${escapeHtml(arg)}" in this chat — /watches lists them.`
+      ? `✅ Removed ${removed} watch${removed === 1 ? "" : "es"}.`
+      : `No watch matching “${escapeHtml(arg)}” in this chat · /watches lists them.`
   );
 }
 
