@@ -4,12 +4,15 @@ import {
   parseTelegramCommand,
   formatCloneAlertMessage,
   formatFlipAlertMessage,
+  actionKeyboard,
+  mintKeyboard,
+  row,
+  DELETE_CALLBACK_DATA,
   WELCOME_HTML,
   HELP_HTML,
 } from "@/lib/telegram";
 
 const HEX = "a".repeat(32);
-const SITE = "https://ogfinder.example";
 
 describe("parseStartPayload", () => {
   it("accepts w_<id>_<32hex> and extracts the parts", () => {
@@ -80,138 +83,169 @@ describe("parseTelegramCommand", () => {
 });
 
 describe("formatCloneAlertMessage", () => {
-  it("renders name, symbol, source, and both links", () => {
-    const msg = formatCloneAlertMessage(
-      {
-        displayQuery: "Pepe",
-        name: "Pepe 2.0",
-        symbol: "PEPE2",
-        source: "dexscreener",
-        mint: "Mint123",
-      },
-      SITE
-    );
-    // Block layout: headline · subject (identity + facts) · actions.
+  it("renders the token as the header and the facts as a tree section", () => {
+    const msg = formatCloneAlertMessage({
+      displayQuery: "Pepe",
+      name: "Pepe 2.0",
+      symbol: "PEPE2",
+      source: "dexscreener",
+      mint: "Mint123",
+    });
     expect(msg).toBe(
       [
-        "🚨 <b>NEW CLONE</b> · “Pepe”",
-        "<b>Pepe 2.0</b> ($PEPE2)\n🔎 spotted via dexscreener\n<code>Mint123</code>",
-        `<a href="${SITE}/?q=Mint123">Verdict card</a> · ` +
-          '<a href="https://dexscreener.com/solana/Mint123">Chart</a>',
+        "🚨 <b>Pepe 2.0</b> ($PEPE2)\n└ <b>NEW CLONE</b> · “Pepe”",
+        "🔎 <b>Spotted</b>\n" +
+          "├ <code>Via   </code> dexscreener\n" +
+          "└ <code>Mint123</code>",
       ].join("\n\n")
     );
-    // Both original link targets survive the restyle.
-    expect(msg).toContain(`${SITE}/?q=Mint123`);
-    expect(msg).toContain("https://dexscreener.com/solana/Mint123");
+    // The label column is padded INSIDE the code entity — that is the only
+    // place Telegram renders monospace, so the value column can line up.
+    expect(msg).toContain("<code>Via   </code>");
+    // Last row of a section always closes the tree.
+    expect(msg.split("\n").at(-1)).toMatch(/^└ /);
   });
 
-  it("omits missing symbol/source and links without a mint", () => {
-    const msg = formatCloneAlertMessage(
-      {
-        displayQuery: "Pepe",
-        name: null,
-        symbol: null,
-        source: null,
-        mint: null,
-      },
-      SITE
-    );
-    expect(msg).toBe("🚨 <b>NEW CLONE</b> · “Pepe”\n\n<b>Unnamed token</b>");
-    // No mint → no actions block, and never an empty trailing block.
-    expect(msg.split("\n\n")).toHaveLength(2);
+  it("omits an absent source/mint and degrades to the header alone", () => {
+    const msg = formatCloneAlertMessage({
+      displayQuery: "Pepe",
+      name: null,
+      symbol: null,
+      source: null,
+      mint: null,
+    });
+    // Nothing known but the watch: the alert kind leads and no empty section
+    // (or empty label, or dash-value row) is rendered.
+    expect(msg).toBe("🚨 <b>NEW CLONE</b>\n└ “Pepe”");
+    expect(msg.split("\n\n")).toHaveLength(1);
   });
 
   it("escapes HTML in the query, name, symbol, and source", () => {
-    const msg = formatCloneAlertMessage(
-      {
-        displayQuery: "a<b> & co",
-        name: "<script>x</script>",
-        symbol: "A&B",
-        source: "<src>",
-        mint: null,
-      },
-      SITE
-    );
+    const msg = formatCloneAlertMessage({
+      displayQuery: "a<b> & co",
+      name: "<script>x</script>",
+      symbol: "A&B",
+      source: "<src>",
+      mint: null,
+    });
     expect(msg).toBe(
       [
-        "🚨 <b>NEW CLONE</b> · “a&lt;b&gt; &amp; co”",
-        "<b>&lt;script&gt;x&lt;/script&gt;</b> ($A&amp;B)\n🔎 spotted via &lt;src&gt;",
+        "🚨 <b>&lt;script&gt;x&lt;/script&gt;</b> ($A&amp;B)\n" +
+          "└ <b>NEW CLONE</b> · “a&lt;b&gt; &amp; co”",
+        "🔎 <b>Spotted</b>\n└ <code>Via   </code> &lt;src&gt;",
       ].join("\n\n")
     );
     expect(msg).not.toContain("<script>");
   });
 
-  it("escapes an injected mint in both the code block and the links", () => {
-    const msg = formatCloneAlertMessage(
-      {
-        displayQuery: "Pepe",
-        name: "Pepe",
-        symbol: null,
-        source: null,
-        mint: '"><b>x',
-      },
-      SITE
-    );
+  it("escapes an injected mint inside its code row", () => {
+    const msg = formatCloneAlertMessage({
+      displayQuery: "Pepe",
+      name: "Pepe",
+      symbol: null,
+      source: null,
+      mint: '"><b>x',
+    });
     // Telegram HTML only needs &, <, > escaped; the quote is inert in a text node.
     expect(msg).toContain('<code>"&gt;&lt;b&gt;x</code>');
-    // …and the same value is percent-encoded inside both hrefs.
-    expect(msg).toContain(`${SITE}/?q=%22%3E%3Cb%3Ex`);
     expect(msg).not.toContain('"><b>x');
   });
 });
 
 describe("formatFlipAlertMessage", () => {
-  it("renders the payload message escaped, with a site link when mint set", () => {
-    const msg = formatFlipAlertMessage(
-      {
-        displayQuery: "Pepe",
-        name: "Pepe OG",
-        symbol: "PEPE",
-        source: null,
-        mint: "MintOG",
-        payload: { message: "Volume flipped <up>" },
-      },
-      SITE
-    );
+  it("renders the payload message escaped, with the mint as a copy row", () => {
+    const msg = formatFlipAlertMessage({
+      displayQuery: "Pepe",
+      name: "Pepe OG",
+      symbol: "PEPE",
+      source: null,
+      mint: "MintOG",
+      payload: { message: "Volume flipped <up>" },
+    });
     expect(msg).toBe(
       [
-        "🔁 <b>WATCH UPDATE</b> · “Pepe”",
-        "<b>Pepe OG</b> ($PEPE)\nℹ️ Volume flipped &lt;up&gt;\n<code>MintOG</code>",
-        `<a href="${SITE}/?q=MintOG">Verdict card</a>`,
+        "🔁 <b>Pepe OG</b> ($PEPE)\n└ <b>WATCH UPDATE</b> · “Pepe”",
+        "ℹ️ <b>Update</b>\n├ Volume flipped &lt;up&gt;\n└ <code>MintOG</code>",
       ].join("\n\n")
     );
   });
 
   it("falls back to a generic header when payload/mint/name are absent", () => {
-    const msg = formatFlipAlertMessage(
-      {
-        displayQuery: "Pepe & co",
-        name: null,
-        symbol: null,
-        source: null,
-        mint: null,
-        payload: "not-an-object",
-      },
-      SITE
-    );
-    // Headline only — no blank-line-separated empty blocks.
-    expect(msg).toBe("🔁 <b>WATCH UPDATE</b> · “Pepe &amp; co”");
+    const msg = formatFlipAlertMessage({
+      displayQuery: "Pepe & co",
+      name: null,
+      symbol: null,
+      source: null,
+      mint: null,
+      payload: "not-an-object",
+    });
+    // Header only — no blank-line-separated empty blocks.
+    expect(msg).toBe("🔁 <b>WATCH UPDATE</b>\n└ “Pepe &amp; co”");
   });
 
   it("keeps a symbol that arrives without a name", () => {
-    const msg = formatFlipAlertMessage(
-      {
-        displayQuery: "Pepe",
-        name: null,
-        symbol: "PEPE",
-        source: null,
-        mint: null,
-      },
-      SITE
-    );
+    const msg = formatFlipAlertMessage({
+      displayQuery: "Pepe",
+      name: null,
+      symbol: "PEPE",
+      source: null,
+      mint: null,
+    });
     expect(msg).toBe(
-      "🔁 <b>WATCH UPDATE</b> · “Pepe”\n\n<b>Unnamed token</b> ($PEPE)"
+      "🔁 <b>Unnamed token</b> ($PEPE)\n└ <b>WATCH UPDATE</b> · “Pepe”"
     );
+  });
+});
+
+// ————————————————————————— tree primitives —————————————————————————
+
+describe("row / actionKeyboard", () => {
+  it("pads every label to one width INSIDE the code entity", () => {
+    expect(row("MC", "$2.3B")).toBe("├ <code>MC    </code> $2.3B");
+    expect(row("Top 10", "38%", true)).toBe("└ <code>Top 10</code> 38%");
+    // An empty label renders the value alone — never an empty code block.
+    expect(row("", "freeze authority active", true)).toBe(
+      "└ freeze authority active"
+    );
+    // All labels are the same width, so the value column lines up.
+    const widths = ["MC", "Liq", "24H", "Auth", "Top 10", "Dev", "Born"].map(
+      (l) => row(l, "x").indexOf("</code>")
+    );
+    expect(new Set(widths).size).toBe(1);
+  });
+
+  it("builds the action row + a delete row, dropping missing URLs", () => {
+    expect(
+      actionKeyboard({ verdict: "https://a", chart: "https://b", trade: "https://c" })
+    ).toEqual({
+      inline_keyboard: [
+        [
+          { text: "👑 Verdict", url: "https://a" },
+          { text: "📈 Chart", url: "https://b" },
+          { text: "💱 Trade", url: "https://c" },
+        ],
+        [{ text: "🗑 Delete", callback_data: DELETE_CALLBACK_DATA }],
+      ],
+    });
+    // No URLs at all → the dismiss button still ships, alone.
+    expect(actionKeyboard({})).toEqual({
+      inline_keyboard: [
+        [{ text: "🗑 Delete", callback_data: DELETE_CALLBACK_DATA }],
+      ],
+    });
+    // Telegram caps callback_data at 64 bytes.
+    expect(Buffer.byteLength(DELETE_CALLBACK_DATA)).toBeLessThanOrEqual(64);
+  });
+
+  it("percent-encodes the mint into both link buttons", () => {
+    const kb = mintKeyboard('"><b>x', "https://site/?q=1");
+    expect(kb.inline_keyboard[0][1].url).toBe(
+      "https://dexscreener.com/solana/%22%3E%3Cb%3Ex"
+    );
+    expect(kb.inline_keyboard[0][2].url).toBe(
+      "https://trade.padre.gg/trade/solana/%22%3E%3Cb%3Ex"
+    );
+    expect(JSON.stringify(kb)).not.toContain('"><b>x');
   });
 });
 

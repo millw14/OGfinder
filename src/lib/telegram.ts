@@ -20,6 +20,7 @@ import {
   headlineBlockingFlag,
   orderSafetyFlags,
 } from "./safety-view";
+import { CONCENTRATION_PCT } from "./safety";
 import { timeAgo, formatAgeGap } from "./format";
 import { isLikelyMintAddress } from "./solana";
 import {
@@ -250,6 +251,151 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+// ————————————————————————— tree layout —————————————————————————
+//
+// EVERY DATA MESSAGE IS A TREE, not prose: a header line, a "└" sub-line
+// carrying the verdict, then SECTIONS separated by a blank line. Inside a
+// section every row but the last is prefixed "├ ", the last "└ ".
+//
+// Labels are padded to ONE fixed width INSIDE a <code> entity. Telegram only
+// renders code spans in a monospace font, so padding written outside one would
+// not line the value column up on any client — the padding MUST live inside.
+//
+// A row whose data is missing is dropped; a section with no rows is dropped
+// whole. An empty label, a dash-only value and an empty block never render.
+
+/** Widest label in use ("Top 10") — every label pads to this. */
+const LABEL_WIDTH = 6;
+
+/**
+ * One tree row: "├ <code>MC    </code> $2.3B", or "└ …" for a section's last
+ * row. An empty label renders the value alone (no empty code span). The ONLY
+ * place a label is padded — never hand-pad at a call site. Pure.
+ */
+export function row(label: string, value: string, isLast = false): string {
+  const branch = isLast ? "└ " : "├ ";
+  if (!label) return `${branch}${value}`;
+  return `${branch}<code>${escapeHtml(label.padEnd(LABEL_WIDTH))}</code> ${value}`;
+}
+
+/** [label, value] — an empty label renders the value alone. */
+type TreeRow = readonly [string, string];
+
+/** Section head + rows with the branch glyphs applied; null when it has none. */
+function section(head: string, rows: readonly TreeRow[]): string | null {
+  if (rows.length === 0) return null;
+  return [
+    head,
+    ...rows.map(([l, v], i) => row(l, v, i === rows.length - 1)),
+  ].join("\n");
+}
+
+/** Header line + the "└" sub-line that carries the verdict. */
+function headerBlock(glyph: string, title: string, verdict: string): string {
+  return `${glyph} ${title}\n${row("", verdict, true)}`;
+}
+
+/** Blank line between the blocks that exist — an absent block leaves no gap. */
+function joinBlocks(...parts: (string | null)[]): string {
+  return parts.filter((p): p is string => !!p).join("\n\n");
+}
+
+/** "<b>Name</b> ($SYM)" — the identity every header leads with. Escapes both. */
+function identity(name: string, symbol?: string | null): string {
+  return `<b>${escapeHtml(name)}</b>${symbol ? ` ($${escapeHtml(symbol)})` : ""}`;
+}
+
+/** Same identity unbolded — inside a section the bold head already leads. */
+function nameValue(name: string, symbol?: string | null): string {
+  return `${escapeHtml(name)}${symbol ? ` ($${escapeHtml(symbol)})` : ""}`;
+}
+
+/**
+ * Creation date for a row: "Dec 20, 2022", or "≤ Dec 20, 2022" when the
+ * signature walk was truncated — creation is at or before it, by an unknown
+ * amount. The glyph replaces the old "on or before" wording. null = no date
+ * at all, so the caller drops the row rather than printing a placeholder.
+ */
+function bornValue(t: {
+  createdAt: string | null;
+  createdAtIsLowerBound?: boolean;
+}): string | null {
+  const d = formatShareDate(t.createdAt);
+  if (!d) return null;
+  return t.createdAtIsLowerBound ? `≤ ${d}` : d;
+}
+
+/**
+ * Age for a header sub-line: "3y 8mo", or "≥ 3y 8mo" for a bounded date
+ * (creation at or before T means AT LEAST that old). null when unknown.
+ */
+function ageValue(t: {
+  createdAt: string | null;
+  createdAtIsLowerBound?: boolean;
+}): string | null {
+  const ago = timeAgo(t.createdAt);
+  if (!ago || ago === "unknown age") return null;
+  const short = ago.replace(/ ago$/, "");
+  return t.createdAtIsLowerBound ? `≥ ${short}` : short;
+}
+
+// ————————————————————————— inline keyboard —————————————————————————
+
+/**
+ * Dismiss-button payload. Short by design — Telegram caps callback_data at 64
+ * bytes — and the ONLY value the router acts on; anything else is a no-op.
+ */
+export const DELETE_CALLBACK_DATA = "og:x";
+
+export interface InlineKeyboardButton {
+  text: string;
+  url?: string;
+  callback_data?: string;
+}
+
+export interface InlineKeyboardMarkup {
+  inline_keyboard: InlineKeyboardButton[][];
+}
+
+/**
+ * The action keyboard that replaced the trailing link line: the same URLs as
+ * before as tappable buttons, plus a dismiss button ANYONE in the chat may
+ * press (it only ever deletes the bot's own message, so there is no permission
+ * model to get wrong). A missing URL drops its button rather than rendering a
+ * dead one; the delete row is always present. Pure.
+ */
+export function actionKeyboard(urls: {
+  verdict?: string | null;
+  chart?: string | null;
+  trade?: string | null;
+}): InlineKeyboardMarkup {
+  const links: InlineKeyboardButton[] = [];
+  if (urls.verdict) links.push({ text: "👑 Verdict", url: urls.verdict });
+  if (urls.chart) links.push({ text: "📈 Chart", url: urls.chart });
+  if (urls.trade) links.push({ text: "💱 Trade", url: urls.trade });
+  const rows: InlineKeyboardButton[][] = [];
+  if (links.length > 0) rows.push(links);
+  rows.push([{ text: "🗑 Delete", callback_data: DELETE_CALLBACK_DATA }]);
+  return { inline_keyboard: rows };
+}
+
+/**
+ * Per-mint keyboard: verdict card + the same chart/trade targets the old link
+ * line carried. The mint is percent-encoded — alert rows carry DB strings, and
+ * an invalid button URL makes Telegram reject the whole message. Pure.
+ */
+export function mintKeyboard(
+  mint: string,
+  verdictUrl: string
+): InlineKeyboardMarkup {
+  const enc = encodeURIComponent(mint);
+  return actionKeyboard({
+    verdict: verdictUrl,
+    chart: `https://dexscreener.com/solana/${enc}`,
+    trade: `https://trade.padre.gg/trade/solana/${enc}`,
+  });
+}
+
 export interface AlertMessageInput {
   displayQuery: string;
   name: string | null;
@@ -261,72 +407,63 @@ export interface AlertMessageInput {
 }
 
 /**
- * Clone alert body (Telegram HTML parse mode), on the same block layout as the
- * verdicts: headline · subject · actions, separated by a blank line. Pure.
+ * Alert header: the token leads when we know it, otherwise the alert kind does
+ * (a bare row must degrade to a header, never to an empty identity block).
+ * The quoted watch name always rides along, so the reader knows which watch
+ * fired. Pure.
  */
-export function formatCloneAlertMessage(
-  a: AlertMessageInput,
-  site: string
+function alertHeader(
+  glyph: string,
+  kind: string,
+  a: AlertMessageInput
 ): string {
-  const name = escapeHtml(a.name ?? "Unnamed token");
-  const sym = a.symbol ? ` ($${escapeHtml(a.symbol)})` : "";
-  const blocks: string[] = [
-    `🚨 <b>NEW CLONE</b> · “${escapeHtml(a.displayQuery)}”`,
-  ];
-  // Subject: identity, then one glyph-led fact row each. Nothing was pasted
-  // here, so unlike a verdict the mint IS new information — it earns a <code>
-  // block the reader can tap to copy.
-  const subject: string[] = [`<b>${name}</b>${sym}`];
-  if (a.source) subject.push(`🔎 spotted via ${escapeHtml(a.source)}`);
-  if (a.mint) subject.push(`<code>${escapeHtml(a.mint)}</code>`);
-  blocks.push(subject.join("\n"));
-  if (a.mint) {
-    blocks.push(
-      [
-        `<a href="${site}/?q=${encodeURIComponent(a.mint)}">Verdict card</a>`,
-        `<a href="https://dexscreener.com/solana/${encodeURIComponent(
-          a.mint
-        )}">Chart</a>`,
-      ].join(" · ")
+  const quoted = `“${escapeHtml(a.displayQuery)}”`;
+  if (a.name || a.symbol) {
+    return headerBlock(
+      glyph,
+      identity(a.name ?? "Unnamed token", a.symbol),
+      `<b>${kind}</b> · ${quoted}`
     );
   }
-  return blocks.join("\n\n");
+  return headerBlock(glyph, `<b>${kind}</b>`, quoted);
 }
 
 /**
- * Flip alert body, same block layout. Flip rows (NULL mint allowed) carry
- * their context in the payload JSON — render a payload `message` string when
- * present. Every block below the headline is optional, so a bare flip row
- * degrades to the headline alone rather than to empty blocks. Pure.
+ * Clone alert body (Telegram HTML parse mode) on the tree layout. Nothing was
+ * pasted here, so unlike a verdict the mint IS new information — it earns a
+ * <code> row the reader can tap to copy. The links moved to the inline
+ * keyboard (see actionKeyboard), so no site URL is needed here. Pure.
  */
-export function formatFlipAlertMessage(
-  a: AlertMessageInput,
-  site: string
-): string {
+export function formatCloneAlertMessage(a: AlertMessageInput): string {
+  const rows: TreeRow[] = [];
+  if (a.source) rows.push(["Via", escapeHtml(a.source)]);
+  if (a.mint) rows.push(["", `<code>${escapeHtml(a.mint)}</code>`]);
+  return joinBlocks(
+    alertHeader("🚨", "NEW CLONE", a),
+    section("🔎 <b>Spotted</b>", rows)
+  );
+}
+
+/**
+ * Flip alert body, same tree. Flip rows (NULL mint allowed) carry their
+ * context in the payload JSON — render a payload `message` string when
+ * present. Every section is optional, so a bare flip row degrades to the
+ * header alone rather than to empty blocks. Pure.
+ */
+export function formatFlipAlertMessage(a: AlertMessageInput): string {
   const p =
     typeof a.payload === "object" && a.payload !== null
       ? (a.payload as Record<string, unknown>)
       : {};
-  const blocks: string[] = [
-    `🔁 <b>WATCH UPDATE</b> · “${escapeHtml(a.displayQuery)}”`,
-  ];
-  const subject: string[] = [];
-  if (a.name || a.symbol) {
-    const nm = escapeHtml(a.name ?? "Unnamed token");
-    const sym = a.symbol ? ` ($${escapeHtml(a.symbol)})` : "";
-    subject.push(`<b>${nm}</b>${sym}`);
-  }
+  const rows: TreeRow[] = [];
   if (typeof p.message === "string" && p.message) {
-    subject.push(`ℹ️ ${escapeHtml(p.message)}`);
+    rows.push(["", escapeHtml(p.message)]);
   }
-  if (a.mint) subject.push(`<code>${escapeHtml(a.mint)}</code>`);
-  if (subject.length > 0) blocks.push(subject.join("\n"));
-  if (a.mint) {
-    blocks.push(
-      `<a href="${site}/?q=${encodeURIComponent(a.mint)}">Verdict card</a>`
-    );
-  }
-  return blocks.join("\n\n");
+  if (a.mint) rows.push(["", `<code>${escapeHtml(a.mint)}</code>`]);
+  return joinBlocks(
+    alertHeader("🔁", "WATCH UPDATE", a),
+    section("ℹ️ <b>Update</b>", rows)
+  );
 }
 
 /** Constant-time secret check; length mismatch and missing row both fail. */
@@ -441,6 +578,12 @@ export interface TelegramUpdate {
     chat?: TelegramChat;
     new_chat_member?: { status?: string };
   };
+  /** Inline-button press — only the dismiss button produces one (see actionKeyboard). */
+  callback_query?: {
+    id?: string;
+    data?: string;
+    message?: { message_id?: number; chat?: TelegramChat };
+  };
 }
 
 // ————————————————————— CA extraction + verdict replies —————————————————————
@@ -534,10 +677,10 @@ function fmtCompactUsd(v: number): string {
 }
 
 /**
- * Deployer intelligence line for a scanned token:
- * "👤 dev: <short> · N tokens created · wallet since <year>". Serial deployers
- * (≥ SERIAL_DEPLOYER_MIN launches) and fresh wallets (< 7 days) get ⚠️
- * prefixes; unknown fields are omitted; no deployer → null (no line at all).
+ * Value for the Security tree's "Dev" row: "<short> · 4 launches · 2021". The
+ * label column already says whose row this is, so no word repeats it. Serial
+ * deployers (≥ SERIAL_DEPLOYER_MIN launches) and fresh wallets (< 7 days) keep
+ * their ⚠️; unknown fields are omitted; no deployer → null (no row at all).
  * Pure; exported for tests.
  */
 export function formatDeployerLine(
@@ -548,24 +691,25 @@ export function formatDeployerLine(
   if (!addr) return null;
   const short =
     addr.length > 12 ? `${addr.slice(0, 4)}…${addr.slice(-4)}` : addr;
-  const parts: string[] = [`👤 dev: <code>${escapeHtml(short)}</code>`];
+  const parts: string[] = [`<code>${escapeHtml(short)}</code>`];
   const n = t.deployerTokensCreated;
   if (n != null) {
+    // The Enhanced-API count is one page — the cap reads as "or more".
     const shown = `${n}${n >= TOKENS_CREATED_CAP ? "+" : ""}`;
     parts.push(
       n >= SERIAL_DEPLOYER_MIN
-        ? `⚠️ serial deployer: ${shown} tokens created`
-        : `${shown} token${n === 1 ? "" : "s"} created`
+        ? `⚠️ ${shown} launches`
+        : `${shown} launch${n === 1 ? "" : "es"}`
     );
   }
   if (t.deployerWalletFirstSeenMs != null) {
     parts.push(
       now - t.deployerWalletFirstSeenMs < FRESH_WALLET_MS
-        ? "⚠️ fresh wallet"
-        : `wallet since ${new Date(t.deployerWalletFirstSeenMs).getUTCFullYear()}`
+        ? "⚠️ new wallet"
+        : String(new Date(t.deployerWalletFirstSeenMs).getUTCFullYear())
     );
   } else if (t.deployerIsOldWallet) {
-    parts.push("established wallet");
+    parts.push("established");
   }
   return parts.join(" · ");
 }
@@ -582,48 +726,50 @@ export function formatDeployerLine(
 //  - ABSENT → the token was never assessed; the legacy DAS chips render exactly
 //    as they did before, and nothing claims a safety result either way.
 
-/** Headline shown instead of the crown/rank line for a blocking verdict. */
-export const UNSAFE_HEADLINE = "🛑 <b>UNSAFE — DO NOT BUY</b>";
-/** Rank-1 age statement for a blocking verdict: fact kept, endorsement withheld. */
-export const UNSAFE_RANK1_LINE =
-  "oldest by age, but OGfinder will not call it the OG";
-/** Headline for a rank 1 whose ORDER is unproven — never the crown. */
-export const UNPROVEN_HEADLINE = "🕰 <b>OLDEST KNOWN SO FAR</b>";
+/** Verdict sub-line for a blocking finding — replaces the crown, never joins it. */
+export const UNSAFE_VERDICT = "<b>UNSAFE — DO NOT BUY</b>";
+/**
+ * Appended for a rank-1 blocking verdict: the rank fact still prints (#1 of N),
+ * and this one word says the endorsement is withheld anyway. Deliberately
+ * avoids the words "THE OG" — a danger token never carries them.
+ */
+export const UNSAFE_RANK1_NOTE = "uncrowned";
+/** Verdict sub-line for a rank 1 whose ORDER is unproven — never the crown. */
+export const UNPROVEN_VERDICT = "<b>OLDEST KNOWN</b>";
+/** Glyph that stands in for the crown wherever an endorsement is withheld. */
+const UNPROVEN_GLYPH = "🕰";
 
 /**
- * "oldest known so far — 3 tokens still unresolved". The count is the server's
- * (it saw the cohort before the MAX_RESULTS slice); without it we still say
- * the order is unproven rather than implying it is settled. Pure.
+ * "18 unverified" — how much of the cohort could still overturn the #1 answer.
+ * The count is the server's (it saw the cohort before the MAX_RESULTS slice);
+ * without it we still say the order is unproven rather than implying it is
+ * settled. Pure.
  */
 export function formatUnprovenSuffix(count?: number | null): string {
-  if (count == null || count <= 0) return "order not proven";
-  return `${count} token${count === 1 ? "" : "s"} still unresolved`;
+  if (count == null || count <= 0) return "order unproven";
+  return `${count} unverified`;
 }
 
 /**
- * A date we only hold an upper limit for is never printed bare: a truncated
- * signature walk proves "existed by this date", not "created on it". Pure.
+ * The blocking findings, one row each, named by mechanism — never a generic
+ * accusation. The buy/sell counts ride on the finding that rests on them, so
+ * the reader can check the claim without a Stats row for healthy tokens.
+ * Empty when nothing blocks (or no codes survived decoding). Pure.
  */
-function mintedDate(t: TokenResult | undefined): string {
-  const date = formatShareDate(t?.createdAt ?? null) ?? "unknown date";
-  if (!t?.createdAtIsLowerBound || date === "unknown date") return date;
-  return `on or before ${date}`;
+export function formatBlockingRows(t: TokenResult): string[] {
+  return blockingFlags(t.safetyFlags).map((f) => {
+    const label = escapeHtml(f.label);
+    const counted = f.code === "no-sells" || f.code === "few-sells";
+    if (counted && t.buys24h != null && t.sells24h != null) {
+      return `${label} · ${t.buys24h}/${t.sells24h}`;
+    }
+    return label;
+  });
 }
 
 /**
- * "⛔ freeze authority active · permanent delegate set" — the blocking findings
- * named one by one. Null when nothing blocks (or no codes survived decoding).
- * Pure; exported for tests.
- */
-export function formatBlockingFlagLine(t: TokenResult): string | null {
-  const flags = blockingFlags(t.safetyFlags);
-  if (flags.length === 0) return null;
-  return `⛔ ${flags.map((f) => escapeHtml(f.label)).join(" · ")}`;
-}
-
-/**
- * Risk-slot content for an ASSESSED token: caution findings (blocking ones
- * already lead the message), or the level's own statement when there are none.
+ * Risk-row value for an ASSESSED token: caution findings (blocking ones have
+ * their own section), or the level's own statement when there are none.
  * Pure; exported for tests.
  */
 export function formatSafetyRiskChip(t: TokenResult): string | null {
@@ -638,12 +784,96 @@ export function formatSafetyRiskChip(t: TokenResult): string | null {
     }
     case "clear":
       // Deliberately not "safe": we only ever report what we did not find.
-      return "🔎 no blocking flags found";
+      return "🟢 no blocking flags";
     case "unknown":
-      return "❔ safety checks unavailable";
+      return "❔ checks unavailable";
     default:
       return null;
   }
+}
+
+/**
+ * Authority row for a token the safety engine never assessed — the legacy DAS
+ * fields, one terse chip. "renounced" is only claimed when BOTH authorities
+ * are known revoked; knowing one leaves the other unstated. null when neither
+ * field was reported (unknown is not a finding). Pure.
+ */
+function formatAuthChip(t: TokenResult): string | null {
+  const active: string[] = [];
+  if (t.mintAuthorityActive === true) active.push("mint");
+  if (t.freezeAuthorityActive === true) active.push("freeze");
+  if (active.length > 0) return `⚠️ ${active.join(" + ")} active`;
+  if (t.mintAuthorityActive === false && t.freezeAuthorityActive === false) {
+    return "🟢 renounced";
+  }
+  if (t.mintAuthorityActive === false) return "🟢 mint renounced";
+  if (t.freezeAuthorityActive === false) return "🟢 freeze renounced";
+  return null;
+}
+
+/**
+ * 📊 Stats: date of birth, then the market rows. Every row is dropped when its
+ * datum is missing, and the whole section disappears when none survive. Pure.
+ */
+function statsSection(t: TokenResult): string | null {
+  const rows: TreeRow[] = [];
+  const born = bornValue(t);
+  if (born) rows.push(["Born", born]);
+  const mc = t.marketCapUsd ?? t.fdvUsd;
+  if (mc != null && mc > 0) {
+    rows.push(["MC", fmtCompactUsd(mc)]);
+  } else if (t.priceUsd != null && t.priceUsd > 0) {
+    // No market cap reported — price beats showing nothing.
+    rows.push(["Price", fmtPrice(t.priceUsd)]);
+  }
+  if (t.liquidityUsd != null && t.liquidityUsd > 0) {
+    rows.push(["Liq", fmtCompactUsd(t.liquidityUsd)]);
+  }
+  if (t.priceChange24h != null) {
+    const pc = t.priceChange24h;
+    rows.push(["24H", `${pc >= 0 ? "+" : ""}${pc.toFixed(1)}%`]);
+  }
+  return section("📊 <b>Stats</b>", rows);
+}
+
+/**
+ * 🔒 Security. An ASSESSED token gets the safety engine's row, so its findings
+ * can never contradict the verdict above; a token that was never assessed gets
+ * the legacy DAS chips, which describe fields rather than a verdict. The Age
+ * row is the whole unproven-order caveat, collapsed from a paragraph to
+ * "⏳ 3 unverified" — and because it forces the section to exist, the caveat
+ * can never be dropped for lack of other rows. Pure.
+ */
+function securitySection(
+  t: TokenResult,
+  unproven?: { count?: number | null }
+): string | null {
+  const rows: TreeRow[] = [];
+  if (t.safetyLevel) {
+    const chip = formatSafetyRiskChip(t);
+    if (chip) rows.push(["Risk", chip]);
+  } else {
+    const auth = formatAuthChip(t);
+    if (auth) rows.push(["Auth", auth]);
+    if (t.metadataMutable === true) rows.push(["Meta", "⚠️ mutable"]);
+    if (t.homoglyphSuspect) rows.push(["Name", "🎭 lookalike chars"]);
+  }
+  if (t.topHolderPct != null) {
+    const pct = Math.round(t.topHolderPct);
+    rows.push(["Top 10", `${pct}%${pct >= CONCENTRATION_PCT ? " ⚠️" : ""}`]);
+  }
+  const dev = formatDeployerLine(t);
+  if (dev) rows.push(["Dev", dev]);
+  if (unproven) rows.push(["Age", `⏳ ${formatUnprovenSuffix(unproven.count)}`]);
+  return section("🔒 <b>Security</b>", rows);
+}
+
+/** ⛔ Blocking: the findings that cost the endorsement, right under the header. */
+function blockingSection(t: TokenResult): string | null {
+  return section(
+    "⛔ <b>Blocking</b>",
+    formatBlockingRows(t).map((v) => ["", v] as TreeRow)
+  );
 }
 
 /** Share URL whose /api/og card Telegram unfurls — built like ScanHero's shareVerdict. */
@@ -694,23 +924,67 @@ function ageOrderUnprovenFor(payload: MintScanPayload): boolean {
 }
 
 /**
- * Compact HTML verdict message for a completed scan. Pure — exported for
- * tests. Verdict derivation mirrors the route's scanResponseBody: the scanned
- * token's rank decides OG-ness (rank 1 = OG); results[0] is the OG.
+ * The OG's own section — the answer a NOT-the-OG reader came for, so it sits
+ * directly under the verdict. The pasted CA is never echoed back; the mint
+ * that earns space is this one, in full, tappable to copy.
+ *
+ * The crown rides on the claim, not the card: when the ordering is unproven
+ * this token is only the oldest we could DATE, so it gets the clock instead.
+ * Pure.
+ */
+function ogSection(
+  og: TokenResult,
+  scanned: TokenResult | null,
+  orderUnproven: boolean
+): string | null {
+  const rows: TreeRow[] = [["", nameValue(og.displayName, og.displaySymbol)]];
+  const born = bornValue(og);
+  if (born) {
+    const gapMs =
+      scanned?.createdAtMs != null && og.createdAtMs != null
+        ? scanned.createdAtMs - og.createdAtMs
+        : null;
+    // The difference of two dates is exact only when both dates are. With one
+    // side a bound the gap is itself a bound; with both, it is unknown.
+    const qualifier =
+      og.createdAtIsLowerBound && scanned?.createdAtIsLowerBound
+        ? null
+        : og.createdAtIsLowerBound
+          ? "≥ "
+          : scanned?.createdAtIsLowerBound
+            ? "≤ "
+            : "";
+    const gap =
+      gapMs != null && gapMs > 0 && qualifier != null
+        ? ` · ${qualifier}${formatAgeGap(gapMs)} older`
+        : "";
+    rows.push(["Born", `${born}${gap}`]);
+  }
+  rows.push(["", `<code>${escapeHtml(og.mint)}</code>`]);
+  return section(
+    orderUnproven
+      ? `${UNPROVEN_GLYPH} <b>Oldest known</b>`
+      : "👑 <b>The OG</b>",
+    rows
+  );
+}
+
+/**
+ * HTML verdict message for a completed scan, on the tree layout. Pure —
+ * exported for tests. Verdict derivation mirrors the route's
+ * scanResponseBody: the scanned token's rank decides OG-ness (rank 1 = OG);
+ * results[0] is the OG. The three action links now ride in the inline
+ * keyboard (mintKeyboard), not in the text.
  */
 export function formatMintVerdict(
   mint: string,
-  payload: MintScanPayload,
-  site: string
+  payload: MintScanPayload
 ): string {
   const scanned = payload.results.find((t) => t.mint === mint);
-  const name = escapeHtml(
-    scanned?.displayName ?? payload.scanName ?? "Unknown token"
-  );
+  const name = scanned?.displayName ?? payload.scanName ?? "Unknown token";
   const symbol = scanned?.displaySymbol ?? payload.scanSymbol ?? null;
-  const sym = symbol ? ` ($${escapeHtml(symbol)})` : "";
   if (!scanned) {
-    return `🔍 Resolved <b>${name}</b>${sym} but couldn't rank it against lookalikes — try a name search on OGfinder.`;
+    return headerBlock("🔍", identity(name, symbol), "couldn't rank vs lookalikes");
   }
   const total = payload.results.length;
   const og = payload.results[0];
@@ -720,161 +994,46 @@ export function formatMintVerdict(
   // lookalike whose history was too deep to walk to the end could predate it.
   const orderUnproven = ageOrderUnprovenFor(payload);
 
-  // ── BLOCK 1 · VERDICT ────────────────────────────────────────────────
-  // One bold headline, nothing else competing with it. THREE MUTUALLY
-  // EXCLUSIVE BRANCHES: the crown lives in the last one and nowhere else, so
-  // neither a blocking flag nor an unprovable ordering can reach it.
+  // ── HEADER · identity + one verdict sub-line ─────────────────────────
+  // FOUR MUTUALLY EXCLUSIVE BRANCHES: the crown lives in the last-but-one and
+  // nowhere else, so neither a blocking flag nor an unprovable ordering can
+  // reach it. The rank fact survives every branch — a blocking flag costs the
+  // endorsement, never the rank.
+  const rank = `#${scanned.rank} of ${total}`;
+  const age = ageValue(scanned);
+  let glyph: string;
   const verdict: string[] = [];
   if (danger) {
-    // The warning leads. A blocking flag costs the endorsement, never the
-    // rank, so the age fact is still stated below (just not as advice).
-    verdict.push(UNSAFE_HEADLINE);
-    const blocking = formatBlockingFlagLine(scanned);
-    if (blocking) verdict.push(blocking);
-    verdict.push(
-      isOG
-        ? `🕰 ${UNSAFE_RANK1_LINE}`
-        : `🚫 not the OG · #${scanned.rank} of ${total} by age`
-    );
+    glyph = "🛑";
+    verdict.push(UNSAFE_VERDICT, rank);
+    if (age) verdict.push(age);
+    if (isOG) verdict.push(UNSAFE_RANK1_NOTE);
   } else if (isOG && orderUnproven) {
-    verdict.push(
-      `${UNPROVEN_HEADLINE} · ${formatUnprovenSuffix(payload.ageUnresolvedCount)}`
-    );
+    glyph = UNPROVEN_GLYPH;
+    verdict.push(UNPROVEN_VERDICT);
+    if (age) verdict.push(age);
+    verdict.push(rank);
   } else if (isOG) {
-    verdict.push("👑 <b>THIS IS THE OG</b>");
+    glyph = "👑";
+    verdict.push("<b>THE OG</b>");
+    if (age) verdict.push(age);
+    verdict.push(rank);
   } else {
-    verdict.push(
-      `🚫 <b>NOT THE OG</b> · #${scanned.rank} of ${total} by age`
-    );
+    glyph = "🚫";
+    verdict.push("<b>NOT THE OG</b>", rank);
+    if (age) verdict.push(age);
   }
-  const blocks: string[] = [verdict.join("\n")];
 
-  // ── BLOCK 2 · THE TOKEN ──────────────────────────────────────────────
-  // Identity first, then one glyph-led fact row each: age, safety, dev,
-  // market. The pasted CA is deliberately NOT echoed — the reader just sent
-  // it; the mint that earns space here is the OG's, in block 3.
-  const subject: string[] = [`<b>${name}</b>${sym}`];
-
-  // "minted on or before <date>" whenever the walk was truncated — and the age
-  // becomes a minimum, since creation at or before T means at least that old.
-  const minted = mintedDate(scanned);
-  const ago = timeAgo(scanned.createdAt);
-  const agoText = ago
-    ? scanned.createdAtIsLowerBound
-      ? ` · at least ${ago}`
-      : ` · ${ago}`
-    : "";
-  subject.push(`📅 minted ${minted}${agoText}`);
-
-  const risk: string[] = [];
-  if (scanned.safetyLevel) {
-    // Assessed: the safety engine owns the risk slot, so its findings can't
-    // contradict the verdict line above (and can't be double-printed).
-    const chip = formatSafetyRiskChip(scanned);
-    if (chip) risk.push(chip);
-    if (scanned.topHolderPct != null) {
-      risk.push(`👥 top 10 hold ${Math.round(scanned.topHolderPct)}%`);
-    }
-  } else {
-    // Never assessed (ranks 2+ of a scan, or a build without the checks): the
-    // legacy DAS chips, unchanged — they describe fields, not a verdict.
-    if (scanned.mintAuthorityActive === false) risk.push("🔒 renounced");
-    if (scanned.mintAuthorityActive === true) risk.push("⚠️ mint auth active");
-    if (scanned.freezeAuthorityActive === true) risk.push("⚠️ freeze auth");
-    if (scanned.metadataMutable === true) risk.push("✏️ mutable metadata");
-    if (scanned.topHolderPct != null) {
-      risk.push(`👥 top 10 hold ${Math.round(scanned.topHolderPct)}%`);
-    }
-    if (scanned.homoglyphSuspect) risk.push("🎭 lookalike characters");
-  }
-  if (risk.length > 0) subject.push(risk.join(" · "));
-
-  const dev = formatDeployerLine(scanned);
-  if (dev) subject.push(dev);
-
-  const market: string[] = [];
-  const mc = scanned.marketCapUsd ?? scanned.fdvUsd;
-  if (mc != null && mc > 0) {
-    market.push(`MC ${fmtCompactUsd(mc)}`);
-  } else if (scanned.priceUsd != null && scanned.priceUsd > 0) {
-    // No market cap reported — price beats showing nothing.
-    market.push(fmtPrice(scanned.priceUsd));
-  }
-  if (scanned.liquidityUsd != null && scanned.liquidityUsd > 0) {
-    market.push(`liq ${fmtCompactUsd(scanned.liquidityUsd)}`);
-  }
-  if (scanned.priceChange24h != null) {
-    const pc = scanned.priceChange24h;
-    market.push(`${pc >= 0 ? "+" : ""}${pc.toFixed(1)}% 24h`);
-  }
-  // The raw counts behind a "buys but no sells" finding — shown ONLY when that
-  // is what the safety engine flagged, so the reader can check the claim. On a
-  // healthy token they are noise that pushes the row past one line.
-  const sellFlagged = (scanned.safetyFlags ?? []).some(
-    (f) => f === "no-sells" || f === "few-sells"
+  return joinBlocks(
+    headerBlock(glyph, identity(name, symbol), verdict.join(" · ")),
+    danger ? blockingSection(scanned) : null,
+    !isOG && og && og.mint !== mint ? ogSection(og, scanned, orderUnproven) : null,
+    statsSection(scanned),
+    securitySection(
+      scanned,
+      orderUnproven ? { count: payload.ageUnresolvedCount } : undefined
+    )
   );
-  if (sellFlagged && scanned.buys24h != null && scanned.sells24h != null) {
-    market.push(`${scanned.buys24h} buys / ${scanned.sells24h} sells 24h`);
-  }
-  if (market.length > 0) subject.push(`💰 ${market.join(" · ")}`);
-  blocks.push(subject.join("\n"));
-
-  // ── BLOCK 3 · THE REAL OG ────────────────────────────────────────────
-  // Quoted so it reads as its own card: this is the answer the reader came
-  // for, and the only mint worth the space is the one they need to copy.
-  if (!isOG && og && og.mint !== mint) {
-    const gapMs =
-      scanned.createdAtMs != null && og.createdAtMs != null
-        ? scanned.createdAtMs - og.createdAtMs
-        : null;
-    // The difference of two dates is exact only when both dates are. With one
-    // side a bound the gap is itself a bound; with both, it is unknown.
-    const gapQualifier =
-      og.createdAtIsLowerBound && scanned.createdAtIsLowerBound
-        ? null
-        : og.createdAtIsLowerBound
-          ? "at least "
-          : scanned.createdAtIsLowerBound
-            ? "at most "
-            : "";
-    const gap =
-      gapMs != null && gapMs > 0 && gapQualifier != null
-        ? ` · ${gapQualifier}${formatAgeGap(gapMs)} older`
-        : "";
-    // The crown rides on the claim, not the card: when the ordering is
-    // unproven this token is only the oldest we could DATE, and the caveat
-    // block below says exactly that — so it gets the clock, not the crown.
-    const heading = orderUnproven ? "Oldest known" : "The OG";
-    const glyph = orderUnproven ? "🕰" : "👑";
-    blocks.push(
-      `<blockquote>${glyph} <b>${heading}: ${escapeHtml(og.displayName)}</b>\n` +
-        `📅 ${mintedDate(og)}${gap}\n` +
-        `<code>${escapeHtml(og.mint)}</code></blockquote>`
-    );
-  }
-
-  // ── BLOCK 4 · THE CAVEAT ─────────────────────────────────────────────
-  if (orderUnproven) {
-    const n = payload.ageUnresolvedCount;
-    blocks.push(
-      `⏳ ${
-        n != null && n > 0
-          ? `${n} matching token${n === 1 ? "" : "s"} ha${n === 1 ? "s" : "ve"}`
-          : "A matching token has"
-      } a history too deep to date fully — the oldest above is the oldest we can prove, not a verified OG.`
-    );
-  }
-
-  // ── BLOCK 5 · ACTIONS ────────────────────────────────────────────────
-  blocks.push(
-    [
-      `<a href="${verdictShareUrl(mint, payload, site)}">Verdict card</a>`,
-      `<a href="https://dexscreener.com/solana/${mint}">Chart</a>`,
-      `<a href="https://trade.padre.gg/trade/solana/${mint}">Trade</a>`,
-    ].join(" · ")
-  );
-  // Blank line between blocks — the whole point of the layout.
-  return blocks.join("\n\n");
 }
 
 /**
@@ -896,36 +1055,53 @@ export function formatRegistryVerdict(
   mint: string,
   entry: OgRegistryEntry
 ): string {
-  const name = escapeHtml(entry.ogName);
-  const sym = entry.ogSymbol ? ` ($${escapeHtml(entry.ogSymbol)})` : "";
-  // Same block layout as the full verdict, so the message it replaces lands
-  // in a shape the reader already recognises.
+  // Same tree as the full verdict, so the message it replaces lands in a shape
+  // the reader already recognises.
   if (mint === entry.ogMint) {
     const ago = timeAgo(new Date(entry.verifiedAt).toISOString());
-    return [
-      "🕰 <b>OLDEST BY AGE</b>",
-      `<b>${name}</b>${sym}\n📅 oldest of this name · checked ${ago || "recently"}`,
-      "<i>From the OGfinder registry — safety checks still running, full verdict next.</i>",
-    ].join("\n\n");
+    return joinBlocks(
+      headerBlock(
+        UNPROVEN_GLYPH,
+        identity(entry.ogName, entry.ogSymbol),
+        `<b>OLDEST BY AGE</b> · checked ${ago || "recently"}`
+      ),
+      // The pending-safety note is the reason this message never crowns —
+      // it must survive even as the last word in the chat.
+      section("📋 <b>Registry</b>", [
+        ["", "safety checks still running"],
+        ["", "full verdict next"],
+      ])
+    );
   }
   const minted =
     entry.ogCreatedAtMs != null
       ? formatShareDate(new Date(entry.ogCreatedAtMs).toISOString())
       : null;
-  return [
+  const ogRows: TreeRow[] = [["", nameValue(entry.ogName, entry.ogSymbol)]];
+  if (minted) ogRows.push(["Born", minted]);
+  ogRows.push(["", `<code>${escapeHtml(entry.ogMint)}</code>`]);
+  // No verdict sub-line here: the pasted token's own name is not resolved on
+  // this path, so the header IS the verdict and nothing else is known yet.
+  return joinBlocks(
     "🚫 <b>NOT THE OG</b>",
-    `<blockquote>👑 <b>The OG: ${name}</b>${sym}\n` +
-      (minted ? `📅 minted ${minted}\n` : "") +
-      `<code>${escapeHtml(entry.ogMint)}</code></blockquote>`,
-    "<i>From the OGfinder registry — full re-check running.</i>",
-  ].join("\n\n");
+    section("👑 <b>The OG</b>", ogRows),
+    section("📋 <b>Registry</b>", [["", "full re-check running"]])
+  );
+}
+
+/** Options shared by the send and replace paths. */
+interface SendOpts {
+  replyToMessageId?: number;
+  linkPreviewUrl?: string;
+  /** Inline keyboard (actionKeyboard / mintKeyboard). Omitted → no buttons. */
+  replyMarkup?: InlineKeyboardMarkup;
 }
 
 /** sendMessage returning the new message_id (null on any failure). */
 async function sendChatMessage(
   chatId: string,
   text: string,
-  opts?: { replyToMessageId?: number; linkPreviewUrl?: string }
+  opts?: SendOpts
 ): Promise<number | null> {
   try {
     const res = (await tgCall("sendMessage", {
@@ -943,6 +1119,7 @@ async function sendChatMessage(
             },
           }
         : {}),
+      ...(opts?.replyMarkup ? { reply_markup: opts.replyMarkup } : {}),
     })) as { ok?: boolean; result?: { message_id?: number } } | null;
     const id = res?.result?.message_id;
     return typeof id === "number" ? id : null;
@@ -951,15 +1128,39 @@ async function sendChatMessage(
   }
 }
 
-/** Best-effort delete of one of the bot's own messages (own messages are always deletable within 48h). */
+/**
+ * Best-effort delete of one of the bot's own messages — always allowed within
+ * 48h, no admin rights needed. Returns whether Telegram confirmed it, so the
+ * dismiss button can say why nothing happened instead of failing silently.
+ */
 async function deleteChatMessage(
   chatId: string,
   messageId: number
-): Promise<void> {
+): Promise<boolean> {
   try {
-    await tgCall("deleteMessage", { chat_id: chatId, message_id: messageId });
+    const res = (await tgCall("deleteMessage", {
+      chat_id: chatId,
+      message_id: messageId,
+    })) as { ok?: boolean } | null;
+    return res?.ok === true;
   } catch {
     /* deletion is best-effort — worst case the old message lingers */
+    return false;
+  }
+}
+
+/** Acknowledge a callback query — without this the client spins forever. */
+async function answerCallbackQuery(
+  callbackQueryId: string,
+  text?: string
+): Promise<void> {
+  try {
+    await tgCall("answerCallbackQuery", {
+      callback_query_id: callbackQueryId,
+      ...(text ? { text } : {}),
+    });
+  } catch {
+    /* best-effort — the spinner clears on Telegram's own timeout */
   }
 }
 
@@ -973,7 +1174,7 @@ async function replaceChatMessage(
   chatId: string,
   oldMessageId: number,
   text: string,
-  opts?: { replyToMessageId?: number; linkPreviewUrl?: string }
+  opts?: SendOpts
 ): Promise<number | null> {
   const newId = await sendChatMessage(chatId, text, opts);
   if (newId != null) await deleteChatMessage(chatId, oldMessageId);
@@ -996,23 +1197,24 @@ async function finishVerdict(
 ): Promise<void> {
   try {
     if (outcome?.ok) {
-      const site = siteUrl();
+      const share = verdictShareUrl(mint, outcome.payload, siteUrl());
       await replaceChatMessage(
         chatId,
         interimMessageId,
-        formatMintVerdict(mint, outcome.payload, site),
+        formatMintVerdict(mint, outcome.payload),
         {
           replyToMessageId,
           // Unfurl the OGfinder share link into its og:image verdict card.
-          linkPreviewUrl: verdictShareUrl(mint, outcome.payload, site),
+          linkPreviewUrl: share,
+          replyMarkup: mintKeyboard(mint, share),
         }
       );
     } else {
       await replaceChatMessage(
         chatId,
         interimMessageId,
-        "🔍 <b>Couldn't verify this mint</b>\n\nNot found on-chain · or upstream APIs are down.",
-        { replyToMessageId }
+        `🔍 <b>Couldn't verify this mint</b>\n${row("", "not on-chain · or upstream APIs down", true)}`,
+        { replyToMessageId, replyMarkup: actionKeyboard({}) }
       );
     }
   } catch {
@@ -1047,7 +1249,15 @@ async function sendRegistryPreVerdict(
       chatId,
       placeholderId,
       formatRegistryVerdict(mint, entry),
-      { replyToMessageId }
+      {
+        replyToMessageId,
+        // No scan payload yet, so the verdict button points at the plain
+        // /?q=<mint> page the full scan will land on anyway.
+        replyMarkup: mintKeyboard(
+          mint,
+          `${siteUrl()}/?q=${encodeURIComponent(mint)}`
+        ),
+      }
     );
   } catch {
     /* registry pre-answer is best-effort — the full scan still replies */
@@ -1141,95 +1351,76 @@ async function runNameSearch(q: string): Promise<TokenResult[]> {
 }
 
 /**
- * Compact reply for /og <name>: top pick + up to 2 runners-up + the OGfinder
- * search link. Fast-phase ages are best-known, not verified — the label says
- * so honestly. Pure; exported for tests.
+ * Reply for /og <name> on the tree layout: verdict header, the pick as its
+ * own section, then up to 2 runners-up. Fast-phase ages are best-known, not
+ * verified — a bounded date says so with "≤", and an unproven order is
+ * disclosed in the header. The OGfinder search link moved to the inline
+ * keyboard. Pure; exported for tests.
  */
 export function formatNameSearchReply(
   query: string,
-  results: TokenResult[],
-  site: string
+  results: TokenResult[]
 ): string {
-  const link = `${site}/?q=${encodeURIComponent(query)}`;
+  const quoted = `<b>“${escapeHtml(query)}”</b>`;
   if (results.length === 0) {
-    // Same quote style and " · " separator as every other row in this reply.
-    return `🔎 No tokens found named “${escapeHtml(query)}” · <a href="${link}">search on OGfinder</a>`;
+    return headerBlock("🔎", quoted, "no tokens found");
   }
-  const minted = (t: TokenResult): string => {
-    const d = formatShareDate(t.createdAt);
-    if (!d) return "age unknown";
-    const ago = timeAgo(t.createdAt);
-    // Same rule as the mint verdict: a truncated walk is a bound, so the date
-    // gets "on or before" and the age becomes a minimum.
-    if (t.createdAtIsLowerBound) {
-      return `minted on or before ${d}${ago ? ` · at least ${ago}` : ""}`;
-    }
-    return `minted ${d}${ago ? ` · ${ago}` : ""}`;
-  };
   // The same gate as formatMintVerdict, on the same pure helper: a list whose
   // #1 could be overturned by an unresolved age never gets the crown here
   // either. Fast-phase ages make this common — which is the honest outcome.
   const order = ageOrderConfidence(results);
   const top = results[0];
-  const topSym = top.displaySymbol
-    ? ` ($${escapeHtml(top.displaySymbol)})`
-    : "";
-  // Same three-block layout as the mint verdict: headline, the pick as its own
-  // quoted card, then the runners-up and the footer.
-  const blocks: string[] = [];
-  const headline: string[] = [];
-  let pickLabel = "Likely OG";
-  // The pick card below is THE SAME TOKEN the headline just judged, so its
-  // glyph tracks the headline: the crown appears only on the branch that
-  // actually endorses. Withholding the crown in the headline and then printing
-  // it one line later would hand back the endorsement we just refused.
-  let pickGlyph = "👑";
+  const count = `${results.length} token${results.length === 1 ? "" : "s"}`;
+
+  // The pick section below is THE SAME TOKEN the header just judged, so its
+  // glyph tracks the header: the crown appears only on the branch that
+  // actually endorses. Withholding it in the header and then printing it one
+  // line later would hand back the endorsement we just refused.
+  let glyph: string;
+  let pickHead: string;
+  const verdict: string[] = [];
   if (top.safetyLevel === "danger") {
     // Same rule as the mint verdict: the oldest match keeps its rank and loses
     // the crown. buildTokenResults assesses the rank-1 candidate on every
     // ranking path, so this fires on the text path too.
-    headline.push(UNSAFE_HEADLINE);
-    const blocking = formatBlockingFlagLine(top);
-    if (blocking) headline.push(blocking);
-    headline.push(`🕰 ${UNSAFE_RANK1_LINE}`);
-    pickLabel = "Oldest match";
-    pickGlyph = "🕰";
+    glyph = "🛑";
+    verdict.push(UNSAFE_VERDICT, count, UNSAFE_RANK1_NOTE);
+    pickHead = `${UNPROVEN_GLYPH} <b>Oldest match</b>`;
   } else if (!order.proven) {
-    headline.push(
-      `${UNPROVEN_HEADLINE} · ${formatUnprovenSuffix(order.unresolvedCount)}`
+    glyph = UNPROVEN_GLYPH;
+    verdict.push(
+      UNPROVEN_VERDICT,
+      count,
+      `⏳ ${formatUnprovenSuffix(order.unresolvedCount)}`
     );
-    pickLabel = "Oldest known";
-    pickGlyph = "🕰";
+    pickHead = `${UNPROVEN_GLYPH} <b>Oldest known</b>`;
   } else {
-    // No crown here — it belongs to the pick in the quoted block below, and
-    // printing it twice in one message reads as clutter.
-    headline.push(`🔎 <b>OLDEST MATCH FOR “${escapeHtml(query)}”</b>`);
-  }
-  blocks.push(headline.join("\n"));
-
-  blocks.push(
-    `<blockquote>${pickGlyph} <b>${pickLabel}: ${escapeHtml(top.displayName)}</b>${topSym}\n` +
-      `📅 ${minted(top)}\n` +
-      `<code>${escapeHtml(top.mint)}</code></blockquote>`
-  );
-
-  const runners = results.slice(1, 3);
-  if (runners.length > 0) {
-    blocks.push(
-      runners
-        .map((t) => {
-          const sym = t.displaySymbol ? ` ($${escapeHtml(t.displaySymbol)})` : "";
-          return `#${t.rank} ${escapeHtml(t.displayName)}${sym} · ${minted(t)}`;
-        })
-        .join("\n")
-    );
+    glyph = "🔎";
+    verdict.push("<b>OLDEST MATCH</b>", count);
+    pickHead = "👑 <b>Likely OG</b>";
   }
 
-  blocks.push(
-    `${results.length} token${results.length === 1 ? "" : "s"} by best-known age · <a href="${link}">verify on OGfinder</a>`
+  // Fast-phase ages are best-known, not verified — a bounded date says so with
+  // "≤", exactly as the mint verdict does.
+  const pickRows: TreeRow[] = [["", nameValue(top.displayName, top.displaySymbol)]];
+  const born = bornValue(top);
+  const age = ageValue(top);
+  if (born) pickRows.push(["Born", age ? `${born} · ${age}` : born]);
+  pickRows.push(["", `<code>${escapeHtml(top.mint)}</code>`]);
+
+  const runners = results.slice(1, 3).map(
+    (t): TreeRow => [
+      `#${t.rank}`,
+      `${nameValue(t.displayName, t.displaySymbol)} · ${bornValue(t) ?? "age unknown"}`,
+    ]
   );
-  const lines = [blocks.join("\n\n")];
-  return lines.join("\n");
+
+  return joinBlocks(
+    headerBlock(glyph, quoted, verdict.join(" · ")),
+    top.safetyLevel === "danger" ? blockingSection(top) : null,
+    section(pickHead, pickRows),
+    section("📋 <b>Runners-up</b>", runners)
+  );
 }
 
 /** Replace the name-search placeholder with the result list (or a short error) at the bottom of the chat. */
@@ -1242,18 +1433,28 @@ async function finishNameSearch(
 ): Promise<void> {
   try {
     if (results) {
+      // Verdict → the OGfinder search for this name (what the old footer link
+      // pointed at); chart/trade → the pick the message is actually about.
+      const top = results[0]?.mint;
       await replaceChatMessage(
         chatId,
         interimMessageId,
-        formatNameSearchReply(query, results, siteUrl()),
-        { replyToMessageId }
+        formatNameSearchReply(query, results),
+        {
+          replyToMessageId,
+          replyMarkup: top
+            ? mintKeyboard(top, `${siteUrl()}/?q=${encodeURIComponent(query)}`)
+            : actionKeyboard({
+                verdict: `${siteUrl()}/?q=${encodeURIComponent(query)}`,
+              }),
+        }
       );
     } else {
       await replaceChatMessage(
         chatId,
         interimMessageId,
-        "🔍 <b>Search failed</b>\n\nUpstream APIs down · try again shortly.",
-        { replyToMessageId }
+        `🔍 <b>Search failed</b>\n${row("", "upstream APIs down · try again shortly", true)}`,
+        { replyToMessageId, replyMarkup: actionKeyboard({}) }
       );
     }
   } catch {
@@ -1382,7 +1583,8 @@ export const HELP_HTML = [
     "/help — this message",
   ].join("\n"),
   "Paste any Solana CA straight into the chat and I'll check it " +
-    "automatically — no command needed.",
+    "automatically — no command needed. Every answer carries Verdict, Chart " +
+    "and Trade buttons, plus a 🗑 button anyone can tap to dismiss it.",
   "<b>What I check:</b> on-chain age (which mint came first), mint and freeze " +
     "authority, Token-2022 extensions (transfer hooks, permanent delegate, " +
     "transfer fees), 24h buys vs sells, holder concentration and liquidity.",
@@ -1561,13 +1763,47 @@ async function handleBotCommand(
 // ————————————————————————— Update router —————————————————————————
 
 /**
+ * Dismiss button. ANYONE in the chat may press it — a bot can only ever delete
+ * its OWN message, so there is nothing to authorize and no permission model to
+ * get wrong. Any callback_data we do not recognise is a silent no-op (still
+ * acknowledged, so the client stops spinning).
+ *
+ * The query is ALWAYS answered, exactly once: the delete is attempted first so
+ * the answer can carry the reason it failed (own messages older than 48h can
+ * no longer be deleted), and the answer runs from a finally so a thrown delete
+ * still clears the spinner.
+ */
+async function handleCallbackQuery(
+  q: NonNullable<TelegramUpdate["callback_query"]>
+): Promise<void> {
+  const id = q.id;
+  if (!id) return;
+  const chatId = q.message?.chat?.id;
+  const messageId = q.message?.message_id;
+  if (q.data !== DELETE_CALLBACK_DATA || chatId == null || messageId == null) {
+    await answerCallbackQuery(id);
+    return;
+  }
+  let deleted = false;
+  try {
+    deleted = await deleteChatMessage(String(chatId), messageId);
+  } finally {
+    await answerCallbackQuery(id, deleted ? undefined : "Too old to delete");
+  }
+}
+
+/**
  * Route one Telegram update. Exported so tests can drive it with fixture
  * Update objects. Never throws — a poison update must not wedge the loop.
- * Note: the loop subscribes only ["message","my_chat_member"], so edited
- * messages (edited_message updates) never arrive here.
+ * Note: the loop subscribes only ["message","my_chat_member","callback_query"],
+ * so edited messages (edited_message updates) never arrive here.
  */
 export async function handleTelegramUpdate(u: TelegramUpdate): Promise<void> {
   try {
+    if (u.callback_query) {
+      await handleCallbackQuery(u.callback_query);
+      return;
+    }
     if (u.my_chat_member) {
       await handleMyChatMember(u.my_chat_member);
       return;
@@ -1671,7 +1907,7 @@ async function tgLongPollFetch(
         offset,
         limit: UPDATES_PER_POLL,
         timeout: LONG_POLL_WAIT_S,
-        allowed_updates: ["message", "my_chat_member"],
+        allowed_updates: ["message", "my_chat_member", "callback_query"],
       }),
       signal: controller.signal,
     });
@@ -1870,14 +2106,23 @@ export async function sendPendingTelegramAlerts(): Promise<void> {
       };
       const text =
         row.kind === "flip"
-          ? formatFlipAlertMessage(input, site)
-          : formatCloneAlertMessage(input, site);
+          ? formatFlipAlertMessage(input)
+          : formatCloneAlertMessage(input);
+      // Same targets the old trailing link line carried, now as buttons; a
+      // mint-less flip row keeps just the dismiss button.
+      const replyMarkup = row.mint
+        ? mintKeyboard(
+            row.mint,
+            `${site}/?q=${encodeURIComponent(row.mint)}`
+          )
+        : actionKeyboard({});
       try {
         await tgCall("sendMessage", {
           chat_id: row.telegram_chat_id,
           text,
           parse_mode: "HTML",
           disable_web_page_preview: true,
+          reply_markup: replyMarkup,
         });
         markStmt.run(row.id);
       } catch (err) {

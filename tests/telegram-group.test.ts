@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   extractMintCandidates,
-  formatBlockingFlagLine,
+  formatBlockingRows,
   formatDeployerLine,
   formatMintVerdict,
   formatNameSearchReply,
@@ -17,6 +17,7 @@ import type { MintScanPayload } from "@/lib/scan";
 import type { TokenResult } from "@/lib/types";
 import { decodeSharePayload } from "@/lib/share";
 import { timeAgo, formatAgeGap } from "@/lib/format";
+import { CONCENTRATION_PCT } from "@/lib/safety";
 
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"; // 44 chars
 const BONK = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"; // 44 chars
@@ -210,6 +211,9 @@ function tok(over: Partial<TokenResult> & { mint: string }): TokenResult {
 const OG_CREATED = "2022-12-20T21:10:46.000Z";
 const CLONE_CREATED = "2023-05-01T00:00:00.000Z";
 
+/** Header sub-line age: the same value timeAgo gives, minus the " ago". */
+const age = (iso: string) => timeAgo(iso).replace(/ ago$/, "");
+
 describe("formatMintVerdict", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -219,7 +223,7 @@ describe("formatMintVerdict", () => {
     vi.useRealTimers();
   });
 
-  it("renders the full OG verdict: crown, age, risk, market, links", () => {
+  it("renders the full OG verdict as a header + Stats + Security tree", () => {
     const payload: MintScanPayload = {
       results: [
         tok({
@@ -244,25 +248,31 @@ describe("formatMintVerdict", () => {
       scanName: "Bonk",
       scanSymbol: "BONK",
     };
-    const msg = formatMintVerdict(BONK, payload, SITE);
-    // Blocks separated by a blank line: verdict · subject · actions.
+    const msg = formatMintVerdict(BONK, payload);
+    // Sections separated by a blank line; inside one, every row but the last
+    // is "├ " and the last is "└ ".
     expect(msg).toBe(
       [
-        "👑 <b>THIS IS THE OG</b>",
+        `👑 <b>Bonk</b> ($BONK)\n└ <b>THE OG</b> · ${age(OG_CREATED)} · #1 of 2`,
         [
-          "<b>Bonk</b> ($BONK)",
-          `📅 minted Dec 20, 2022 · ${timeAgo(OG_CREATED)}`,
-          "🔒 renounced · 👥 top 10 hold 25%",
-          "💰 MC $2.3B · liq $4.5M · -3.2% 24h",
+          "📊 <b>Stats</b>",
+          "├ <code>Born  </code> Dec 20, 2022",
+          "├ <code>MC    </code> $2.3B",
+          "├ <code>Liq   </code> $4.5M",
+          "└ <code>24H   </code> -3.2%",
         ].join("\n"),
-        `<a href="${verdictShareUrl(BONK, payload, SITE)}">Verdict card</a> · ` +
-          `<a href="https://dexscreener.com/solana/${BONK}">Chart</a> · ` +
-          `<a href="https://trade.padre.gg/trade/solana/${BONK}">Trade</a>`,
+        [
+          "🔒 <b>Security</b>",
+          "├ <code>Auth  </code> 🟢 renounced",
+          "└ <code>Top 10</code> 25%",
+        ].join("\n"),
       ].join("\n\n")
     );
+    // The links left the text for the inline keyboard — no anchors survive.
+    expect(msg).not.toContain("<a href");
   });
 
-  it("renders NOT-the-OG with rank, OG comparison line, and escaped HTML", () => {
+  it("renders NOT-the-OG with rank, the OG's own section, and escaped HTML", () => {
     const gapMs = Date.parse(CLONE_CREATED) - Date.parse(OG_CREATED);
     const payload: MintScanPayload = {
       results: [
@@ -291,43 +301,48 @@ describe("formatMintVerdict", () => {
       scanName: "Bonk <2>",
       scanSymbol: "B&NK",
     };
-    const msg = formatMintVerdict(USDC, payload, SITE);
-    // Four blocks: verdict · subject · the real OG's quoted card · actions.
+    const msg = formatMintVerdict(USDC, payload);
+    // Four sections: verdict header · the real OG · Stats · Security.
     expect(msg).toBe(
       [
-        "🚫 <b>NOT THE OG</b> · #2 of 2 by age",
+        "🚫 <b>Bonk &lt;2&gt;</b> ($B&amp;NK)\n" +
+          `└ <b>NOT THE OG</b> · #2 of 2 · ${age(CLONE_CREATED)}`,
         [
-          "<b>Bonk &lt;2&gt;</b> ($B&amp;NK)",
-          `📅 minted May 1, 2023 · ${timeAgo(CLONE_CREATED)}`,
-          "⚠️ mint auth active · ⚠️ freeze auth · ✏️ mutable metadata · 🎭 lookalike characters",
+          "👑 <b>The OG</b>",
+          "├ Bonk &amp; Co ($BONK)",
+          `├ <code>Born  </code> Dec 20, 2022 · ${formatAgeGap(gapMs)} older`,
+          `└ <code>${BONK}</code>`,
         ].join("\n"),
-        "<blockquote>👑 <b>The OG: Bonk &amp; Co</b>\n" +
-          `📅 Dec 20, 2022 · ${formatAgeGap(gapMs)} older\n` +
-          `<code>${BONK}</code></blockquote>`,
-        `<a href="${verdictShareUrl(USDC, payload, SITE)}">Verdict card</a> · ` +
-          `<a href="https://dexscreener.com/solana/${USDC}">Chart</a> · ` +
-          `<a href="https://trade.padre.gg/trade/solana/${USDC}">Trade</a>`,
+        "📊 <b>Stats</b>\n└ <code>Born  </code> May 1, 2023",
+        [
+          "🔒 <b>Security</b>",
+          "├ <code>Auth  </code> ⚠️ mint + freeze active",
+          "├ <code>Meta  </code> ⚠️ mutable",
+          "└ <code>Name  </code> 🎭 lookalike chars",
+        ].join("\n"),
       ].join("\n\n")
     );
     // The pasted CA is never echoed back — only the OG's mint gets a <code>.
     expect(msg).not.toContain(`<code>${USDC}</code>`);
   });
 
-  it("omits risk/market lines when no flags or data exist, unknown date handled", () => {
+  it("drops every empty row AND every empty section when no data exists", () => {
     const payload: MintScanPayload = {
       results: [tok({ mint: WSOL, displayName: "Sol", displaySymbol: "SOL" })],
       query: "sol",
       scanName: "Sol",
       scanSymbol: "SOL",
     };
-    const msg = formatMintVerdict(WSOL, payload, SITE);
-    const blocks = msg.split("\n\n");
-    expect(blocks).toHaveLength(3); // verdict, subject, actions — nothing else
-    // The subject block is identity + the date row only: no risk, no market.
-    expect(blocks[1]).toBe("<b>Sol</b> ($SOL)\n📅 minted unknown date");
+    const msg = formatMintVerdict(WSOL, payload);
+    // Nothing is known but the rank, so the header is the whole message —
+    // no empty Stats/Security heads, no unknown-date placeholder row.
+    expect(msg).toBe("👑 <b>Sol</b> ($SOL)\n└ <b>THE OG</b> · #1 of 1");
+    expect(msg.split("\n\n")).toHaveLength(1);
+    expect(msg).not.toContain("Stats");
+    expect(msg).not.toContain("Security");
   });
 
-  it("includes the dev line between risk and market when deployer data exists", () => {
+  it("puts the deployer in the Security tree when deployer data exists", () => {
     const payload: MintScanPayload = {
       results: [
         tok({
@@ -348,16 +363,20 @@ describe("formatMintVerdict", () => {
       scanName: "Bonk",
       scanSymbol: "BONK",
     };
-    // Fixed row order inside the subject block: identity, age, risk, dev, market.
-    const subject = formatMintVerdict(BONK, payload, SITE)
-      .split("\n\n")[1]
-      .split("\n");
-    expect(subject[1]).toBe(`📅 minted Dec 20, 2022 · ${timeAgo(OG_CREATED)}`);
-    expect(subject[2]).toBe("🔒 renounced");
-    expect(subject[3]).toBe(
-      "👤 dev: <code>7cJM…TgLq</code> · 3 tokens created · wallet since 2024"
+    const blocks = formatMintVerdict(BONK, payload).split("\n\n");
+    // Stats: born then the market rows; price stands in for a missing MC.
+    expect(blocks[1]).toBe(
+      "📊 <b>Stats</b>\n├ <code>Born  </code> Dec 20, 2022\n└ <code>Price </code> $1.50"
     );
-    expect(subject[4]).toBe("💰 $1.50");
+    // Security: fixed row order — authority, then the dev row, last.
+    expect(blocks[2]).toBe(
+      [
+        "🔒 <b>Security</b>",
+        // freeze authority was never reported, so only the mint side is claimed
+        "├ <code>Auth  </code> 🟢 mint renounced",
+        "└ <code>Dev   </code> <code>7cJM…TgLq</code> · 3 launches · 2024",
+      ].join("\n")
+    );
   });
 
   it("falls back to a resolve-only message when the mint is not in results", () => {
@@ -367,8 +386,8 @@ describe("formatMintVerdict", () => {
       scanName: "Ghost <T>",
       scanSymbol: "GH",
     };
-    expect(formatMintVerdict(WSOL, payload, SITE)).toBe(
-      "🔍 Resolved <b>Ghost &lt;T&gt;</b> ($GH) but couldn't rank it against lookalikes — try a name search on OGfinder."
+    expect(formatMintVerdict(WSOL, payload)).toBe(
+      "🔍 <b>Ghost &lt;T&gt;</b> ($GH)\n└ couldn't rank vs lookalikes"
     );
   });
 });
@@ -414,69 +433,85 @@ describe("formatMintVerdict order gating", () => {
   });
 
   it("never crowns a rank-1 whose ordering is unproven, and counts what blocks it", () => {
-    const blocks = formatMintVerdict(BONK, unprovenPayload(), SITE).split("\n\n");
+    const blocks = formatMintVerdict(BONK, unprovenPayload()).split("\n\n");
     expect(blocks[0]).toBe(
-      "🕰 <b>OLDEST KNOWN SO FAR</b> · 1 token still unresolved"
+      `🕰 <b>Bonk</b> ($BONK)\n└ <b>OLDEST KNOWN</b> · ${age(OG_CREATED)} · #1 of 2`
     );
-    expect(blocks[0]).not.toContain("THIS IS THE OG");
+    expect(blocks[0]).not.toMatch(/\bTHE OG\b/);
     expect(blocks[0]).not.toContain("👑");
-    // The limit is stated, with the count, in its own caveat block.
-    expect(blocks[2]).toContain("1 matching token has a history too deep");
-    expect(blocks[2]).toContain("not a verified OG");
+    // The limit is stated, with the count, as the Security tree's Age row —
+    // a row that can never be dropped, since it forces the section to exist.
+    expect(blocks.at(-1)).toBe(
+      "🔒 <b>Security</b>\n└ <code>Age   </code> ⏳ 1 unverified"
+    );
   });
 
-  it("says the order is not proven when the count is unavailable", () => {
+  it("says the order is unproven when the count is unavailable", () => {
     const payload = { ...unprovenPayload(), ageUnresolvedCount: undefined };
-    const blocks = formatMintVerdict(BONK, payload, SITE).split("\n\n");
-    expect(blocks[0]).toBe("🕰 <b>OLDEST KNOWN SO FAR</b> · order not proven");
+    const blocks = formatMintVerdict(BONK, payload).split("\n\n");
+    expect(blocks[0]).toContain("<b>OLDEST KNOWN</b>");
     expect(blocks[0]).not.toContain("👑");
+    expect(blocks.at(-1)).toBe(
+      "🔒 <b>Security</b>\n└ <code>Age   </code> ⏳ order unproven"
+    );
   });
 
-  it("hedges the comparison line for a NOT-the-OG scan too", () => {
-    const msg = formatMintVerdict(USDC, unprovenPayload(), SITE);
+  it("hedges the OG section for a NOT-the-OG scan too", () => {
+    const msg = formatMintVerdict(USDC, unprovenPayload());
     const blocks = msg.split("\n\n");
     expect(blocks[0]).toContain("NOT THE OG");
     // Nothing in an unproven message is crowned — not even the cohort's #1.
     expect(msg).not.toContain("👑");
-    // The scanned side is the truncated one, so its own date is a bound and
-    // the gap to #1 is an upper limit — it could even be the older token.
+    // The scanned side is the truncated one, so its own date is a bound ("≤")
+    // and its age a minimum ("≥"); the gap to #1 is an upper limit.
+    expect(blocks[0]).toBe(
+      "🚫 <b>Bonk</b> ($BONK)\n" +
+        `└ <b>NOT THE OG</b> · #2 of 2 · ≥ ${age(CLONE_CREATED)}`
+    );
     expect(blocks[1]).toBe(
-      "<b>Bonk</b> ($BONK)\n" +
-        `📅 minted on or before May 1, 2023 · at least ${timeAgo(CLONE_CREATED)}`
-    );
-    expect(blocks[2]).toBe(
-      "<blockquote>🕰 <b>Oldest known: Bonk</b>\n" +
-        `📅 Dec 20, 2022 · at most ${formatAgeGap(
+      [
+        "🕰 <b>Oldest known</b>",
+        "├ Bonk ($BONK)",
+        `├ <code>Born  </code> Dec 20, 2022 · ≤ ${formatAgeGap(
           Date.parse(CLONE_CREATED) - Date.parse(OG_CREATED)
-        )} older\n` +
-        `<code>${BONK}</code></blockquote>`
+        )} older`,
+        `└ <code>${BONK}</code>`,
+      ].join("\n")
     );
+    expect(blocks[2]).toBe("📊 <b>Stats</b>\n└ <code>Born  </code> ≤ May 1, 2023");
   });
 
   it("bounds the gap the other way when the #1 is the truncated side", () => {
     const p = unprovenPayload();
     p.results[0].createdAtIsLowerBound = true;
     delete p.results[1].createdAtIsLowerBound;
-    const blocks = formatMintVerdict(USDC, p, SITE).split("\n\n");
-    expect(blocks[1]).toBe(
-      `<b>Bonk</b> ($BONK)\n📅 minted May 1, 2023 · ${timeAgo(CLONE_CREATED)}`
+    const blocks = formatMintVerdict(USDC, p).split("\n\n");
+    expect(blocks[0]).toBe(
+      `🚫 <b>Bonk</b> ($BONK)\n└ <b>NOT THE OG</b> · #2 of 2 · ${age(CLONE_CREATED)}`
     );
-    expect(blocks[2]).toBe(
-      "<blockquote>🕰 <b>Oldest known: Bonk</b>\n" +
-        `📅 on or before Dec 20, 2022 · at least ${formatAgeGap(
+    expect(blocks[1]).toBe(
+      [
+        "🕰 <b>Oldest known</b>",
+        "├ Bonk ($BONK)",
+        `├ <code>Born  </code> ≤ Dec 20, 2022 · ≥ ${formatAgeGap(
           Date.parse(CLONE_CREATED) - Date.parse(OG_CREATED)
-        )} older\n` +
-        `<code>${BONK}</code></blockquote>`
+        )} older`,
+        `└ <code>${BONK}</code>`,
+      ].join("\n")
     );
   });
 
   it("drops the gap entirely when BOTH dates are bounds", () => {
     const p = unprovenPayload();
     p.results[0].createdAtIsLowerBound = true;
-    const blocks = formatMintVerdict(USDC, p, SITE).split("\n\n");
-    expect(blocks[2]).toBe(
-      "<blockquote>🕰 <b>Oldest known: Bonk</b>\n" +
-        `📅 on or before Dec 20, 2022\n<code>${BONK}</code></blockquote>`
+    const blocks = formatMintVerdict(USDC, p).split("\n\n");
+    expect(blocks[1]).toBe(
+      [
+        "🕰 <b>Oldest known</b>",
+        "├ Bonk ($BONK)",
+        "├ <code>Born  </code> ≤ Dec 20, 2022",
+        `└ <code>${BONK}</code>`,
+      ].join("\n")
     );
   });
 
@@ -538,35 +573,28 @@ describe("formatMintVerdict safety gating", () => {
 
   it("leads with the warning and NEVER crowns a danger token", () => {
     const payload = scanOf(dangerToken());
-    const msg = formatMintVerdict(BONK, payload, SITE);
+    const msg = formatMintVerdict(BONK, payload);
     const blocks = msg.split("\n\n");
-    // The whole warning rides in block 1, above the token itself.
-    const verdict = blocks[0].split("\n");
-    expect(verdict[0]).toBe("🛑 <b>UNSAFE — DO NOT BUY</b>");
-    // Each blocking mechanism named — never a generic accusation.
-    expect(verdict[1]).toBe("⛔ freeze authority active");
-    expect(verdict[2]).toBe(
-      "🕰 oldest by age, but OGfinder will not call it the OG"
+    // The warning IS the verdict sub-line; the rank fact survives beside it.
+    expect(blocks[0]).toBe(
+      "🛑 <b>Bonk</b> ($BONK)\n└ <b>UNSAFE — DO NOT BUY</b> · #1 of 1 · " +
+        `${age(OG_CREATED)} · uncrowned`
     );
-    const subject = blocks[1].split("\n");
-    expect(subject[0]).toBe("<b>Bonk</b> ($BONK)");
-    // The age fact itself survives untouched.
-    expect(subject[1]).toBe(`📅 minted Dec 20, 2022 · ${timeAgo(OG_CREATED)}`);
-    // Cautions still reported, in the risk slot, below the blocking findings.
-    expect(subject[2]).toBe("⚠️ mint authority active · metadata still mutable");
+    // Each blocking mechanism named, one row each — never a generic accusation.
+    expect(blocks[1]).toBe("⛔ <b>Blocking</b>\n└ freeze authority active");
+    // The age fact itself survives untouched, in Stats.
+    expect(blocks[2]).toBe("📊 <b>Stats</b>\n└ <code>Born  </code> Dec 20, 2022");
+    // Cautions still reported, in the Security tree, below the blocking ones.
+    expect(blocks[3]).toBe(
+      "🔒 <b>Security</b>\n└ <code>Risk  </code> ⚠️ mint authority active · metadata still mutable"
+    );
     // Grep our own output: no crown, no endorsement, no accusation.
     expect(msg).not.toContain("👑");
-    expect(msg).not.toContain("THIS IS THE OG");
-    // …and the verdict block never reads as an OG claim of any wording.
-    expect(blocks[0]).not.toMatch(/\bTHE OG\b/);
+    expect(msg).not.toMatch(/\bTHE OG\b/);
     expect(msg.toLowerCase()).not.toContain("scam");
-    // Actions block still last.
-    expect(blocks[blocks.length - 1]).toContain(
-      `<a href="https://dexscreener.com/solana/${BONK}">Chart</a>`
-    );
   });
 
-  it("keeps the factual rank line for a danger token that is NOT the oldest", () => {
+  it("keeps the factual rank for a danger token that is NOT the oldest", () => {
     const payload: MintScanPayload = {
       results: [
         tok({ mint: WSOL, displayName: "Bonk", rank: 1 }),
@@ -581,37 +609,46 @@ describe("formatMintVerdict safety gating", () => {
       scanName: "Bonk",
       scanSymbol: "BONK",
     };
-    const msg = formatMintVerdict(USDC, payload, SITE);
-    const verdict = msg.split("\n\n")[0].split("\n");
-    expect(verdict[0]).toBe("🛑 <b>UNSAFE — DO NOT BUY</b>");
-    expect(verdict[1]).toBe("⛔ transfer hook program · buys but no sells");
-    // The rank fact rides in the danger block, stated but never bolded into
-    // a headline that competes with the warning.
-    expect(verdict[2]).toBe("🚫 not the OG · #2 of 2 by age");
-    // The scanned token is never the crowned one; the crown belongs to #1.
-    expect(msg.split("\n\n")[1]).toContain("<b>Bonk</b> ($BONK)");
-    expect(verdict.join("\n")).not.toContain("👑");
+    const msg = formatMintVerdict(USDC, payload);
+    const blocks = msg.split("\n\n");
+    // The rank fact rides in the verdict sub-line, stated but never turned
+    // into a headline that competes with the warning.
+    expect(blocks[0]).toBe(
+      `🛑 <b>Bonk</b> ($BONK)\n└ <b>UNSAFE — DO NOT BUY</b> · #2 of 2 · ${age(OG_CREATED)}`
+    );
+    // The scanned token is never the crowned one — no crown in its header.
+    expect(blocks[0]).not.toContain("👑");
+    expect(blocks[1]).toBe(
+      "⛔ <b>Blocking</b>\n├ transfer hook program\n└ buys but no sells"
+    );
+    // …the crown belongs to the cohort's actual #1, in its own section.
+    expect(blocks[2]).toBe(`👑 <b>The OG</b>\n├ Bonk ($TOK)\n└ <code>${WSOL}</code>`);
   });
 
-  it("keeps the crown for a caution token and appends the findings", () => {
+  it("keeps the crown for a caution token and reports the findings", () => {
     const payload = scanOf(
       dangerToken({
         safetyLevel: "caution",
         safetyFlags: ["mutable-metadata"],
       })
     );
-    const blocks = formatMintVerdict(BONK, payload, SITE).split("\n\n");
-    expect(blocks[0]).toBe("👑 <b>THIS IS THE OG</b>");
-    expect(blocks[1].split("\n")[0]).toBe("<b>Bonk</b> ($BONK)");
-    expect(blocks[1].split("\n")[2]).toBe("⚠️ metadata still mutable");
+    const blocks = formatMintVerdict(BONK, payload).split("\n\n");
+    expect(blocks[0]).toBe(
+      `👑 <b>Bonk</b> ($BONK)\n└ <b>THE OG</b> · ${age(OG_CREATED)} · #1 of 1`
+    );
+    expect(blocks.at(-1)).toBe(
+      "🔒 <b>Security</b>\n└ <code>Risk  </code> ⚠️ metadata still mutable"
+    );
   });
 
   it("reports 'clear' as an absence of findings, never as safe", () => {
     const payload = scanOf(
       dangerToken({ safetyLevel: "clear", safetyFlags: [] })
     );
-    const msg = formatMintVerdict(BONK, payload, SITE);
-    expect(msg.split("\n\n")[1].split("\n")[2]).toBe("🔎 no blocking flags found");
+    const msg = formatMintVerdict(BONK, payload);
+    expect(msg.split("\n\n").at(-1)).toBe(
+      "🔒 <b>Security</b>\n└ <code>Risk  </code> 🟢 no blocking flags"
+    );
     expect(msg.toLowerCase()).not.toContain("safe");
   });
 
@@ -619,16 +656,16 @@ describe("formatMintVerdict safety gating", () => {
     const payload = scanOf(
       dangerToken({ safetyLevel: "unknown", safetyFlags: [] })
     );
-    const msg = formatMintVerdict(BONK, payload, SITE);
-    expect(msg.split("\n\n")[1].split("\n")[2]).toBe(
-      "❔ safety checks unavailable"
+    const msg = formatMintVerdict(BONK, payload);
+    expect(msg.split("\n\n").at(-1)).toBe(
+      "🔒 <b>Security</b>\n└ <code>Risk  </code> ❔ checks unavailable"
     );
-    expect(msg).not.toContain("no blocking flags found");
+    expect(msg).not.toContain("no blocking flags");
     // An unrun check must not cost the rank-1 token its crown.
-    expect(msg).toContain("👑 <b>THIS IS THE OG</b>");
+    expect(msg).toContain("👑 <b>Bonk</b> ($BONK)\n└ <b>THE OG</b>");
   });
 
-  it("prints the 24h buy/sell counts behind a no-sells finding", () => {
+  it("prints the 24h buy/sell counts on the finding that rests on them", () => {
     const payload = scanOf(
       dangerToken({
         safetyFlags: ["no-sells"],
@@ -637,8 +674,9 @@ describe("formatMintVerdict safety gating", () => {
         liquidityUsd: 18_400,
       })
     );
-    const msg = formatMintVerdict(BONK, payload, SITE);
-    expect(msg).toContain("💰 liq $18.4K · 212 buys / 0 sells 24h");
+    const msg = formatMintVerdict(BONK, payload);
+    expect(msg).toContain("⛔ <b>Blocking</b>\n└ buys but no sells · 212/0");
+    expect(msg).toContain("<code>Liq   </code> $18.4K");
   });
 
   it("leaves an UNASSESSED token on the legacy chips (absent is not clean)", () => {
@@ -651,14 +689,23 @@ describe("formatMintVerdict safety gating", () => {
         freezeAuthorityActive: true,
       })
     );
-    const msg = formatMintVerdict(BONK, payload, SITE);
-    expect(msg).toContain("⚠️ freeze auth");
-    expect(msg).not.toContain("no blocking flags found");
-    expect(msg).not.toContain("safety checks unavailable");
+    const msg = formatMintVerdict(BONK, payload);
+    expect(msg).toContain("<code>Auth  </code> ⚠️ freeze active");
+    expect(msg).not.toContain("no blocking flags");
+    expect(msg).not.toContain("checks unavailable");
+  });
+
+  it("flags a top-10 share at or above the concentration threshold", () => {
+    const at = (pct: number) =>
+      formatMintVerdict(BONK, scanOf(dangerToken({ topHolderPct: pct })));
+    expect(at(94)).toContain("<code>Top 10</code> 94% ⚠️");
+    expect(at(CONCENTRATION_PCT)).toContain(`<code>Top 10</code> ${CONCENTRATION_PCT}% ⚠️`);
+    expect(at(38)).toContain("<code>Top 10</code> 38%");
+    expect(at(38)).not.toContain("38% ⚠️");
   });
 });
 
-describe("formatBlockingFlagLine / formatSafetyRiskChip", () => {
+describe("formatBlockingRows / formatSafetyRiskChip", () => {
   it("orders blocking findings first and drops unknown codes", () => {
     const t = tok({
       mint: BONK,
@@ -668,17 +715,17 @@ describe("formatBlockingFlagLine / formatSafetyRiskChip", () => {
         "permanent-delegate",
       ],
     });
-    expect(formatBlockingFlagLine(t)).toBe("⛔ permanent delegate set");
+    expect(formatBlockingRows(t)).toEqual(["permanent delegate set"]);
     expect(formatSafetyRiskChip({ ...t, safetyLevel: "danger" })).toBe(
       "⚠️ mint authority active"
     );
   });
 
-  it("returns null when nothing blocks and when the token was never assessed", () => {
-    expect(formatBlockingFlagLine(tok({ mint: BONK }))).toBeNull();
+  it("returns nothing when nothing blocks and when the token was never assessed", () => {
+    expect(formatBlockingRows(tok({ mint: BONK }))).toEqual([]);
     expect(
-      formatBlockingFlagLine(tok({ mint: BONK, safetyFlags: ["low-liquidity"] }))
-    ).toBeNull();
+      formatBlockingRows(tok({ mint: BONK, safetyFlags: ["low-liquidity"] }))
+    ).toEqual([]);
     expect(formatSafetyRiskChip(tok({ mint: BONK }))).toBeNull();
   });
 });
@@ -740,7 +787,7 @@ describe("formatDeployerLine", () => {
       }),
       NOW
     );
-    expect(line).toBe("👤 dev: <code>7cJM…TgLq</code>");
+    expect(line).toBe("<code>7cJM…TgLq</code>");
   });
 
   it("flags serial deployers at the ≥10 threshold, plain count below", () => {
@@ -749,15 +796,11 @@ describe("formatDeployerLine", () => {
         tok({ mint: BONK, deployerAddress: DEV, deployerTokensCreated: n }),
         NOW
       );
-    expect(at(9)).toBe("👤 dev: <code>7cJM…TgLq</code> · 9 tokens created");
-    expect(at(10)).toBe(
-      "👤 dev: <code>7cJM…TgLq</code> · ⚠️ serial deployer: 10 tokens created"
-    );
-    expect(at(1)).toBe("👤 dev: <code>7cJM…TgLq</code> · 1 token created");
+    expect(at(9)).toBe("<code>7cJM…TgLq</code> · 9 launches");
+    expect(at(10)).toBe("<code>7cJM…TgLq</code> · ⚠️ 10 launches");
+    expect(at(1)).toBe("<code>7cJM…TgLq</code> · 1 launch");
     // The Enhanced-API count is one page — the cap reads as "or more".
-    expect(at(100)).toBe(
-      "👤 dev: <code>7cJM…TgLq</code> · ⚠️ serial deployer: 100+ tokens created"
-    );
+    expect(at(100)).toBe("<code>7cJM…TgLq</code> · ⚠️ 100+ launches");
   });
 
   it("flags fresh wallets (<7d) and shows the year for older ones", () => {
@@ -766,19 +809,15 @@ describe("formatDeployerLine", () => {
         tok({ mint: BONK, deployerAddress: DEV, deployerWalletFirstSeenMs: ms }),
         NOW
       );
-    expect(at(NOW - 6 * DAY)).toBe(
-      "👤 dev: <code>7cJM…TgLq</code> · ⚠️ fresh wallet"
-    );
+    expect(at(NOW - 6 * DAY)).toBe("<code>7cJM…TgLq</code> · ⚠️ new wallet");
     // Boundary: exactly 7 days is no longer fresh.
-    expect(at(NOW - 7 * DAY)).toBe(
-      "👤 dev: <code>7cJM…TgLq</code> · wallet since 2026"
-    );
+    expect(at(NOW - 7 * DAY)).toBe("<code>7cJM…TgLq</code> · 2026");
     expect(at(Date.parse("2022-03-01T00:00:00.000Z"))).toBe(
-      "👤 dev: <code>7cJM…TgLq</code> · wallet since 2022"
+      "<code>7cJM…TgLq</code> · 2022"
     );
   });
 
-  it("renders 'established wallet' when history is too deep to date", () => {
+  it("renders 'established' when history is too deep to date", () => {
     const line = formatDeployerLine(
       tok({
         mint: BONK,
@@ -789,9 +828,7 @@ describe("formatDeployerLine", () => {
       }),
       NOW
     );
-    expect(line).toBe(
-      "👤 dev: <code>7cJM…TgLq</code> · ⚠️ serial deployer: 12 tokens created · established wallet"
-    );
+    expect(line).toBe("<code>7cJM…TgLq</code> · ⚠️ 12 launches · established");
   });
 });
 
@@ -855,23 +892,22 @@ describe("formatRegistryVerdict", () => {
     const msg = formatRegistryVerdict(BONK, entry());
     expect(msg).toBe(
       [
-        "🕰 <b>OLDEST BY AGE</b>",
-        "<b>Bonk</b> ($BONK)\n📅 oldest of this name · checked today",
-        "<i>From the OGfinder registry — safety checks still running, full verdict next.</i>",
+        "🕰 <b>Bonk</b> ($BONK)\n└ <b>OLDEST BY AGE</b> · checked today",
+        "📋 <b>Registry</b>\n├ safety checks still running\n└ full verdict next",
       ].join("\n\n")
     );
     // The endorsement belongs to the full scan, which has the safety verdict.
     expect(msg).not.toContain("👑");
-    expect(msg).not.toContain("THIS IS THE OG");
+    expect(msg).not.toMatch(/\bTHE OG\b/);
   });
 
   it("flags a non-OG with the registered OG's mint and mint date", () => {
     expect(formatRegistryVerdict(USDC, entry())).toBe(
       [
         "🚫 <b>NOT THE OG</b>",
-        "<blockquote>👑 <b>The OG: Bonk</b> ($BONK)\n" +
-          `📅 minted Dec 20, 2022\n<code>${BONK}</code></blockquote>`,
-        "<i>From the OGfinder registry — full re-check running.</i>",
+        "👑 <b>The OG</b>\n├ Bonk ($BONK)\n" +
+          `├ <code>Born  </code> Dec 20, 2022\n└ <code>${BONK}</code>`,
+        "📋 <b>Registry</b>\n└ full re-check running",
       ].join("\n\n")
     );
   });
@@ -881,14 +917,14 @@ describe("formatRegistryVerdict", () => {
       USDC,
       entry({ ogName: "Bonk <&> Co", ogSymbol: "B&NK", ogCreatedAtMs: null })
     );
-    expect(msg).toContain("<b>The OG: Bonk &lt;&amp;&gt; Co</b> ($B&amp;NK)");
-    expect(msg).not.toContain("minted");
+    expect(msg).toContain("├ Bonk &lt;&amp;&gt; Co ($B&amp;NK)");
+    expect(msg).not.toContain("Born");
     expect(msg).toContain(`<code>${BONK}</code>`);
   });
 
   it("omits the symbol suffix when null", () => {
     const msg = formatRegistryVerdict(BONK, entry({ ogSymbol: null }));
-    expect(msg).toContain("<b>Bonk</b>\n📅 oldest of this name");
+    expect(msg).toContain("🕰 <b>Bonk</b>\n└ <b>OLDEST BY AGE</b>");
     expect(msg).not.toContain("$"); // no empty "($)" suffix left behind
   });
 });
@@ -925,17 +961,20 @@ describe("formatNameSearchReply", () => {
       tok({ mint: WSOL, displayName: "Bonk Inu", displaySymbol: "BINU", rank: 3 }),
       tok({ mint: "Mint4", displayName: "Bonk 4", rank: 4 }),
     ];
-    expect(formatNameSearchReply("bonk", results, SITE)).toBe(
+    expect(formatNameSearchReply("bonk", results)).toBe(
       [
-        "🔎 <b>OLDEST MATCH FOR “bonk”</b>",
-        `<blockquote>👑 <b>Likely OG: Bonk</b> ($BONK)\n` +
-          `📅 minted Dec 20, 2022 · ${timeAgo(OG_CREATED)}\n` +
-          `<code>${BONK}</code></blockquote>`,
+        "🔎 <b>“bonk”</b>\n└ <b>OLDEST MATCH</b> · 4 tokens",
         [
-          `#2 Bonk 2.0 ($BONK2) · minted May 1, 2023 · ${timeAgo(CLONE_CREATED)}`,
-          "#3 Bonk Inu ($BINU) · age unknown",
+          "👑 <b>Likely OG</b>",
+          "├ Bonk ($BONK)",
+          `├ <code>Born  </code> Dec 20, 2022 · ${age(OG_CREATED)}`,
+          `└ <code>${BONK}</code>`,
         ].join("\n"),
-        `4 tokens by best-known age · <a href="${SITE}/?q=bonk">verify on OGfinder</a>`,
+        [
+          "📋 <b>Runners-up</b>",
+          "├ <code>#2    </code> Bonk 2.0 ($BONK2) · May 1, 2023",
+          "└ <code>#3    </code> Bonk Inu ($BINU) · age unknown",
+        ].join("\n"),
       ].join("\n\n")
     );
   });
@@ -944,13 +983,15 @@ describe("formatNameSearchReply", () => {
     const one = [
       tok({ mint: WSOL, displayName: "Sol", displaySymbol: "SOL", rank: 1 }),
     ];
-    const single = formatNameSearchReply("sol", one, SITE);
-    // verdict, pick card, footer — the runners-up block is absent entirely.
-    expect(single.split("\n\n")).toHaveLength(3);
+    const single = formatNameSearchReply("sol", one);
+    // header + pick — the runners-up section is absent entirely.
+    expect(single.split("\n\n")).toHaveLength(2);
     expect(single).not.toContain("#2");
-    expect(single).toContain("1 token by best-known age");
-    expect(formatNameSearchReply("nope coin", [], SITE)).toBe(
-      `🔎 No tokens found named “nope coin” · <a href="${SITE}/?q=nope%20coin">search on OGfinder</a>`
+    expect(single).toContain("1 token");
+    // An undatable leader is itself an unproven order — never crowned.
+    expect(single).not.toContain("👑");
+    expect(formatNameSearchReply("nope coin", [])).toBe(
+      "🔎 <b>“nope coin”</b>\n└ no tokens found"
     );
   });
 
@@ -968,25 +1009,26 @@ describe("formatNameSearchReply", () => {
       }),
       tok({ mint: USDC, displayName: "Bonk 2.0", rank: 2 }),
     ];
-    const msg = formatNameSearchReply("bonk", results, SITE);
+    const msg = formatNameSearchReply("bonk", results);
     const blocks = msg.split("\n\n");
     expect(blocks[0]).toBe(
+      "🛑 <b>“bonk”</b>\n└ <b>UNSAFE — DO NOT BUY</b> · 2 tokens · uncrowned"
+    );
+    expect(blocks[1]).toBe("⛔ <b>Blocking</b>\n└ new accounts start frozen");
+    // The pick section keeps every fact — name, symbol, date, mint — and loses
+    // only the crown the header just refused.
+    expect(blocks[2]).toBe(
       [
-        "🛑 <b>UNSAFE — DO NOT BUY</b>",
-        "⛔ new accounts start frozen",
-        "🕰 oldest by age, but OGfinder will not call it the OG",
+        "🕰 <b>Oldest match</b>",
+        "├ Bonk ($BONK)",
+        `├ <code>Born  </code> Dec 20, 2022 · ${age(OG_CREATED)}`,
+        `└ <code>${BONK}</code>`,
       ].join("\n")
     );
-    // The pick card keeps every fact — name, symbol, date, mint — and loses
-    // only the crown the headline just refused.
-    expect(blocks[1]).toBe(
-      "<blockquote>🕰 <b>Oldest match: Bonk</b> ($BONK)\n" +
-        `📅 minted Dec 20, 2022 · ${timeAgo(OG_CREATED)}\n` +
-        `<code>${BONK}</code></blockquote>`
-    );
     expect(msg).not.toContain("👑");
+    expect(msg).not.toMatch(/\bTHE OG\b/);
     // Ranking below it is unchanged — the list is still factual.
-    expect(msg).toContain("#2 Bonk 2.0");
+    expect(msg).toContain("<code>#2    </code> Bonk 2.0");
   });
 
   it("withholds the crown when a match below is still a lower bound", () => {
@@ -1008,22 +1050,24 @@ describe("formatNameSearchReply", () => {
         createdAtIsLowerBound: true,
       }),
     ];
-    const msg = formatNameSearchReply("bonk", results, SITE);
+    const msg = formatNameSearchReply("bonk", results);
     const blocks = msg.split("\n\n");
     expect(blocks[0]).toBe(
-      "🕰 <b>OLDEST KNOWN SO FAR</b> · 1 token still unresolved"
+      "🕰 <b>“bonk”</b>\n└ <b>OLDEST KNOWN</b> · 2 tokens · ⏳ 1 unverified"
     );
     expect(blocks[1]).toBe(
-      "<blockquote>🕰 <b>Oldest known: Bonk</b> ($BONK)\n" +
-        `📅 minted Dec 20, 2022 · ${timeAgo(OG_CREATED)}\n` +
-        `<code>${BONK}</code></blockquote>`
+      [
+        "🕰 <b>Oldest known</b>",
+        "├ Bonk ($BONK)",
+        `├ <code>Born  </code> Dec 20, 2022 · ${age(OG_CREATED)}`,
+        `└ <code>${BONK}</code>`,
+      ].join("\n")
     );
     expect(msg).not.toContain("👑");
+    expect(msg).not.toMatch(/\bTHE OG\b/);
     // The bounded runner-up says so on its own row as well.
     expect(blocks[2]).toBe(
-      `#2 Bonk 2.0 ($TOK) · minted on or before May 1, 2023 · at least ${timeAgo(
-        CLONE_CREATED
-      )}`
+      "📋 <b>Runners-up</b>\n└ <code>#2    </code> Bonk 2.0 ($TOK) · ≤ May 1, 2023"
     );
   });
 
@@ -1045,23 +1089,22 @@ describe("formatNameSearchReply", () => {
         createdAtMs: Date.parse(CLONE_CREATED),
       }),
     ];
-    expect(formatNameSearchReply("bonk", results, SITE)).toContain(
-      "👑 <b>Likely OG: Bonk</b> ($BONK)"
+    expect(formatNameSearchReply("bonk", results)).toContain(
+      "👑 <b>Likely OG</b>\n├ Bonk ($BONK)"
     );
   });
 
   it("escapes HTML in the query and token fields", () => {
-    const msg = formatNameSearchReply(
-      "a<b>",
-      [tok({ mint: WSOL, displayName: "<X> & Co", displaySymbol: "A&B", rank: 1 })],
-      SITE
-    );
-    // Name and symbol are escaped inside the pick card's bold label…
-    expect(msg).toContain("&lt;X&gt; &amp; Co</b> ($A&amp;B)");
+    const msg = formatNameSearchReply("a<b>", [
+      tok({ mint: WSOL, displayName: "<X> & Co", displaySymbol: "A&B", rank: 1 }),
+    ]);
+    // The query is escaped in the header…
+    expect(msg).toContain("<b>“a&lt;b&gt;”</b>");
+    // …name and symbol are escaped in the pick row…
+    expect(msg).toContain("├ &lt;X&gt; &amp; Co ($A&amp;B)");
     // …and no raw tag from either field survives anywhere in the message.
     expect(msg).not.toContain("<X>");
     expect(msg).not.toContain("A&B");
-    expect(msg).toContain(`${SITE}/?q=a%3Cb%3E`);
   });
 });
 
@@ -1185,6 +1228,104 @@ describe("handleTelegramUpdate (fixture updates)", () => {
       },
     });
     expect(groupRow(lib, "-999")).toBeUndefined();
+  });
+});
+
+// ————————————————————— dismiss button (callback_query) —————————————————————
+
+/**
+ * Fresh module graph WITH a token and a stubbed global fetch, so the Bot API
+ * calls the router makes are observable. `deleteStatus` lets a test make
+ * deleteMessage fail exactly as Telegram does for a message past the 48h
+ * window (HTTP 400).
+ */
+async function freshTelegramWithApi(deleteStatus = 200) {
+  vi.resetModules();
+  process.env.OGFINDER_DB_PATH = ":memory:";
+  process.env.TELEGRAM_BOT_TOKEN = "test-token";
+  const calls: { method: string; body: Record<string, unknown> }[] = [];
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    const method = String(url).split("/").pop() ?? "";
+    calls.push({ method, body: JSON.parse(String(init?.body ?? "{}")) });
+    const status = method === "deleteMessage" ? deleteStatus : 200;
+    return {
+      ok: status === 200,
+      status,
+      json: async () => ({ ok: status === 200, result: true }),
+    } as unknown as Response;
+  });
+  const telegram = await import("@/lib/telegram");
+  return { telegram, calls };
+}
+
+describe("dismiss button", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.TELEGRAM_BOT_TOKEN;
+  });
+
+  it("deletes the bot's own message and answers the query", async () => {
+    const { telegram, calls } = await freshTelegramWithApi();
+    await telegram.handleTelegramUpdate({
+      update_id: 1,
+      callback_query: {
+        id: "cq1",
+        data: telegram.DELETE_CALLBACK_DATA,
+        message: { message_id: 42, chat: { id: -100123 } },
+      },
+    });
+    expect(calls.map((c) => c.method)).toEqual([
+      "deleteMessage",
+      "answerCallbackQuery",
+    ]);
+    expect(calls[0].body).toEqual({ chat_id: "-100123", message_id: 42 });
+    // Deleted cleanly → a bare acknowledgement, no toast.
+    expect(calls[1].body).toEqual({ callback_query_id: "cq1" });
+  });
+
+  it("still answers — with a reason — when the delete fails", async () => {
+    const { telegram, calls } = await freshTelegramWithApi(400);
+    await telegram.handleTelegramUpdate({
+      update_id: 2,
+      callback_query: {
+        id: "cq2",
+        data: telegram.DELETE_CALLBACK_DATA,
+        message: { message_id: 7, chat: { id: 555 } },
+      },
+    });
+    // The query is ALWAYS answered — an unanswered one spins in the client.
+    expect(calls.at(-1)).toEqual({
+      method: "answerCallbackQuery",
+      body: { callback_query_id: "cq2", text: "Too old to delete" },
+    });
+  });
+
+  it("is a no-op for any callback data it does not recognise", async () => {
+    const { telegram, calls } = await freshTelegramWithApi();
+    await telegram.handleTelegramUpdate({
+      update_id: 3,
+      callback_query: {
+        id: "cq3",
+        data: "someone-elses-payload",
+        message: { message_id: 42, chat: { id: -100123 } },
+      },
+    });
+    // Acknowledged, but nothing is deleted.
+    expect(calls.map((c) => c.method)).toEqual(["answerCallbackQuery"]);
+  });
+
+  it("ignores a callback with no id and one with no message", async () => {
+    const { telegram, calls } = await freshTelegramWithApi();
+    await telegram.handleTelegramUpdate({
+      update_id: 4,
+      callback_query: { data: telegram.DELETE_CALLBACK_DATA },
+    });
+    expect(calls).toEqual([]);
+    await telegram.handleTelegramUpdate({
+      update_id: 5,
+      callback_query: { id: "cq5", data: telegram.DELETE_CALLBACK_DATA },
+    });
+    expect(calls.map((c) => c.method)).toEqual(["answerCallbackQuery"]);
   });
 });
 
