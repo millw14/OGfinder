@@ -5,6 +5,7 @@ import {
   CACHE_HELIUS,
   CACHE_WALLET,
   HeliusSlotData,
+  OffchainTokenMeta,
 } from "./types";
 import type { EnhancedTx } from "./wallet-analysis";
 import type { MintExtensionFacts } from "./safety";
@@ -86,6 +87,42 @@ export function setMintExtensionsCache(
   data: MintExtensionFacts
 ): void {
   mintExtensionsCache.set(mint, data);
+}
+
+/**
+ * Off-chain metadata JSON (socials/description) keyed by its json_uri, not by
+ * mint — two mints pointing at the same document share one fetch, and a mint
+ * whose metadata is rewritten to a new URI misses instead of serving stale
+ * socials. Bounded: the scanned mint only, so at most one entry per cold scan.
+ */
+const offchainMetaCache = new NodeCache({
+  stdTTL: CACHE_HELIUS,
+  checkperiod: 120,
+  maxKeys: 5000,
+});
+
+export function getOffchainMetaCache(
+  uri: string
+): OffchainTokenMeta | undefined {
+  try {
+    return offchainMetaCache.get(uri);
+  } catch {
+    return undefined;
+  }
+}
+
+/** `ttl` (seconds) shortens the leash for a FAILED fetch — see OFFCHAIN_META_FAIL_TTL. */
+export function setOffchainMetaCache(
+  uri: string,
+  data: OffchainTokenMeta,
+  ttl?: number
+): void {
+  try {
+    if (ttl !== undefined) offchainMetaCache.set(uri, data, ttl);
+    else offchainMetaCache.set(uri, data);
+  } catch {
+    // maxKeys ceiling reached — dropping a nice-to-have never fails a scan.
+  }
 }
 
 export function getCreationSlotCache(

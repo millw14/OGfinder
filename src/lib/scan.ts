@@ -11,6 +11,7 @@ import { deriveSearchTermsFromMintMetadata } from "./mint-search";
 import {
   getAssetBatch,
   getMintHeliusDataRpcFallback,
+  getTokenOffchainMeta,
   getTopHolderShare,
   getDeployer,
   getDeployerProfile,
@@ -269,6 +270,22 @@ export async function runMintScan(
           scanned.deployerTokensCreated = profile.tokensCreated;
           scanned.deployerWalletFirstSeenMs = profile.walletFirstSeenMs;
           if (profile.isOldWallet) scanned.deployerIsOldWallet = true;
+        }
+      }
+    }
+
+    // Socials + description from the mint's off-chain metadata JSON. SCANNED
+    // MINT ONLY: exactly one extra request per cold scan (cached by URI), never
+    // one per cohort token. The DAS description already hoisted by Helius wins;
+    // this only fills a gap. Returns null on any failure — a token simply shows
+    // no links, and the scan is unaffected.
+    if (scanned && h.jsonUri) {
+      const offchain = await getTokenOffchainMeta(h.jsonUri);
+      if (offchain) {
+        const { description, ...socials } = offchain;
+        if (Object.keys(socials).length > 0) scanned.socials = socials;
+        if (!scanned.description && description) {
+          scanned.description = description;
         }
       }
     }

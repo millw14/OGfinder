@@ -11,6 +11,7 @@ import {
   getAssetBatch,
   getCreationSlot,
   getMintExtensions,
+  isSafeImageUrl,
   type CreationSlotResult,
 } from "./helius";
 import { assessSafety } from "./safety";
@@ -32,6 +33,34 @@ import {
 } from "./sort";
 
 const CREATION_SLOT_CONCURRENCY = 8;
+
+/**
+ * Which logo a token shows, and where it came from.
+ *
+ * DexScreener's `info.imageUrl` wins: it is the market-facing logo, curated and
+ * CDN-hosted. But most mints have no DexScreener profile image at all, which is
+ * why cohorts used to render as rows of blank squares — so the DAS/on-chain
+ * image (already on the getAssetBatch response we pay for anyway) is the
+ * fallback, and it is what actually gives most of a cohort a picture.
+ *
+ * Both sources are third-party strings, so both are http/https-validated here;
+ * an unusable DexScreener URL falls through to DAS rather than blanking the
+ * card. null = this token genuinely has no logo we can show.
+ *
+ * Pure — exported for tests.
+ */
+export function resolveTokenImage(
+  dexImageUrl: unknown,
+  dasImageUrl: unknown
+): { imageUrl: string; imageSource: "dexscreener" | "das" } | null {
+  if (isSafeImageUrl(dexImageUrl)) {
+    return { imageUrl: dexImageUrl.trim(), imageSource: "dexscreener" };
+  }
+  if (isSafeImageUrl(dasImageUrl)) {
+    return { imageUrl: dasImageUrl.trim(), imageSource: "das" };
+  }
+  return null;
+}
 
 /** Creation time known from metadata alone, before any signature walk. */
 export interface AgeBaseline {
@@ -429,6 +458,8 @@ export async function buildTokenResults(
     const homoglyphSuspect =
       lookalikeChars && (c.isScannedMint || (skelMatch && !plainMatch));
 
+    const image = resolveTokenImage(c.raw.imageUrl, c.h?.imageUrl);
+
     enriched.push({
       mint: c.raw.mint,
       displayName,
@@ -450,7 +481,8 @@ export async function buildTokenResults(
           : null,
       fdvUsd:
         typeof c.raw.dexFdvUsd === "number" ? c.raw.dexFdvUsd : null,
-      imageUrl: typeof c.raw.imageUrl === "string" ? c.raw.imageUrl : null,
+      imageUrl: image?.imageUrl ?? null,
+      ...(image ? { imageSource: image.imageSource } : {}),
       priceUsd: typeof c.raw.priceUsd === "number" ? c.raw.priceUsd : null,
       liquidityUsd:
         typeof c.raw.liquidityUsd === "number" ? c.raw.liquidityUsd : null,
@@ -486,6 +518,16 @@ export async function buildTokenResults(
       ...(c.h?.metadataMutable !== undefined
         ? { metadataMutable: c.h.metadataMutable }
         : {}),
+      // On-chain metadata that rode along on the SAME getAssetBatch response —
+      // no extra request per cohort token. Absent = DAS did not report it.
+      ...(c.h?.description ? { description: c.h.description } : {}),
+      ...(c.h?.tokenStandard ? { tokenStandard: c.h.tokenStandard } : {}),
+      ...(typeof c.h?.decimals === "number" ? { decimals: c.h.decimals } : {}),
+      ...(c.h?.supply != null ? { supplyAmount: c.h.supply } : {}),
+      ...(c.h?.updateAuthority
+        ? { updateAuthority: c.h.updateAuthority }
+        : {}),
+      ...(c.h?.burnt !== undefined ? { burnt: c.h.burnt } : {}),
       // sortByCreationTime sends null createdAtMs to the bottom — no extra sort.
       ...(skipSignatureScan && createdAtMs == null
         ? { pendingAge: true as const }

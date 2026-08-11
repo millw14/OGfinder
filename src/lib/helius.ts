@@ -2,6 +2,9 @@ import {
   HeliusSlotData,
   HELIUS_TIMEOUT,
   MAX_SIG_PAGES,
+  OFFCHAIN_META_FAIL_TTL,
+  OFFCHAIN_META_TIMEOUT,
+  OffchainTokenMeta,
   TOKENS_CREATED_CAP,
 } from "./types";
 import { fetchWithTimeout } from "./fetch";
@@ -14,6 +17,8 @@ import {
   setCreationWalkProgress,
   getMintExtensionsCache,
   setMintExtensionsCache,
+  getOffchainMetaCache,
+  setOffchainMetaCache,
 } from "./cache";
 import type { MintExtensionFacts } from "./safety";
 import {
@@ -58,17 +63,39 @@ async function jsonRpc(url: string, method: string, params: unknown): Promise<un
   });
 }
 
+/** One entry of DAS content.files. Verified live: {uri, cdn_uri, mime}. */
+interface HeliusAssetFile {
+  uri?: string;
+  /** Helius CDN copy — resized AND proxied. Preferred when present. */
+  cdn_uri?: string;
+  mime?: string;
+}
+
 interface HeliusAsset {
   id: string;
   interface: string;
   content?: {
+    /** Off-chain metadata JSON (socials live here for pump.fun-era mints). */
+    json_uri?: string;
+    links?: {
+      image?: string;
+    };
+    files?: HeliusAssetFile[];
     metadata?: {
       name?: string;
       symbol?: string;
+      description?: string;
+      token_standard?: string;
     };
   };
+  /** Metadata authorities; the one scoped "full" can rewrite name/image. */
+  authorities?: {
+    address?: string;
+    scopes?: string[];
+  }[];
   token_info?: {
     supply?: number;
+    decimals?: number;
     /** Base58 authority when active; key omitted by DAS when revoked. */
     mint_authority?: string | null;
     freeze_authority?: string | null;
@@ -80,6 +107,180 @@ interface HeliusAsset {
   created_at?: string;
   /** Metaplex metadata mutability — always a boolean on DAS assets. */
   mutable?: boolean;
+  /** Top-level burn flag. */
+  burnt?: boolean;
+}
+
+/** Longest metadata URL we will carry. Bounds payloads; also kills data: blobs. */
+const MAX_METADATA_URL = 2048;
+/** On-chain descriptions are free-form text from the mint — truncate on the way in. */
+const MAX_DESCRIPTION = 500;
+
+/**
+ * http/https-only guard for ATTACKER-CONTROLLED metadata URLs (token images,
+ * json_uri, socials). A mint's metadata is written by whoever launched it, so
+ * these strings reach an <img src> / href only after passing here.
+ *
+ * Rejects `data:` and `javascript:` (script-injection vectors in an href, and
+ * an unbounded payload in an img), `ipfs:`/`ar:` (no browser fetches those
+ * natively), protocol-relative `//host/x` and bare relative paths (which would
+ * resolve against OUR origin), and anything unparseable.
+ */
+export function isSafeImageUrl(url: unknown): url is string {
+  if (typeof url !== "string") return false;
+  const trimmed = url.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_METADATA_URL) return false;
+  try {
+    // No base: a relative or protocol-relative URL throws instead of silently
+    // resolving against our own origin.
+    const protocol = new URL(trimmed).protocol;
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Hosts a SERVER-SIDE fetch must refuse. json_uri is chosen by the token
+ * deployer, so fetching it is an SSRF primitive pointed at our own network
+ * unless private space is excluded.
+ *
+ * Honest bound: this checks the literal host only. A public hostname whose DNS
+ * answer is a private address (DNS rebinding) still gets through — closing that
+ * needs resolve-then-connect plumbing Node's fetch does not expose.
+ */
+function isPrivateHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (h === "localhost" || h.endsWith(".localhost")) return true;
+  // IPv6 loopback / unique-local (fc00::/7) / link-local (fe80::/10)
+  if (h === "::1" || h === "::") return true;
+  if (/^f[cd][0-9a-f]{0,2}:/.test(h) || /^fe[89ab][0-9a-f]?:/.test(h)) {
+    return true;
+  }
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (!v4) return false;
+  const a = Number(v4[1]);
+  const b = Number(v4[2]);
+  if (a === 0 || a === 127 || a === 10) return true;
+  if (a === 169 && b === 254) return true; // cloud instance metadata
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  return false;
+}
+
+/** isSafeImageUrl plus the private-address exclusion needed to FETCH a URL. */
+export function isSafeFetchUrl(url: unknown): url is string {
+  if (!isSafeImageUrl(url)) return false;
+  try {
+    return !isPrivateHost(new URL(url.trim()).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/** A files[] entry with no mime is accepted; a non-image mime is not. */
+function isImageFile(file: HeliusAssetFile | undefined): boolean {
+  if (!file) return false;
+  return typeof file.mime !== "string" || file.mime.startsWith("image/");
+}
+
+/**
+ * Pick a token's image from DAS content, in preference order:
+ *   1. files[].cdn_uri  — Helius CDN: resized, and it PROXIES, so the visitor's
+ *      browser never connects to the arbitrary host the mint named.
+ *   2. links.image      — canonical image the metadata declares.
+ *   3. files[].uri      — raw file, last resort.
+ * Every candidate is http/https-validated; undefined = this token has no
+ * usable image, which is different from "we didn't look".
+ * Exported for tests.
+ */
+export function pickDasImageUrl(
+  content: HeliusAsset["content"] | undefined
+): string | undefined {
+  const files = Array.isArray(content?.files) ? content!.files! : [];
+  const images = files.filter(isImageFile);
+
+  for (const file of images) {
+    if (isSafeImageUrl(file.cdn_uri)) return file.cdn_uri.trim();
+  }
+  if (isSafeImageUrl(content?.links?.image)) {
+    return content!.links!.image!.trim();
+  }
+  for (const file of images) {
+    if (isSafeImageUrl(file.uri)) return file.uri.trim();
+  }
+  return undefined;
+}
+
+/**
+ * Trimmed non-empty string, or undefined — DAS returns "" for absent fields.
+ *
+ * Truncation drops a trailing lone high surrogate: memecoin descriptions are
+ * emoji-dense, and slicing mid-pair would leave an unpaired code unit that
+ * renders as a replacement character.
+ */
+function text(value: unknown, max = MAX_DESCRIPTION): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  if (trimmed.length <= max) return trimmed;
+  const cut = trimmed.slice(0, max);
+  const last = cut.charCodeAt(cut.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
+}
+
+/**
+ * Parse one DAS asset into HeliusSlotData. Pure and exported for tests — the
+ * media/metadata fields below cost NO extra request: they arrive on the same
+ * getAssetBatch response the age/authority signals already come from.
+ */
+export function parseDasAsset(asset: HeliusAsset): HeliusSlotData {
+  const supply =
+    asset.token_info?.supply ?? asset.supply?.print_current_supply ?? null;
+
+  const imageUrl = pickDasImageUrl(asset.content);
+  const description = text(asset.content?.metadata?.description);
+  const tokenStandard = text(asset.content?.metadata?.token_standard, 64);
+  const decimals = asset.token_info?.decimals;
+  const updateAuthority = text(
+    asset.authorities?.find(
+      (a) => Array.isArray(a?.scopes) && a.scopes.includes("full")
+    )?.address,
+    64
+  );
+  const jsonUri = asset.content?.json_uri;
+
+  return {
+    slot: asset.slot ?? null,
+    createdAt: asset.created_at ?? null,
+    heliusName: asset.content?.metadata?.name ?? null,
+    heliusSymbol: asset.content?.metadata?.symbol ?? null,
+    tokenInterface: asset.interface ?? null,
+    supply,
+    // Rug-risk signals — only when DAS actually reported them (undefined = unknown)
+    ...(asset.token_info
+      ? {
+          mintAuthorityActive: asset.token_info.mint_authority != null,
+          freezeAuthorityActive: asset.token_info.freeze_authority != null,
+        }
+      : {}),
+    ...(typeof asset.mutable === "boolean"
+      ? { metadataMutable: asset.mutable }
+      : {}),
+    // Media + metadata. Each stays ABSENT when DAS did not report it, so a
+    // consumer can tell "no description" from "never looked".
+    ...(imageUrl ? { imageUrl } : {}),
+    ...(description ? { description } : {}),
+    ...(tokenStandard ? { tokenStandard } : {}),
+    ...(typeof decimals === "number" &&
+    Number.isFinite(decimals) &&
+    decimals >= 0
+      ? { decimals }
+      : {}),
+    ...(updateAuthority ? { updateAuthority } : {}),
+    ...(typeof asset.burnt === "boolean" ? { burnt: asset.burnt } : {}),
+    ...(isSafeImageUrl(jsonUri) ? { jsonUri: jsonUri.trim() } : {}),
+  };
 }
 
 interface SignatureResult {
@@ -97,6 +298,10 @@ export async function getAssetBatch(
 ): Promise<Map<string, HeliusSlotData>> {
   const result = new Map<string, HeliusSlotData>();
 
+  // Cache hits return the WHOLE stored HeliusSlotData — media and metadata
+  // included. (A past regression here served cache hits through a narrower
+  // shape, silently nulling metadata on the second scan of a mint; the
+  // "cache hit keeps the DAS media fields" test guards that.)
   const uncached: string[] = [];
   for (const mint of mints) {
     const cached = getHeliusMeta(mint);
@@ -124,31 +329,7 @@ export async function getAssetBatch(
 
     for (const asset of assets) {
       if (!asset?.id) continue;
-
-      const supply =
-        asset.token_info?.supply ??
-        asset.supply?.print_current_supply ??
-        null;
-
-      const data: HeliusSlotData = {
-        slot: asset.slot ?? null,
-        createdAt: asset.created_at ?? null,
-        heliusName: asset.content?.metadata?.name ?? null,
-        heliusSymbol: asset.content?.metadata?.symbol ?? null,
-        tokenInterface: asset.interface ?? null,
-        supply,
-        // Rug-risk signals — only when DAS actually reported them (undefined = unknown)
-        ...(asset.token_info
-          ? {
-              mintAuthorityActive: asset.token_info.mint_authority != null,
-              freezeAuthorityActive: asset.token_info.freeze_authority != null,
-            }
-          : {}),
-        ...(typeof asset.mutable === "boolean"
-          ? { metadataMutable: asset.mutable }
-          : {}),
-      };
-
+      const data = parseDasAsset(asset);
       result.set(asset.id, data);
       setHeliusMeta(asset.id, data);
     }
@@ -157,6 +338,89 @@ export async function getAssetBatch(
   }
 
   return result;
+}
+
+// ————————————— Off-chain metadata JSON (socials for the scanned mint) —————————————
+
+/**
+ * Parse a mint's off-chain metadata JSON into socials + description. Pure and
+ * exported for tests.
+ *
+ * Shape verified empirically 2026-08-11 across 53 reachable json_uri documents
+ * from live Solana pairs: `website`, `twitter` and `telegram` appear at the top
+ * level, and the SAME names appear under an `extensions` object (34 of 53 docs
+ * carry one). Top level wins; `extensions` fills gaps; Metaplex's standard
+ * `external_url` is the last website fallback.
+ *
+ * Every URL is attacker-controlled — each one goes through isSafeImageUrl, so a
+ * `javascript:` "website" never reaches an href.
+ */
+export function parseOffchainTokenMeta(json: unknown): OffchainTokenMeta {
+  const meta: OffchainTokenMeta = {};
+  if (!json || typeof json !== "object" || Array.isArray(json)) return meta;
+
+  const doc = json as Record<string, unknown>;
+  const rawExt = doc.extensions;
+  const ext: Record<string, unknown> =
+    rawExt && typeof rawExt === "object" && !Array.isArray(rawExt)
+      ? (rawExt as Record<string, unknown>)
+      : {};
+
+  const url = (...candidates: unknown[]): string | undefined => {
+    for (const candidate of candidates) {
+      if (isSafeImageUrl(candidate)) return candidate.trim();
+    }
+    return undefined;
+  };
+
+  const website = url(doc.website, ext.website, doc.external_url);
+  const twitter = url(doc.twitter, ext.twitter);
+  const telegram = url(doc.telegram, ext.telegram);
+  const description = text(doc.description);
+
+  if (website) meta.website = website;
+  if (twitter) meta.twitter = twitter;
+  if (telegram) meta.telegram = telegram;
+  if (description) meta.description = description;
+  return meta;
+}
+
+/**
+ * Fetch + parse a mint's off-chain metadata JSON. ONE request, cached by URI,
+ * short timeout — this runs for the scanned mint only, never per cohort token.
+ *
+ * Returns null when the URI is unusable/unsafe or the fetch failed. Failures
+ * are cached briefly (not for the full TTL) so a flaky IPFS gateway costs one
+ * request per few minutes instead of one per scan, without pinning "no socials"
+ * on a token for an hour. Never throws.
+ */
+export async function getTokenOffchainMeta(
+  jsonUri: string | undefined | null
+): Promise<OffchainTokenMeta | null> {
+  try {
+    // Attacker-controlled URI fetched by OUR server: private address space is
+    // excluded on top of the http/https check.
+    if (!isSafeFetchUrl(jsonUri)) return null;
+    const uri = jsonUri.trim();
+
+    const cached = getOffchainMetaCache(uri);
+    if (cached) return cached;
+
+    const json = await fetchWithTimeout(uri, OFFCHAIN_META_TIMEOUT);
+    const meta = parseOffchainTokenMeta(json);
+    setOffchainMetaCache(uri, meta);
+    return meta;
+  } catch {
+    // Cache the miss briefly so one dead gateway can't be re-dialed every scan.
+    if (typeof jsonUri === "string") {
+      try {
+        setOffchainMetaCache(jsonUri.trim(), {}, OFFCHAIN_META_FAIL_TTL);
+      } catch {
+        // cache write failure is never worth failing a scan over
+      }
+    }
+    return null;
+  }
 }
 
 const SPL_TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";

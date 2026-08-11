@@ -49,6 +49,46 @@ export interface HeliusSlotData {
   freezeAuthorityActive?: boolean;
   /** DAS top-level `mutable` — metadata (name/image) can still change. Absent = unknown. */
   metadataMutable?: boolean;
+  // ————— Media + metadata that ride along on the SAME getAssetBatch call —————
+  /**
+   * Token image from DAS content, http/https only (see isSafeImageUrl). Prefers
+   * the Helius CDN copy, which is resized AND proxied — so a visitor's browser
+   * never hits whatever arbitrary host the mint's metadata names.
+   */
+  imageUrl?: string;
+  /** DAS content.metadata.description — the on-chain project blurb. */
+  description?: string;
+  /** DAS content.metadata.token_standard, e.g. "Fungible" / "FungibleAsset". */
+  tokenStandard?: string;
+  /** DAS token_info.decimals — needed to render supply as a human number. */
+  decimals?: number;
+  /** DAS authorities[] entry holding scope "full" — who can rewrite the metadata. */
+  updateAuthority?: string;
+  /** DAS top-level `burnt`. Absent = unknown, never assume false. */
+  burnt?: boolean;
+  /** DAS content.json_uri — the off-chain metadata JSON (http/https only). */
+  jsonUri?: string;
+}
+
+/**
+ * Socials + description from a mint's off-chain metadata JSON (content.json_uri).
+ *
+ * Field names verified empirically 2026-08-11 over 53 reachable json_uri docs
+ * from live Solana pairs: top-level `website` (4), `twitter` (7), `telegram` (3),
+ * with the same names also appearing under `extensions` (34 docs carry an
+ * `extensions` object). 12 of 53 carried at least one social — sparse, but real,
+ * and free for the one mint the user actually asked about.
+ *
+ * Every URL here is attacker-controlled and http/https-validated on the way in.
+ */
+export interface TokenSocials {
+  website?: string;
+  twitter?: string;
+  telegram?: string;
+}
+
+export interface OffchainTokenMeta extends TokenSocials {
+  description?: string;
 }
 
 export interface TokenResult {
@@ -84,8 +124,32 @@ export interface TokenResult {
   marketCapUsd?: number | null;
   /** Social-link search: DexScreener FDV when MC missing */
   fdvUsd?: number | null;
-  /** DexScreener token logo URL, when present */
+  /**
+   * Token logo. DexScreener's curated market logo when it has one, else the
+   * on-chain DAS image — see resolveTokenImage. Always http/https (validated),
+   * so it is safe to hand straight to an <img src>.
+   */
   imageUrl?: string | null;
+  /** Which source imageUrl came from. Absent when there is no logo at all. */
+  imageSource?: "dexscreener" | "das";
+  /** On-chain metadata description. Absent = the token doesn't publish one. */
+  description?: string;
+  /** Metaplex token standard from DAS, e.g. "Fungible". */
+  tokenStandard?: string;
+  /** Mint decimals — supplyAmount is in raw units, divide by 10**decimals. */
+  decimals?: number;
+  /** Raw on-chain supply (NOT decimal-adjusted). Absent = not reported. */
+  supplyAmount?: number;
+  /** Wallet holding metadata update authority (DAS scope "full"). */
+  updateAuthority?: string;
+  /** DAS top-level `burnt`. Absent = unknown. */
+  burnt?: boolean;
+  /**
+   * Scanned mint only: socials parsed from the off-chain metadata JSON. Each
+   * URL is a CLAIM BY THE TOKEN, not a verified affiliation — render with the
+   * same suspicion as any other user-supplied link.
+   */
+  socials?: TokenSocials;
   /** DexScreener price (USD), from the highest-liquidity pair */
   priceUsd?: number | null;
   /** DexScreener liquidity (USD), from the highest-liquidity pair */
@@ -278,6 +342,14 @@ export const CACHE_JUP = 3600;
 export const CACHE_HELIUS = 3600;
 export const DEX_TIMEOUT = 5000;
 export const HELIUS_TIMEOUT = 10000;
+/**
+ * Off-chain metadata JSON lives on arbitrary third-party gateways (ipfs.io,
+ * arweave.net, random project hosts). It is a nice-to-have on ONE mint per
+ * scan, so it gets a short leash and never delays a verdict.
+ */
+export const OFFCHAIN_META_TIMEOUT = 4000;
+/** Failed off-chain fetches are remembered only briefly — gateways flap. */
+export const OFFCHAIN_META_FAIL_TTL = 300;
 /**
  * CHEAP per-token dating budget for the bulk pass: 5 pages × 1000 signatures.
  * Every token in a cohort pays this, so it stays small; a token whose history
