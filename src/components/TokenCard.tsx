@@ -7,6 +7,7 @@ import { TokenResult } from "@/lib/types";
 import { UNSAFE_RANK1_LABEL, UNPROVEN_RANK1_LABEL } from "@/lib/sort";
 import { blockingFlags, isDangerous } from "@/lib/safety-view";
 import copyHover from "@/assets/lottie/copy-hover.json";
+import { TokenImage } from "./TokenImage";
 import {
   OGBadge,
   ConfidenceStars,
@@ -92,7 +93,6 @@ const MENU_HEIGHT = 140;
 export function TokenCard({ token }: { token: TokenResult }) {
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
-  const [logoFailed, setLogoFailed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   /** Last card on screen: open the menu upward so it stays in the viewport. */
   const [menuDropUp, setMenuDropUp] = useState(false);
@@ -174,7 +174,6 @@ export function TokenCard({ token }: { token: TokenResult }) {
     !isDanger &&
     token.ageOrderUnproven === true;
   const isScanned = token.isScanned === true;
-  const showLogo = Boolean(token.imageUrl) && !logoFailed;
   const hasPrice = token.priceUsd != null && token.priceUsd > 0;
   const hasLiquidity = token.liquidityUsd != null && token.liquidityUsd > 0;
   const hasChange = token.priceChange24h != null;
@@ -217,25 +216,17 @@ export function TokenCard({ token }: { token: TokenResult }) {
             muted={isDanger}
             unproven={isUnprovenRank1}
           />
-          {showLogo ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={token.imageUrl!}
-              alt={token.displayName}
-              width={40}
-              height={40}
-              loading="lazy"
-              onError={() => setLogoFailed(true)}
-              className="h-10 w-10 rounded-xl border object-cover"
-            />
-          ) : (
-            <span
-              aria-hidden
-              className="flex h-10 w-10 items-center justify-center rounded-xl border bg-surface-2 font-display text-sm font-bold text-fg-4"
-            >
-              {token.displaySymbol?.charAt(0)?.toUpperCase() || "?"}
-            </span>
-          )}
+          {/* Most tokens now have a picture: TokenResult.imageUrl falls back
+              from the DexScreener market logo to the on-chain DAS image, and
+              the letter block still covers the rest (and any load failure). */}
+          <TokenImage
+            src={token.imageUrl}
+            alt={token.displayName}
+            symbol={token.displaySymbol}
+            px={40}
+            className="h-10 w-10 rounded-xl border"
+            letterClassName="text-sm"
+          />
         </div>
 
         <div className="min-w-0 flex-1 space-y-2">

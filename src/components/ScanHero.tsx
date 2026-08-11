@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, type ReactNode } from "react";
 import {
   TokenResult,
   ScanSummary,
@@ -11,6 +11,8 @@ import {
 import {
   formatAgeAgo,
   formatAgeGap,
+  formatSocialLabel,
+  formatTokenSupply,
   UNPROVEN_ORDER_TITLE,
 } from "@/lib/format";
 import {
@@ -33,6 +35,7 @@ import {
   SafetyFindingList,
 } from "./Badge";
 import { WatchButton } from "./WatchButton";
+import { TokenImage } from "./TokenImage";
 import crownOg from "@/assets/lottie/crown-og.json";
 
 function truncateMint(mint: string): string {
@@ -41,6 +44,69 @@ function truncateMint(mint: string): string {
 }
 
 const EYEBROW = "text-micro font-semibold uppercase tracking-[0.18em]";
+
+/**
+ * Links the TOKEN CLAIMS as its own, straight out of its off-chain metadata
+ * JSON. They are claims, not verified affiliations — the tooltip says so, the
+ * label is only the host/handle (never the raw URL), and every one opens in a
+ * new tab with the opener severed.
+ */
+function SocialLinks({
+  socials,
+}: {
+  socials: NonNullable<TokenResult["socials"]>;
+}) {
+  const entries = (
+    [
+      ["site", socials.website],
+      ["X", socials.twitter],
+      ["TG", socials.telegram],
+    ] as const
+  ).flatMap(([kind, url]) => {
+    // No label (not an http(s) URL we can name) → the link is dropped, never
+    // rendered with the raw URL as its own label.
+    const label = formatSocialLabel(url);
+    return url && label ? [{ kind, url, label }] : [];
+  });
+
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {entries.map((e) => (
+        <a
+          key={e.kind}
+          href={e.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={`${e.url} — a link this token's own metadata claims. OGfinder has not verified that the account belongs to it.`}
+          className="inline-flex max-w-full items-center gap-1.5 rounded-full border bg-surface-2 px-2.5 py-1 text-micro font-medium text-fg-2 transition-colors hover:border-line-str hover:bg-surface-3 hover:text-fg"
+        >
+          <span className="shrink-0 text-fg-4">{e.kind}</span>
+          <span className="truncate">{e.label}</span>
+        </a>
+      ))}
+    </div>
+  );
+}
+
+/** One "label value" pair in the on-chain metadata row. */
+function MetaItem({
+  label,
+  title,
+  children,
+}: {
+  label: string;
+  title?: string;
+  children: ReactNode;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1.5" title={title}>
+      <span className="uppercase tracking-[0.12em] text-fg-4">{label}</span>
+      {children}
+    </span>
+  );
+}
 
 interface ScanHeroProps {
   scan: ScanSummary;
@@ -62,7 +128,6 @@ export function ScanHero({
 }: ScanHeroProps) {
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
-  const [logoFailed, setLogoFailed] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -177,7 +242,35 @@ export function ScanHero({
       : scannedBound
         ? "at most "
         : "";
-  const showLogo = Boolean(scanned?.imageUrl) && !logoFailed;
+  // The avatar wears the verdict. Gold is ENDORSEMENT and nothing else earns
+  // it: a danger-flagged token gets the risk border even at rank 1, an
+  // unproven #1 gets amber, and anything not yet final stays neutral. The
+  // user's own scanned token otherwise wears the cyan scan ring.
+  const avatarRing =
+    scannedDanger
+      ? "border-risk/45"
+      : preliminary
+        ? "border-line-str"
+        : endorsed
+          ? "og-glow"
+          : unprovenOG
+            ? "border-warn/45"
+            : "scan-ring";
+
+  // On-chain metadata, all of it already paid for by the DAS call the scan
+  // makes anyway. Every field is optional — absent ones render nothing rather
+  // than an empty label.
+  const supplyLabel = formatTokenSupply(
+    scanned?.supplyAmount ?? null,
+    scanned?.decimals ?? null
+  );
+  const decimals = scanned?.decimals;
+  const tokenStandard = scanned?.tokenStandard;
+  const updateAuthority = scanned?.updateAuthority;
+  const hasMetaRow = Boolean(
+    supplyLabel || decimals != null || tokenStandard || updateAuthority
+  );
+  const description = scanned?.description;
 
   const shareVerdict = async () => {
     if (preliminary) return;
@@ -411,157 +504,221 @@ export function ScanHero({
       </div>
 
       {/* ── Identity ────────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t px-4 py-4 sm:px-6">
-        {showLogo && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={scanned!.imageUrl!}
-            alt={name}
-            width={36}
-            height={36}
-            loading="lazy"
-            onError={() => setLogoFailed(true)}
-            className="h-9 w-9 rounded-lg border object-cover"
-          />
-        )}
-        <span className="font-display text-[15px] font-bold tracking-tight text-fg sm:text-base">
-          {name}
-        </span>
-        {symbol && (
-          <span className="font-mono text-meta text-fg-3">${symbol}</span>
-        )}
-        {scanned && (
-          <SafetyChips
-            level={scanned.safetyLevel}
-            flags={scanned.safetyFlags}
-            size="md"
-          />
-        )}
-        {scanned && scanned.safetyLevel == null && (
-          <RiskChips
-            mintAuthorityActive={scanned.mintAuthorityActive}
-            freezeAuthorityActive={scanned.freezeAuthorityActive}
-            metadataMutable={scanned.metadataMutable}
-            size="md"
-          />
-        )}
-        {scanned?.topHolderPct != null && (
-          <HolderConcChip pct={scanned.topHolderPct} size="md" />
-        )}
-        <span aria-hidden className="text-fg-4">
-          ·
-        </span>
-        <span className="text-meta text-fg-3">
-          minted{" "}
-          {/* Bound-aware: a truncated walk reads "on or before <date>" here
-              too, so the most prominent date on the page never asserts an
-              exact creation we did not establish. */}
-          <CreationDate
-            createdAt={scanned?.createdAt ?? null}
-            isLowerBound={scanned?.createdAtIsLowerBound === true}
-            pending={scanned?.pendingAge === true}
-          />
-        </span>
-        {ago && (
-          <span
-            className={`font-mono text-meta ${
-              scanned?.createdAtIsLowerBound ? "text-warn/70" : "text-fg-4"
-            }`}
-          >
-            {ago}
-          </span>
-        )}
-        <span className="font-mono text-micro text-scan">
-          {truncateMint(scannedMint)}
-        </span>
-        {scanned?.deployerAddress && (
-          <span className="basis-full text-meta text-fg-3">
-            <span className="text-fg-4">dev</span>{" "}
-            <a
-              href={`https://solscan.io/account/${scanned.deployerAddress}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-mono text-micro text-scan hover:underline"
-              title="Deployer wallet — fee payer of this mint's first transaction"
-            >
-              {truncateMint(scanned.deployerAddress)}
-            </a>
-            {scanned.deployerTokensCreated != null && (
-              <>
-                {" · "}
-                {scanned.deployerTokensCreated >= SERIAL_DEPLOYER_MIN ? (
-                  <span
-                    className="font-semibold text-warn"
-                    title="This wallet launches tokens in bulk — a common rug pattern"
-                  >
-                    ⚠️ serial deployer: {scanned.deployerTokensCreated}
-                    {scanned.deployerTokensCreated >= TOKENS_CREATED_CAP
-                      ? "+"
-                      : ""}{" "}
-                    tokens created
-                  </span>
-                ) : (
-                  <span>
-                    {scanned.deployerTokensCreated} token
-                    {scanned.deployerTokensCreated === 1 ? "" : "s"} created
-                  </span>
-                )}
-              </>
+      <div className="flex gap-3 border-t px-4 py-4 sm:gap-4 sm:px-6">
+        {/* The picture, at the size that makes a token recognisable. Fixed box
+            + object-cover: the src is attacker-controlled, so no aspect ratio
+            it ships can push the layout around. */}
+        <TokenImage
+          src={scanned?.imageUrl}
+          alt={name}
+          symbol={symbol ?? name}
+          px={80}
+          className={`h-16 w-16 rounded-2xl border sm:h-20 sm:w-20 ${avatarRing}`}
+          letterClassName="text-xl sm:text-2xl"
+        />
+
+        <div className="min-w-0 flex-1 space-y-2.5">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <span className="font-display text-[15px] font-bold tracking-tight text-fg sm:text-base">
+              {name}
+            </span>
+            {symbol && (
+              <span className="font-mono text-meta text-fg-3">${symbol}</span>
             )}
-            {scanned.deployerWalletFirstSeenMs != null ? (
-              <>
-                {" · "}
-                {Date.now() - scanned.deployerWalletFirstSeenMs <
-                FRESH_WALLET_MS ? (
-                  <span
-                    className="font-semibold text-warn"
-                    title="Deployer wallet is less than a week old"
-                  >
-                    ⚠️ fresh wallet
-                  </span>
-                ) : (
-                  <span>
-                    wallet since{" "}
-                    {new Date(
-                      scanned.deployerWalletFirstSeenMs
-                    ).getUTCFullYear()}
-                  </span>
+            {scanned && (
+              <SafetyChips
+                level={scanned.safetyLevel}
+                flags={scanned.safetyFlags}
+                size="md"
+              />
+            )}
+            {scanned && scanned.safetyLevel == null && (
+              <RiskChips
+                mintAuthorityActive={scanned.mintAuthorityActive}
+                freezeAuthorityActive={scanned.freezeAuthorityActive}
+                metadataMutable={scanned.metadataMutable}
+                size="md"
+              />
+            )}
+            {scanned?.topHolderPct != null && (
+              <HolderConcChip pct={scanned.topHolderPct} size="md" />
+            )}
+            <span aria-hidden className="text-fg-4">
+              ·
+            </span>
+            <span className="text-meta text-fg-3">
+              minted{" "}
+              {/* Bound-aware: a truncated walk reads "on or before <date>" here
+                  too, so the most prominent date on the page never asserts an
+                  exact creation we did not establish. */}
+              <CreationDate
+                createdAt={scanned?.createdAt ?? null}
+                isLowerBound={scanned?.createdAtIsLowerBound === true}
+                pending={scanned?.pendingAge === true}
+              />
+            </span>
+            {ago && (
+              <span
+                className={`font-mono text-meta ${
+                  scanned?.createdAtIsLowerBound ? "text-warn/70" : "text-fg-4"
+                }`}
+              >
+                {ago}
+              </span>
+            )}
+            <span className="font-mono text-micro text-scan">
+              {truncateMint(scannedMint)}
+            </span>
+            {scanned?.deployerAddress && (
+              <span className="basis-full text-meta text-fg-3">
+                <span className="text-fg-4">dev</span>{" "}
+                <a
+                  href={`https://solscan.io/account/${scanned.deployerAddress}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-mono text-micro text-scan hover:underline"
+                  title="Deployer wallet — fee payer of this mint's first transaction"
+                >
+                  {truncateMint(scanned.deployerAddress)}
+                </a>
+                {scanned.deployerTokensCreated != null && (
+                  <>
+                    {" · "}
+                    {scanned.deployerTokensCreated >= SERIAL_DEPLOYER_MIN ? (
+                      <span
+                        className="font-semibold text-warn"
+                        title="This wallet launches tokens in bulk — a common rug pattern"
+                      >
+                        ⚠️ serial deployer: {scanned.deployerTokensCreated}
+                        {scanned.deployerTokensCreated >= TOKENS_CREATED_CAP
+                          ? "+"
+                          : ""}{" "}
+                        tokens created
+                      </span>
+                    ) : (
+                      <span>
+                        {scanned.deployerTokensCreated} token
+                        {scanned.deployerTokensCreated === 1 ? "" : "s"} created
+                      </span>
+                    )}
+                  </>
                 )}
-              </>
-            ) : scanned.deployerIsOldWallet ? (
-              <>
-                {" · "}
-                <span title="Wallet history too deep to date — definitely not fresh">
-                  established wallet
-                </span>
-              </>
-            ) : null}
-          </span>
-        )}
-        {scanned?.homoglyphSuspect && (
-          <span
-            className="basis-full text-meta font-semibold text-risk"
-            title="Lookalike (Cyrillic/Greek) or invisible characters in the name — a common impersonation trick"
-          >
-            This token&rsquo;s name uses lookalike characters — likely
-            impersonation
-          </span>
-        )}
-        {scanned?.linkProvenance && (
-          <span
-            className="basis-full text-meta font-medium text-warn"
-            title="Based on when OGfinder's link index first observed each claim — not when the link was created. The index only covers recently listed tokens."
-          >
-            Listed{" "}
-            <span className="break-all font-mono text-micro">
-              {scanned.linkProvenance.url}
-            </span>{" "}
-            — first seen by OGfinder{" "}
-            {formatAgeGap(scanned.linkProvenance.leadMs)} before{" "}
-            {scanned.linkProvenance.rivalCount} rival token
-            {scanned.linkProvenance.rivalCount === 1 ? "" : "s"}
-          </span>
-        )}
+                {scanned.deployerWalletFirstSeenMs != null ? (
+                  <>
+                    {" · "}
+                    {Date.now() - scanned.deployerWalletFirstSeenMs <
+                    FRESH_WALLET_MS ? (
+                      <span
+                        className="font-semibold text-warn"
+                        title="Deployer wallet is less than a week old"
+                      >
+                        ⚠️ fresh wallet
+                      </span>
+                    ) : (
+                      <span>
+                        wallet since{" "}
+                        {new Date(
+                          scanned.deployerWalletFirstSeenMs
+                        ).getUTCFullYear()}
+                      </span>
+                    )}
+                  </>
+                ) : scanned.deployerIsOldWallet ? (
+                  <>
+                    {" · "}
+                    <span title="Wallet history too deep to date — definitely not fresh">
+                      established wallet
+                    </span>
+                  </>
+                ) : null}
+              </span>
+            )}
+            {scanned?.homoglyphSuspect && (
+              <span
+                className="basis-full text-meta font-semibold text-risk"
+                title="Lookalike (Cyrillic/Greek) or invisible characters in the name — a common impersonation trick"
+              >
+                This token&rsquo;s name uses lookalike characters — likely
+                impersonation
+              </span>
+            )}
+            {scanned?.linkProvenance && (
+              <span
+                className="basis-full text-meta font-medium text-warn"
+                title="Based on when OGfinder's link index first observed each claim — not when the link was created. The index only covers recently listed tokens."
+              >
+                Listed{" "}
+                <span className="break-all font-mono text-micro">
+                  {scanned.linkProvenance.url}
+                </span>{" "}
+                — first seen by OGfinder{" "}
+                {formatAgeGap(scanned.linkProvenance.leadMs)} before{" "}
+                {scanned.linkProvenance.rivalCount} rival token
+                {scanned.linkProvenance.rivalCount === 1 ? "" : "s"}
+              </span>
+            )}
+          </div>
+
+          {/* The project's own blurb, from the mint's metadata. PLAIN TEXT —
+              React escapes it, and it is never handed to dangerouslySetInnerHTML.
+              Clamped to two lines so a novel-length description cannot push the
+              verdict off the screen; the full text is on hover. */}
+          {description && (
+            <p
+              className="line-clamp-2 max-w-prose text-meta leading-relaxed text-fg-3"
+              title={description}
+            >
+              {description}
+            </p>
+          )}
+
+          {scanned?.socials && <SocialLinks socials={scanned.socials} />}
+
+          {/* On-chain metadata — free, it rode in on the DAS call the scan
+              already makes. Absent fields render nothing at all. */}
+          {hasMetaRow && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-micro">
+              {supplyLabel && (
+                <MetaItem
+                  label="supply"
+                  title="Total on-chain supply, decimal-adjusted"
+                >
+                  <span className="font-mono text-fg-2">{supplyLabel}</span>
+                </MetaItem>
+              )}
+              {decimals != null && (
+                <MetaItem label="decimals" title="Mint decimal places">
+                  <span className="font-mono text-fg-2">{decimals}</span>
+                </MetaItem>
+              )}
+              {tokenStandard && (
+                <MetaItem
+                  label="standard"
+                  title="Metaplex token standard reported by Helius DAS"
+                >
+                  <span className="text-fg-2">{tokenStandard}</span>
+                </MetaItem>
+              )}
+              {updateAuthority && (
+                <MetaItem
+                  label="update authority"
+                  title="Wallet that can rewrite this token's metadata — name, symbol and image included"
+                >
+                  <a
+                    href={`https://solscan.io/account/${encodeURIComponent(
+                      updateAuthority
+                    )}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono text-scan hover:underline"
+                  >
+                    {truncateMint(updateAuthority)}
+                  </a>
+                </MetaItem>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── Side-by-side vs the actual #1 — only once the verdict is final ── */}
@@ -570,32 +727,46 @@ export function ScanHero({
           <div className="grid gap-2.5 sm:grid-cols-[1fr_auto_1fr] sm:items-stretch sm:gap-3">
             <div className="scan-ring rounded-xl border bg-scan/[0.05] px-3.5 py-3">
               <p className={`${EYEBROW} text-scan`}>Your token</p>
-              <p className="mt-1.5 truncate font-display text-sm font-bold tracking-tight text-fg">
-                {name}
-                {symbol && (
-                  <span className="ml-1.5 font-mono text-micro font-normal text-fg-3">
-                    ${symbol}
-                  </span>
-                )}
-              </p>
-              <p className="mt-1 text-micro">
-                <CreationDate
-                  createdAt={scanned?.createdAt ?? null}
-                  isLowerBound={scanned?.createdAtIsLowerBound === true}
+              {/* Both sides carry their picture here — telling the two apart at
+                  a glance is the entire point of the strip. */}
+              <div className="mt-1.5 flex items-center gap-2.5">
+                <TokenImage
+                  src={scanned?.imageUrl}
+                  alt={name}
+                  symbol={symbol ?? name}
+                  px={40}
+                  className="h-10 w-10 rounded-lg border"
+                  letterClassName="text-sm"
                 />
-                {ago && (
-                  <span
-                    className={`font-mono ${
-                      scanned?.createdAtIsLowerBound
-                        ? "text-warn/70"
-                        : "text-fg-4"
-                    }`}
-                  >
-                    {" "}
-                    · {ago}
-                  </span>
-                )}
-              </p>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-display text-sm font-bold tracking-tight text-fg">
+                    {name}
+                    {symbol && (
+                      <span className="ml-1.5 font-mono text-micro font-normal text-fg-3">
+                        ${symbol}
+                      </span>
+                    )}
+                  </p>
+                  <p className="mt-1 text-micro">
+                    <CreationDate
+                      createdAt={scanned?.createdAt ?? null}
+                      isLowerBound={scanned?.createdAtIsLowerBound === true}
+                    />
+                    {ago && (
+                      <span
+                        className={`font-mono ${
+                          scanned?.createdAtIsLowerBound
+                            ? "text-warn/70"
+                            : "text-fg-4"
+                        }`}
+                      >
+                        {" "}
+                        · {ago}
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </div>
               {scanned?.safetyLevel && (
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   <SafetyChips
@@ -665,28 +836,46 @@ export function ScanHero({
                     ? "Oldest known — #1, not proven"
                     : "The OG — #1 by age"}
               </p>
-              <p className="mt-1.5 truncate font-display text-sm font-bold tracking-tight text-fg">
-                {og.displayName}
-                <span className="ml-1.5 font-mono text-micro font-normal text-fg-3">
-                  ${og.displaySymbol}
-                </span>
-              </p>
-              <p className="mt-1 text-micro">
-                <CreationDate
-                  createdAt={og.createdAt}
-                  isLowerBound={og.createdAtIsLowerBound === true}
+              <div className="mt-1.5 flex items-center gap-2.5">
+                <TokenImage
+                  src={og.imageUrl}
+                  alt={og.displayName}
+                  symbol={og.displaySymbol}
+                  px={40}
+                  className={`h-10 w-10 rounded-lg border ${
+                    ogDanger
+                      ? "border-risk/40"
+                      : orderUnproven
+                        ? "border-warn/40"
+                        : "og-glow"
+                  }`}
+                  letterClassName="text-sm"
                 />
-                {ogAgo && (
-                  <span
-                    className={`font-mono ${
-                      og.createdAtIsLowerBound ? "text-warn/70" : "text-fg-4"
-                    }`}
-                  >
-                    {" "}
-                    · {ogAgo}
-                  </span>
-                )}
-              </p>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-display text-sm font-bold tracking-tight text-fg">
+                    {og.displayName}
+                    <span className="ml-1.5 font-mono text-micro font-normal text-fg-3">
+                      ${og.displaySymbol}
+                    </span>
+                  </p>
+                  <p className="mt-1 text-micro">
+                    <CreationDate
+                      createdAt={og.createdAt}
+                      isLowerBound={og.createdAtIsLowerBound === true}
+                    />
+                    {ogAgo && (
+                      <span
+                        className={`font-mono ${
+                          og.createdAtIsLowerBound ? "text-warn/70" : "text-fg-4"
+                        }`}
+                      >
+                        {" "}
+                        · {ogAgo}
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </div>
               <div className="mt-2 flex flex-wrap items-center gap-1.5 empty:hidden">
                 <SafetyChips
                   level={og.safetyLevel}

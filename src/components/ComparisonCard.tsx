@@ -14,6 +14,7 @@ import {
   SafetyChips,
   SafetyFindingList,
 } from "./Badge";
+import { TokenImage } from "./TokenImage";
 
 function truncateMint(mint: string): string {
   if (mint.length <= 16) return mint;
@@ -69,7 +70,6 @@ function SideCard({
   side: CompareSideState;
   older: boolean;
 }) {
-  const [logoFailed, setLogoFailed] = useState(false);
   const t = side.token;
 
   // Per-side error / no-data slot: keeps the other side rendering normally.
@@ -92,7 +92,6 @@ function SideCard({
   }
 
   const ago = timeAgo(t.createdAt);
-  const showLogo = Boolean(t.imageUrl) && !logoFailed;
   const hasPrice = t.priceUsd != null && t.priceUsd > 0;
   const hasLiquidity = t.liquidityUsd != null && t.liquidityUsd > 0;
   const hasChange = t.priceChange24h != null;
@@ -115,25 +114,17 @@ function SideCard({
       }`}
     >
       <div className="flex items-center gap-2.5">
-        {showLogo ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={t.imageUrl!}
-            alt={t.displayName}
-            width={32}
-            height={32}
-            loading="lazy"
-            onError={() => setLogoFailed(true)}
-            className="h-8 w-8 shrink-0 rounded-lg border object-cover"
-          />
-        ) : (
-          <span
-            aria-hidden
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border bg-surface-2 font-display text-micro font-bold text-fg-4"
-          >
-            {t.displaySymbol?.charAt(0)?.toUpperCase() || "?"}
-          </span>
-        )}
+        {/* 48px: on a card whose whole job is "these are two different
+            tokens", the picture is the fastest way to see that. The winner's
+            gold ring stays on the panel, not the image. */}
+        <TokenImage
+          src={t.imageUrl}
+          alt={t.displayName}
+          symbol={t.displaySymbol}
+          px={48}
+          className="h-12 w-12 rounded-xl border"
+          letterClassName="text-sm"
+        />
         <div className="min-w-0 flex-1">
           <p className="truncate font-display text-sm font-bold tracking-tight text-fg">
             {t.displayName}
