@@ -36,6 +36,13 @@ export const LOWER_BOUND_PREFIX = "on or before";
 export const LOWER_BOUND_TITLE =
   "This token's transaction history was too long to walk to the end, so this is only the oldest date we reached — the real creation is at or before it, by an unknown amount. Scanning again resumes the walk where it stopped.";
 
+/**
+ * Tooltip for a derivative-name result. Shared by the card chip and the list
+ * divider so both explain the same thing in the same words.
+ */
+export const RELATED_NAME_TITLE =
+  "This token's name only contains the search term inside a longer word (like BONKMONEY for “bonk”), so it is not competing for the name — it is listed for interest and can never be ranked as the OG, however old it is.";
+
 /** Tooltip for the unproven-order state (the #1 answer, not this token). */
 export const UNPROVEN_ORDER_TITLE =
   "At least one matching token's transaction history was too long to walk to the end, so its shown date is only an upper limit — it could turn out to be older than the #1 above. The ranking is our best answer, not a proven one.";

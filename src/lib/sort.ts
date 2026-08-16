@@ -22,13 +22,28 @@ export function isOgEndorsement(confidenceLabel: string): boolean {
 }
 
 /**
- * Ascending by creation time. A token whose time is a LOWER BOUND still sorts
- * by that bound, which is correct in one direction only: a bound older than the
+ * Ascending by creation time, with the REAL COHORT FIRST.
+ *
+ * Primary key: relatedOnly (false before true). A derivative name — "BONKMONEY"
+ * in a "bonk" search — is shown because it is interesting, but it is not
+ * competing for the name, so it sorts below every token that is, however old it
+ * is. That is what makes the crown safe by construction: rank 1 is always a
+ * real contender, so no derivative can take it even when it predates the field.
+ *
+ * Secondary key: creation time, with its bounds-aware semantics unchanged
+ * WITHIN each group. A token whose time is a LOWER BOUND still sorts by that
+ * bound, which is correct in one direction only: a bound older than the
  * leader's exact date proves that token is older (true ≤ bound < leader). A
  * bound NEWER than the leader proves nothing — see ageOrderConfidence.
+ *
+ * Ranks stay a single 1..N sequence over the whole list — the related group is
+ * the tail of the same list, not a second numbering.
  */
 export function sortByCreationTime(results: TokenResult[]): TokenResult[] {
   return results.sort((a, b) => {
+    const ra = a.relatedOnly === true ? 1 : 0;
+    const rb = b.relatedOnly === true ? 1 : 0;
+    if (ra !== rb) return ra - rb;
     const ta = a.createdAtMs ?? Infinity;
     const tb = b.createdAtMs ?? Infinity;
     if (ta !== tb) return ta - tb;
@@ -92,6 +107,10 @@ export interface AgeOrderConfidence {
  * bound, still pending, or undated cannot be asserted as the oldest either —
  * that always blocks, regardless of gap.
  *
+ * relatedOnly tokens are skipped entirely: a derivative name cannot take the
+ * crown at any age, so its unresolved age is not evidence against the #1 — it
+ * neither blocks nor counts as unresolved.
+ *
  * Pure — no I/O, no clock — so the client re-score reaches the same verdict.
  *
  * @param rankedTokens sorted oldest-first (sortByCreationTime output)
@@ -124,6 +143,10 @@ export function ageOrderConfidence(
     // is settled, and a missing date is "unknown", which the leader's own
     // check already covers for the only rank that makes a claim.
     const t = rankedTokens[i];
+    // A derivative name is not competing for the name, so however old it turns
+    // out to be it cannot overturn the OG — its unresolved age is not a threat
+    // to the #1 answer and is counted in neither list.
+    if (t.relatedOnly === true) continue;
     if (t.createdAtIsLowerBound !== true) continue;
     unresolvedMints.push(t.mint);
 
@@ -250,7 +273,8 @@ export function scoreMarketCapRank(results: TokenResult[]): TokenResult[] {
  *  - STARS (confidence) = per-token age-data quality via ageDataQuality().
  *
  * RANK-1 LABEL PRECEDENCE (first match wins the single label slot):
- *   1. own age uncertain (lower bound / pending / undated) OR homoglyph
+ *   1. own age uncertain (lower bound / pending / undated) OR homoglyph OR a
+ *      derivative name (relatedOnly — not competing for the name at all)
  *        → "Oldest found". Highest because every label below states "oldest"
  *          as a fact about THIS token, and here that fact is not established.
  *   2. blocking safety flag (safetyLevel "danger")
@@ -284,7 +308,14 @@ export function scoreConfidence(
   const orderUnproven =
     !order.proven || results[0]?.ageOrderUnproven === true;
 
-  const withTimes = results.filter((r) => r.createdAtMs != null);
+  // Dated tokens that are actually CONTESTING the name, in age order. Related
+  // names are excluded on both counts: they sit at the tail of the list rather
+  // than in time order (sortByCreationTime), which would make `range` garbage,
+  // and the lead that earns the crown is the lead over the next real
+  // contender — a derivative name is not one, so it cannot dilute it.
+  const withTimes = results.filter(
+    (r) => r.createdAtMs != null && r.relatedOnly !== true
+  );
   const range =
     withTimes.length >= 2
       ? (withTimes[withTimes.length - 1].createdAtMs ?? 0) -
@@ -315,7 +346,19 @@ export function scoreConfidence(
       // A lookalike-character name never earns an OG endorsement, even at
       // rank 1 — homoglyphSuspect is set server-side (enrich-results) and
       // rides through client re-scores untouched.
-      if (uncertainAge || token.homoglyphSuspect === true)
+      //
+      // Nor does a DERIVATIVE name. sortByCreationTime puts every relatedOnly
+      // token below the real cohort, so this is unreachable while a single
+      // eligible token exists — it fires only when the whole list is
+      // derivative, and then it states the plain fact ("this is the oldest we
+      // found") without claiming the name for it. Kept as an assertion in the
+      // scorer, the same way the danger and unproven branches are: the crown
+      // is refused HERE, not merely made unlikely by the sort.
+      if (
+        uncertainAge ||
+        token.homoglyphSuspect === true ||
+        token.relatedOnly === true
+      )
         confidenceLabel = "Oldest found";
       // A blocking safety flag costs the endorsement, never the rank: this
       // token IS the oldest, and we say so — we just refuse to vouch for it.

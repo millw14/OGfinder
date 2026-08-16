@@ -21,6 +21,7 @@ import {
   normalize,
   skeleton,
 } from "./normalize";
+import { isCrownEligible, tokenMatchTier } from "./match";
 import {
   sortByCreationTime,
   sortByVolumeUsd,
@@ -155,7 +156,9 @@ function escalationPriority(t: TokenResult): number {
  *   t_X < t_L  → X already sorts above L; it IS older, its exact date aside.
  *   t_X > t_L  → UNKNOWABLE. X may predate L by years. This is the reported bug.
  * So the ambiguous set is exactly the truncated tokens ranked BELOW the leader,
- * and resolving them is what makes the #1 answer provable.
+ * and resolving them is what makes the #1 answer provable — minus the
+ * relatedOnly ones, which cannot take the crown at any age and therefore
+ * cannot make it any more (or less) provable.
  *
  * Always included (when their age is still a lower bound — an exact date has
  * nothing to resolve): the scanned mint and the current rank 1.
@@ -189,6 +192,10 @@ export function selectAgeEscalationTargets(
     (t) =>
       t.createdAtIsLowerBound === true &&
       !seen.has(t.mint) &&
+      // A derivative name cannot take the crown at any age (sort.ts), so
+      // resolving it cannot make the #1 answer provable — and the budget it
+      // would spend belongs to a token that CAN change the verdict.
+      t.relatedOnly !== true &&
       leaderMs != null &&
       t.createdAtMs != null &&
       t.createdAtMs > leaderMs
@@ -458,6 +465,25 @@ export async function buildTokenResults(
     const homoglyphSuspect =
       lookalikeChars && (c.isScannedMint || (skelMatch && !plainMatch));
 
+    // DERIVATIVE NAME? Decided here, on the DISPLAYED identity — the name the
+    // user actually reads, resolved across three sources — and against the
+    // query this cohort is being scored for, which is why it is computed at
+    // this point rather than carried on RawToken.
+    //
+    // The SCANNED MINT is never derivative: the query was derived from its own
+    // name/symbol, so it is by definition contesting it (and a long name gets
+    // truncated to MAX_QUERY on the way into the search, which would otherwise
+    // make a token fail to match itself).
+    //
+    // Creation ranking only. A social/market-cap leaderboard is queried by URL,
+    // makes no claim about a name, and must not sprout "related" flags.
+    const relatedOnly =
+      rankBy === "creation" &&
+      !c.isScannedMint &&
+      !isCrownEligible(
+        tokenMatchTier(displayName, displaySymbol, queryForScore)
+      );
+
     const image = resolveTokenImage(c.raw.imageUrl, c.h?.imageUrl);
 
     enriched.push({
@@ -507,6 +533,7 @@ export async function buildTokenResults(
       ...(c.isScannedMint ? { isScanned: true } : {}),
       ...(c.supplyZero ? { supplyZero: true } : {}),
       ...(homoglyphSuspect ? { homoglyphSuspect: true as const } : {}),
+      ...(relatedOnly ? { relatedOnly: true as const } : {}),
       ...(createdAtIsLowerBound ? { createdAtIsLowerBound: true } : {}),
       // Rug-risk signals from DAS — omitted when unknown (old cache entries / no DAS record)
       ...(c.h?.mintAuthorityActive !== undefined

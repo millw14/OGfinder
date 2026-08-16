@@ -19,6 +19,7 @@ import {
   ExactNameBadge,
   HomoglyphBadge,
   ProvenanceBadge,
+  RelatedNameBadge,
   RiskChips,
   SafetyChips,
   SafetyFindingList,
@@ -159,12 +160,17 @@ export function TokenCard({ token }: { token: TokenResult }) {
   // can never drift away from the verdict that withheld it.
   const isDanger = isDangerous(token.safetyLevel);
   const blocking = isDanger ? blockingFlags(token.safetyFlags) : [];
+  // A derivative name ("BONKMONEY" for "bonk"): shown, but not competing for
+  // the name. It sorts below the real cohort, so it should never be rank 1 —
+  // and it is barred from the crown here regardless of where it lands.
+  const isRelated = token.relatedOnly === true;
   // ageOrderUnproven is set on rank 1 only, by scoreConfidence: something
   // ranked below still carries a lower-bound age that could predate this one.
   const isOG =
     token.rank === 1 &&
     token.rankingMode === "creation" &&
     !isDanger &&
+    !isRelated &&
     token.ageOrderUnproven !== true;
   // Rank 1 of an ordering we cannot prove: neutral amber treatment in place of
   // the gold one — same rank, no endorsement. Danger keeps precedence.
@@ -172,6 +178,7 @@ export function TokenCard({ token }: { token: TokenResult }) {
     token.rank === 1 &&
     token.rankingMode === "creation" &&
     !isDanger &&
+    !isRelated &&
     token.ageOrderUnproven === true;
   const isScanned = token.isScanned === true;
   const hasPrice = token.priceUsd != null && token.priceUsd > 0;
@@ -215,6 +222,7 @@ export function TokenCard({ token }: { token: TokenResult }) {
             rank={token.rank}
             muted={isDanger}
             unproven={isUnprovenRank1}
+            related={isRelated}
           />
           {/* Most tokens now have a picture: TokenResult.imageUrl falls back
               from the DexScreener market logo to the on-chain DAS image, and
@@ -243,6 +251,9 @@ export function TokenCard({ token }: { token: TokenResult }) {
             {/* Stands exactly where the crown would have — same slot, no
                 endorsement, and it says why on hover. */}
             {isUnprovenRank1 && <UnprovenOrderBadge />}
+            {/* Says what this row IS, right next to the name it echoes — the
+                quietest chip in the set, because it is context, not a finding. */}
+            {isRelated && <RelatedNameBadge />}
             {token.exactMatch && token.rank !== 1 && <ExactNameBadge />}
           </div>
 

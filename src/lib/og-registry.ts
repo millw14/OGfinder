@@ -145,6 +145,13 @@ export function recordOgFromScan(
     ) {
       return;
     }
+    // A DERIVATIVE NAME is never the canonical OG of a name it is not even
+    // competing for. The skeleton-equality key above already excludes the
+    // ordinary cases, but not every one: a scanned name longer than MAX_QUERY
+    // is truncated on the way into the search, and a same-name token can then
+    // relate to that truncated query only partially. Belt and braces — a
+    // registry row is served as fact to every Telegram group for 24h.
+    if (og.relatedOnly === true) return;
     // Uncertain age must not be immortalized as "the OG of <name>".
     if (og.createdAtMs == null) return;
     if (og.pendingAge) return;

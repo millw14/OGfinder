@@ -481,3 +481,58 @@ describe("getRegisteredOg + freshness window", () => {
     expect(lib.REGISTRY_FRESH_MS).toBe(24 * 60 * 60 * 1000);
   });
 });
+
+describe("recordOgFromScan — a derivative name is never cemented", () => {
+  it("refuses to register a relatedOnly candidate as the OG of a name", async () => {
+    const lib = await freshRegistry();
+    // Skeleton equality alone would accept this row: the candidate's full name
+    // IS the key. But it was flagged as a derivative against the (truncated)
+    // search query, and a registry row is served as fact for 24h.
+    lib.recordOgFromScan(
+      payload([
+        tok({
+          mint: "RelatedOG",
+          displayName: "Karat Life Companion",
+          rank: 1,
+          createdAtMs: T_OLDEST,
+          relatedOnly: true,
+        }),
+        tok({
+          mint: "ScannedMint",
+          displayName: "Karat Life Companion",
+          rank: 2,
+          createdAtMs: T_OG,
+        }),
+      ]),
+      "ScannedMint"
+    );
+    expect(rows(lib)).toHaveLength(0);
+  });
+
+  it("the ordinary case is already refused by skeleton equality alone", async () => {
+    const lib = await freshRegistry();
+    // "Karate Cat" is the oldest token in the cohort and carries no flag here
+    // — the exact-key rule is what keeps it out, independent of relatedOnly.
+    lib.recordOgFromScan(
+      payload([
+        tok({
+          mint: "KarateCat",
+          displayName: "Karate Cat",
+          rank: 1,
+          createdAtMs: T_OLDEST,
+        }),
+        tok({
+          mint: "ScannedMint",
+          displayName: "Karat Life Companion",
+          rank: 2,
+          createdAtMs: T_OG,
+        }),
+      ]),
+      "ScannedMint"
+    );
+    const all = rows(lib);
+    expect(all).toHaveLength(1);
+    expect(all[0].name_skeleton).toBe("karat life companion");
+    expect(all[0].og_mint).toBe("ScannedMint");
+  });
+});

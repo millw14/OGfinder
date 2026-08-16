@@ -165,6 +165,20 @@ export interface TokenResult {
   /** Name/symbol matches the query only via lookalike folding (Cyrillic/Greek
    *  homoglyphs, invisible chars) — likely impersonation. Omitted when clean. */
   homoglyphSuspect?: true;
+  /**
+   * DERIVATIVE NAME — interesting to see, never a contender for the name.
+   *
+   * The query only appears inside this token's name/symbol as a bare substring
+   * ("bonk" in "BONKMONEY", "karat" in "Karate Cat"), or the displayed identity
+   * does not carry the query at all — see isCrownEligible in match.ts. Such a
+   * token is shown, but it sorts BELOW the whole real cohort (sortByCreationTime),
+   * earns no OG label however old it is (scoreConfidence), cannot block the #1
+   * answer (ageOrderConfidence) and is never written to the OG registry.
+   *
+   * Creation ranking only, and NEVER set on the scanned mint — the query was
+   * derived from that mint's own name, so it always contests it.
+   */
+  relatedOnly?: true;
   /** True = mint authority active (supply inflatable); false = revoked; absent = unknown */
   mintAuthorityActive?: boolean;
   /** True = freeze authority active (accounts freezable); false = revoked; absent = unknown */

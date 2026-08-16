@@ -466,3 +466,190 @@ describe("scoreConfidence", () => {
     expect(scored[1].exactMatch).toBeUndefined();
   });
 });
+
+/**
+ * DERIVATIVE NAMES ("BONKMONEY" in a "bonk" search). They are admitted to the
+ * cohort because they are interesting to see — and they must never be able to
+ * take the name, however old they are.
+ */
+describe("relatedOnly — shown, never crowned", () => {
+  const exact = (mint: string, iso: string, over?: Partial<TokenResult>) =>
+    make({
+      mint,
+      displayName: "Bonk",
+      displaySymbol: "Bonk",
+      createdAtMs: Date.parse(iso),
+      createdAt: iso,
+      timeSource: "signatures",
+      ...over,
+    });
+
+  describe("sortByCreationTime", () => {
+    it("puts every related token below the real cohort, however old it is", () => {
+      // The derivative is the OLDEST token in the list — under the age-only
+      // sort it would be rank 1 and would take the crown. It cannot.
+      const ancientRelated = exact("REL", "2019-01-01T00:00:00Z", {
+        displayName: "BONKMONEY",
+        relatedOnly: true,
+      });
+      const real = exact("REAL", "2022-12-20T00:00:00Z");
+      const newerReal = exact("REAL2", "2024-01-01T00:00:00Z");
+
+      const sorted = sortByCreationTime([ancientRelated, newerReal, real]);
+      expect(sorted.map((t) => t.mint)).toEqual(["REAL", "REAL2", "REL"]);
+    });
+
+    it("keeps age order INSIDE each group, bounds semantics unchanged", () => {
+      const r1 = exact("R_OLD", "2020-01-01T00:00:00Z", { relatedOnly: true });
+      const r2 = exact("R_NEW", "2023-01-01T00:00:00Z", { relatedOnly: true });
+      const e1 = exact("E_OLD", "2021-01-01T00:00:00Z");
+      const e2 = exact("E_NEW", "2022-01-01T00:00:00Z");
+      // A bound sorts by its bound, exactly as before — within its group.
+      const eBound = exact("E_BOUND", "2020-06-01T00:00:00Z", {
+        createdAtIsLowerBound: true,
+      });
+      const sorted = sortByCreationTime([r2, e2, r1, e1, eBound]);
+      expect(sorted.map((t) => t.mint)).toEqual([
+        "E_BOUND",
+        "E_OLD",
+        "E_NEW",
+        "R_OLD",
+        "R_NEW",
+      ]);
+    });
+
+    it("sends undated related tokens to the very bottom, not above the cohort", () => {
+      const undatedReal = make({ mint: "U_REAL", createdAtMs: null });
+      const relatedDated = exact("R", "2019-01-01T00:00:00Z", {
+        relatedOnly: true,
+      });
+      const sorted = sortByCreationTime([relatedDated, undatedReal]);
+      expect(sorted.map((t) => t.mint)).toEqual(["U_REAL", "R"]);
+    });
+
+    it("ranks the whole list as one 1..N sequence", () => {
+      const scored = scoreConfidence(
+        sortByCreationTime([
+          exact("REL", "2019-01-01T00:00:00Z", { relatedOnly: true }),
+          exact("REAL", "2022-12-20T00:00:00Z"),
+        ]),
+        "bonk"
+      );
+      expect(scored.map((t) => t.rank)).toEqual([1, 2]);
+      expect(scored[1].mint).toBe("REL");
+    });
+  });
+
+  describe("scoreConfidence", () => {
+    it("withholds every OG endorsement from a relatedOnly rank 1", () => {
+      // Defence in depth: with the sort above this is unreachable whenever any
+      // eligible token exists, so it fires only when the ENTIRE list is
+      // derivative. Asserted anyway — the crown is refused, not just unlikely.
+      const related = exact("REL", "2019-01-01T00:00:00Z", {
+        relatedOnly: true,
+      });
+      const scored = scoreConfidence([related, exact("R2", "2020-01-01T00:00:00Z", { relatedOnly: true })], "bonk");
+      // Rank stays factual — it IS the oldest thing we found.
+      expect(scored[0].rank).toBe(1);
+      expect(scored[0].mint).toBe("REL");
+      // The endorsement does not exist for it.
+      expect(scored[0].confidenceLabel).toBe("Oldest found");
+      expect(isOgEndorsement(scored[0].confidenceLabel)).toBe(false);
+      expect(scored[0].rankLabel).toBe("Oldest found");
+    });
+
+    it("refuses the crown even with perfect age data and a clear gap", () => {
+      // Everything that normally earns "OG": exact name+symbol, helius-grade
+      // age, a 3-year gap to #2. relatedOnly still overrides it.
+      const related = make({
+        mint: "REL",
+        displayName: "Bonk",
+        displaySymbol: "Bonk",
+        createdAtMs: Date.parse("2019-01-01T00:00:00Z"),
+        timeSource: "helius",
+        safetyLevel: "clear",
+        relatedOnly: true,
+      });
+      const other = make({
+        mint: "OTH",
+        displayName: "Bonk",
+        displaySymbol: "Bonk",
+        createdAtMs: Date.parse("2022-01-01T00:00:00Z"),
+        timeSource: "helius",
+        relatedOnly: true,
+      });
+      const scored = scoreConfidence([related, other], "bonk");
+      expect(isOgEndorsement(scored[0].confidenceLabel)).toBe(false);
+    });
+
+    // Also pins the gap math: REL is OLDER than the leader but sits at the
+    // tail, so a range computed over the raw list order would go negative and
+    // silently downgrade the label to "Likely OG".
+    it("a real rank 1 keeps its normal label while related tokens sit below", () => {
+      const real = exact("REAL", "2022-12-20T00:00:00Z");
+      const related = exact("REL", "2019-01-01T00:00:00Z", {
+        displayName: "BONKMONEY",
+        relatedOnly: true,
+      });
+      const later = exact("LATER", "2025-12-20T00:00:00Z");
+      const scored = scoreConfidence(
+        sortByCreationTime([related, real, later]),
+        "bonk"
+      );
+      expect(scored[0].mint).toBe("REAL");
+      expect(scored[0].confidenceLabel).toBe("OG");
+      expect(isOgEndorsement(scored[0].confidenceLabel)).toBe(true);
+      // Ranks 2+ stay unlabeled, related or not.
+      expect(scored[scored.length - 1].mint).toBe("REL");
+      expect(scored[scored.length - 1].confidenceLabel).toBe("");
+    });
+  });
+
+  describe("ageOrderConfidence", () => {
+    it("ignores a related token's unresolved age entirely", () => {
+      const leader = exact("REAL", "2022-12-20T00:00:00Z");
+      const relatedBound = exact("REL", "2023-01-20T00:00:00Z", {
+        relatedOnly: true,
+        createdAtIsLowerBound: true,
+      });
+      const order = ageOrderConfidence([leader, relatedBound]);
+      // It is not competing for the name, so it cannot overturn the OG…
+      expect(order.proven).toBe(true);
+      expect(order.blockingMints).toEqual([]);
+      // …and it is not disclosed as an unresolved threat either.
+      expect(order.unresolvedMints).toEqual([]);
+      expect(order.unresolvedCount).toBe(0);
+    });
+
+    it("still blocks on an ELIGIBLE token's bound in the same list", () => {
+      const leader = exact("REAL", "2022-12-20T00:00:00Z");
+      const relatedBound = exact("REL", "2023-01-20T00:00:00Z", {
+        relatedOnly: true,
+        createdAtIsLowerBound: true,
+      });
+      const realBound = exact("REAL2", "2023-02-20T00:00:00Z", {
+        createdAtIsLowerBound: true,
+      });
+      const order = ageOrderConfidence([leader, relatedBound, realBound]);
+      expect(order.proven).toBe(false);
+      expect(order.blockingMints).toEqual(["REAL2"]);
+      expect(order.unresolvedMints).toEqual(["REAL2"]);
+    });
+
+    it("a related bound never makes the #1 answer unproven end-to-end", () => {
+      const leader = exact("REAL", "2022-12-20T00:00:00Z");
+      const relatedBound = exact("REL", "2023-01-20T00:00:00Z", {
+        displayName: "BONKMONEY",
+        relatedOnly: true,
+        createdAtIsLowerBound: true,
+      });
+      const scored = scoreConfidence(
+        sortByCreationTime([relatedBound, leader]),
+        "bonk"
+      );
+      expect(scored[0].mint).toBe("REAL");
+      expect(scored[0].ageOrderUnproven).toBeUndefined();
+      expect(isOgEndorsement(scored[0].confidenceLabel)).toBe(true);
+    });
+  });
+});

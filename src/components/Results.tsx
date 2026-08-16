@@ -1,9 +1,13 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { TokenResult, ScanSummary, SearchHistory } from "@/lib/types";
-import { formatDate, UNPROVEN_ORDER_TITLE } from "@/lib/format";
+import {
+  formatDate,
+  RELATED_NAME_TITLE,
+  UNPROVEN_ORDER_TITLE,
+} from "@/lib/format";
 import { bucketForToken, LAUNCHPAD_BUCKETS } from "@/lib/launchpads";
 import {
   ageOrderConfidence,
@@ -78,6 +82,32 @@ const ScanHero = dynamic(
     loading: () => <SkeletonHero />,
   }
 );
+
+/**
+ * Hairline label marking where the real cohort ends and the derivative names
+ * begin. Without it the age ordering looks broken — a 2021 token sitting below
+ * a 2025 one — when in fact the list has changed subject: everything from here
+ * down merely CONTAINS the search term and is not competing for the name.
+ */
+function RelatedGroupDivider({ count }: { count: number }) {
+  return (
+    <div
+      role="separator"
+      aria-label={`Related names — ${count} token${count === 1 ? "" : "s"}`}
+      title={RELATED_NAME_TITLE}
+      className="flex items-center gap-3 px-1 pb-0.5 pt-4"
+    >
+      <span aria-hidden className="h-px flex-1 bg-line" />
+      <span className="text-micro font-medium uppercase tracking-[0.14em] text-fg-4">
+        Related names
+        <span className="ml-1.5 font-mono normal-case tracking-normal">
+          {count}
+        </span>
+      </span>
+      <span aria-hidden className="h-px flex-1 bg-line" />
+    </div>
+  );
+}
 
 /** Copies a shareable /?q= link for the current search (plain text mode). */
 function CopyLinkButton({ query }: { query: string }) {
@@ -213,6 +243,13 @@ export function Results({
       selectedBucketIds.has(bucketForToken(t.dexId, t.mint))
     );
   }, [ranked, filtersActive, selectedBucketIds]);
+
+  // Counted over what is actually on screen, so the divider's number always
+  // matches the rows beneath it under an active launchpad filter.
+  const relatedCount = useMemo(
+    () => displayed.filter((t) => t.relatedOnly === true).length,
+    [displayed]
+  );
 
   // Per-bucket counts from the UNFILTERED ranked list, so chip counts stay
   // stable no matter which filters are active.
@@ -524,17 +561,29 @@ export function Results({
         </div>
       ) : (
         <div className="space-y-2.5">
-          {displayed.map((token, i) => (
-            <div
-              key={token.mint}
-              className="animate-rise"
-              style={{
-                animationDelay: `${Math.min(i, MAX_STAGGERED) * STAGGER_MS}ms`,
-              }}
-            >
-              <TokenCard token={token} />
-            </div>
-          ))}
+          {displayed.map((token, i) => {
+            // The related group is the tail of the same list (one 1..N rank
+            // sequence), so the divider is drawn at the boundary rather than
+            // by splitting the list into two.
+            const startsRelated =
+              token.relatedOnly === true &&
+              (i === 0 || displayed[i - 1].relatedOnly !== true);
+            return (
+              <Fragment key={token.mint}>
+                {startsRelated && <RelatedGroupDivider count={relatedCount} />}
+                <div
+                  className="animate-rise"
+                  style={{
+                    animationDelay: `${
+                      Math.min(i, MAX_STAGGERED) * STAGGER_MS
+                    }ms`,
+                  }}
+                >
+                  <TokenCard token={token} />
+                </div>
+              </Fragment>
+            );
+          })}
         </div>
       )}
     </div>

@@ -8,6 +8,7 @@ import {
   formatAgeAgo,
   formatCreatedAt,
   LOWER_BOUND_TITLE,
+  RELATED_NAME_TITLE,
   UNPROVEN_ORDER_TITLE,
 } from "@/lib/format";
 import type { SafetyFlag, SafetyFlagCode, SafetyLevel } from "@/lib/safety";
@@ -470,6 +471,20 @@ export function HomoglyphBadge() {
   );
 }
 
+/**
+ * Quietest chip in the set: this token's name merely CONTAINS the search term
+ * inside a longer word. It is listed because it is interesting, never because
+ * it is a contender — so it gets the "we're just showing you this" tone, never
+ * gold, and says why on hover.
+ */
+export function RelatedNameBadge() {
+  return (
+    <Chip tone="muted" title={RELATED_NAME_TITLE}>
+      related name
+    </Chip>
+  );
+}
+
 export function BurnedBadge() {
   return (
     <Chip
@@ -490,19 +505,41 @@ export function BurnedBadge() {
  * endorsement styling that neither a token with blocking flags nor an
  * unprovable ordering has earned. `muted` wins when both apply: a blocking
  * flag is the more urgent thing to see.
+ *
+ * `related` marks a derivative name, which is not in the running at all: it
+ * keeps its number in the single 1..N sequence and takes the quietest surface
+ * at every rank, so the tail of the list reads as a different kind of result
+ * rather than a continuation of the leaderboard.
  */
 export function RankBadge({
   rank,
   muted = false,
   unproven = false,
+  related = false,
 }: {
   rank: number;
   muted?: boolean;
   /** Rank 1 of an ordering that a lower-bound token below could still overturn. */
   unproven?: boolean;
+  /** Derivative name — listed for interest, never a contender for the name. */
+  related?: boolean;
 }) {
   const base =
     "flex h-6 w-10 flex-shrink-0 items-center justify-center rounded-lg font-display text-[13px] font-bold tabular-nums";
+
+  // Checked before every rank-gated treatment below, including the gold one:
+  // a derivative name must never pick up endorsement styling, whatever number
+  // it happens to carry.
+  if (related) {
+    return (
+      <div
+        className={`${base} border bg-surface-2 text-[12px] font-semibold text-fg-4`}
+        title={RELATED_NAME_TITLE}
+      >
+        {rank}
+      </div>
+    );
+  }
 
   if (rank === 1 && muted) {
     return (

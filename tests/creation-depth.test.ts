@@ -507,6 +507,31 @@ describe("selectAgeEscalationTargets", () => {
     expect(targets).toHaveLength(2);
   });
 
+  it("never spends the deep budget on a derivative name", () => {
+    // A relatedOnly token cannot take the crown at any age (sort.ts), so
+    // resolving its bound cannot make the #1 answer any more provable — and
+    // the capped budget belongs to a token that CAN change the verdict.
+    const leader = tok({ mint: "L", createdAtMs: T("2024-01-01T00:00:00Z") });
+    const related = tok({
+      mint: "R",
+      createdAtMs: T("2024-06-01T00:00:00Z"),
+      createdAtIsLowerBound: true,
+      relatedOnly: true,
+      liquidityUsd: 1_000_000, // would outbid the real contender on priority
+    });
+    const real = tok({
+      mint: "C",
+      createdAtMs: T("2024-07-01T00:00:00Z"),
+      createdAtIsLowerBound: true,
+    });
+    const { targets, ambiguousTotal } = selectAgeEscalationTargets(
+      [leader, related, real],
+      undefined
+    );
+    expect(targets).toEqual(["C"]);
+    expect(ambiguousTotal).toBe(1);
+  });
+
   it("never spends budget on a token whose date is already exact", () => {
     const leader = tok({ mint: "L", createdAtMs: T("2024-01-01T00:00:00Z") });
     const scanned = tok({ mint: "S", createdAtMs: T("2025-01-01T00:00:00Z") });

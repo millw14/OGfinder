@@ -1454,3 +1454,87 @@ describe("/watch and /unwatch via the update router", () => {
     }
   });
 });
+
+// ————————— formatMintVerdict / name reply: derivative names —————————
+
+describe("bot verdicts never crown a derivative name", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-02T00:00:00.000Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("a relatedOnly scanned mint at rank 1 prints no crown and no THE OG", () => {
+    // Unreachable in production — the scanned mint is never flagged
+    // relatedOnly and related tokens sort to the tail — so this is the same
+    // defence in depth the danger and unproven branches get.
+    const payload: MintScanPayload = {
+      results: [
+        tok({
+          mint: BONK,
+          displayName: "BONKMONEY",
+          displaySymbol: "BONKM",
+          rank: 1,
+          createdAt: OG_CREATED,
+          createdAtMs: Date.parse(OG_CREATED),
+          relatedOnly: true,
+        }),
+      ],
+      query: "bonk",
+      scanName: "BONKMONEY",
+      scanSymbol: "BONKM",
+    };
+    const msg = formatMintVerdict(BONK, payload);
+    expect(msg).not.toContain("👑");
+    expect(msg).not.toMatch(/\bTHE OG\b/);
+    // The rank fact survives — only the endorsement is withheld.
+    expect(msg.split("\n\n")[0]).toBe(
+      `🕰 <b>BONKMONEY</b> ($BONKM)\n└ <b>OLDEST KNOWN</b> · ${age(OG_CREATED)} · #1 of 1`
+    );
+  });
+
+  it("an eligible rank 1 still gets the crown with related tokens below it", () => {
+    const payload: MintScanPayload = {
+      results: [
+        tok({
+          mint: BONK,
+          displayName: "Bonk",
+          displaySymbol: "BONK",
+          rank: 1,
+          createdAt: OG_CREATED,
+          createdAtMs: Date.parse(OG_CREATED),
+        }),
+        tok({
+          mint: USDC,
+          displayName: "BONKMONEY",
+          rank: 2,
+          createdAt: CLONE_CREATED,
+          createdAtMs: Date.parse(CLONE_CREATED),
+          relatedOnly: true,
+        }),
+      ],
+      query: "bonk",
+      scanName: "Bonk",
+      scanSymbol: "BONK",
+    };
+    expect(formatMintVerdict(BONK, payload)).toContain("<b>THE OG</b>");
+  });
+
+  it("/og <name> withholds the crown when every match is derivative", () => {
+    const msg = formatNameSearchReply("bonk", [
+      tok({
+        mint: BONK,
+        displayName: "BONKMONEY",
+        displaySymbol: "BONKM",
+        rank: 1,
+        createdAt: OG_CREATED,
+        createdAtMs: Date.parse(OG_CREATED),
+        relatedOnly: true,
+      }),
+    ]);
+    expect(msg).not.toContain("👑");
+    expect(msg).toContain("<b>OLDEST KNOWN</b>");
+  });
+});

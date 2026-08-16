@@ -990,15 +990,20 @@ export function formatMintVerdict(
   const og = payload.results[0];
   const isOG = scanned.rank === 1;
   const danger = scanned.safetyLevel === "danger";
+  // A derivative name is not competing for the name, so it never prints the
+  // crown. Unreachable in practice — the scanned mint is never flagged
+  // relatedOnly (enrich-results) and related tokens sort below the cohort
+  // anyway — but the crown is refused here rather than assumed away.
+  const related = scanned.relatedOnly === true;
   // The oldest token we could date is not necessarily the oldest token: a
   // lookalike whose history was too deep to walk to the end could predate it.
   const orderUnproven = ageOrderUnprovenFor(payload);
 
   // ── HEADER · identity + one verdict sub-line ─────────────────────────
   // FOUR MUTUALLY EXCLUSIVE BRANCHES: the crown lives in the last-but-one and
-  // nowhere else, so neither a blocking flag nor an unprovable ordering can
-  // reach it. The rank fact survives every branch — a blocking flag costs the
-  // endorsement, never the rank.
+  // nowhere else, so neither a blocking flag, nor an unprovable ordering, nor
+  // a derivative name can reach it. The rank fact survives every branch — a
+  // blocking flag costs the endorsement, never the rank.
   const rank = `#${scanned.rank} of ${total}`;
   const age = ageValue(scanned);
   let glyph: string;
@@ -1008,7 +1013,7 @@ export function formatMintVerdict(
     verdict.push(UNSAFE_VERDICT, rank);
     if (age) verdict.push(age);
     if (isOG) verdict.push(UNSAFE_RANK1_NOTE);
-  } else if (isOG && orderUnproven) {
+  } else if (isOG && (orderUnproven || related)) {
     glyph = UNPROVEN_GLYPH;
     verdict.push(UNPROVEN_VERDICT);
     if (age) verdict.push(age);
@@ -1394,6 +1399,12 @@ export function formatNameSearchReply(
       `⏳ ${formatUnprovenSuffix(order.unresolvedCount)}`
     );
     pickHead = `${UNPROVEN_GLYPH} <b>Oldest known</b>`;
+  } else if (top.relatedOnly === true) {
+    // Nothing in this list is actually competing for the name — every match is
+    // a derivative ("BONKMONEY" for "bonk"). State the age fact, crown nobody.
+    glyph = UNPROVEN_GLYPH;
+    verdict.push(UNPROVEN_VERDICT, count);
+    pickHead = `${UNPROVEN_GLYPH} <b>Oldest match</b>`;
   } else {
     glyph = "🔎";
     verdict.push("<b>OLDEST MATCH</b>", count);
