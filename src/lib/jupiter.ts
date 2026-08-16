@@ -1,6 +1,7 @@
 import { RawToken, JUP_LIMIT, CACHE_JUP } from "./types";
 import { fetchWithTimeout } from "./fetch";
-import { normalize, skeleton } from "./normalize";
+import { normalize } from "./normalize";
+import { tokenMatchesQuery } from "./match";
 
 // Jupiter Token API v2 (free "lite" tier). The old full-list host
 // (tokens.jup.ag) is dead; this endpoint does relevance-ordered search by
@@ -85,22 +86,11 @@ export async function searchJupiter(query: string): Promise<RawToken[]> {
   const normalizedQuery = normalize(query);
   const tokens = await jupSearch(query);
 
-  // The API fuzzy-matches; keep the old contract of the normalized name or
-  // symbol containing the full query (mirrors the DexScreener re-filter,
-  // including the skeleton fallback that admits lookalike copycats).
-  const skeletonQuery = skeleton(query);
-  const matches = tokens.filter((token) => {
-    const name = normalize(token.name);
-    const symbol = normalize(token.symbol);
-    if (name.includes(normalizedQuery) || symbol.includes(normalizedQuery)) {
-      return true;
-    }
-    return (
-      skeletonQuery.length > 0 &&
-      (skeleton(token.name).includes(skeletonQuery) ||
-        skeleton(token.symbol).includes(skeletonQuery))
-    );
-  });
+  // The API fuzzy-matches; re-filter with the same word-aware rule the
+  // DexScreener path uses (see tokenMatchesQuery).
+  const matches = tokens.filter((token) =>
+    tokenMatchesQuery(token.name, token.symbol, query)
+  );
 
   matches.sort((a, b) => {
     const ka = jupiterRelevanceKey(a, normalizedQuery);

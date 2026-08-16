@@ -1,6 +1,7 @@
 import { RawToken, DEX_LIMIT, DEX_TIMEOUT } from "./types";
 import { fetchWithTimeout } from "./fetch";
-import { normalize, skeleton, dexPairCreatedMs } from "./normalize";
+import { normalize, dexPairCreatedMs } from "./normalize";
+import { tokenMatchesQuery } from "./match";
 import { getDexCache, setDexCache } from "./cache";
 
 const DEX_URL = "https://api.dexscreener.com/latest/dex/search";
@@ -86,24 +87,13 @@ export async function searchDex(query: string): Promise<RawToken[]> {
 
     // Re-filter DexScreener results: their search is fuzzy and matches
     // individual words, so "ara grok 3" would match "HARAMBE" via "ara".
-    // We require the normalized name or symbol to contain the full query.
-    // Skeleton matching also admits lookalike copycats (Cyrillic "Воnk",
-    // zero-width-joined "Bonk") so they get ranked and flagged instead of
-    // being invisibly dropped.
-    const skeletonQuery = skeleton(query);
-    const solanaPairs = data.pairs.filter((p) => {
-      if (p.chainId !== "solana") return false;
-      const name = normalize(p.baseToken.name);
-      const symbol = normalize(p.baseToken.symbol);
-      if (name.includes(normalizedQuery) || symbol.includes(normalizedQuery)) {
-        return true;
-      }
-      return (
-        skeletonQuery.length > 0 &&
-        (skeleton(p.baseToken.name).includes(skeletonQuery) ||
-          skeleton(p.baseToken.symbol).includes(skeletonQuery))
-      );
-    });
+    // tokenMatchesQuery is word-aware — a ticker must match in full and a name
+    // on word boundaries — so "karat" no longer drags in "Karate Cat".
+    const solanaPairs = data.pairs.filter(
+      (p) =>
+        p.chainId === "solana" &&
+        tokenMatchesQuery(p.baseToken.name, p.baseToken.symbol, query)
+    );
 
     // Group by baseToken.address and keep the OLDEST pairCreatedAt per token,
     // plus the HIGHEST-LIQUIDITY pair for market data (price/liq/24h/logo).
